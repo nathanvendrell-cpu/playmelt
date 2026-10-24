@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MetalMax Gaming Hub</title>
+  <style>
+    :root {
+      --bg: #090b10;
+      --card-bg: #131722;
+      --accent: #00f0ff;
+      --accent-glow: rgba(0, 240, 255, 0.4);
+      --purple: #a855f7;
+      --purple-glow: rgba(168, 85, 247, 0.4);
+      --green: #10b981;
+      --text: #ffffff;
+      --text-muted: #8b9bb4;
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      overflow-x: hidden;
+      overflow-y: overlay;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0,0,0,0.2);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.15);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(0,240,255,0.4);
+    }
+
+    /* TOP BAR */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 36px;
+      background: rgba(9, 11, 16, 0.85);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-badge {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), var(--purple));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 18px;
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+
+    .brand-title {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(to right, #fff, #b9d2fb);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .chip-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.1);
+    }
+
+    .chip-badge span.apple-icon {
+      font-size: 15px;
+      color: #fff;
+    }
+
+    .chip-badge span.turbo-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.9); }
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .search-input {
+      padding: 9px 16px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      color: #fff;
+      font-size: 13px;
+      outline: none;
+      width: 220px;
+      transition: all 0.2s;
+    }
+
+    .search-input:focus {
+      width: 280px;
+      border-color: var(--accent);
+      background: rgba(0, 240, 255, 0.08);
+      box-shadow: 0 0 15px var(--accent-glow);
+    }
+
+    .btn {
+      padding: 9px 18px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: none;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #00f0ff, #0088ff);
+      color: #000;
+      box-shadow: 0 4px 18px var(--accent-glow);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px) scale(1.02);
+      box-shadow: 0 6px 24px var(--accent-glow);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    /* HERO BANNER */
+    .hero {
+      position: relative;
+      margin: 24px 36px 40px;
+      border-radius: 24px;
+      overflow: hidden;
+      min-height: 420px;
+      display: flex;
+      align-items: flex-end;
+      padding: 48px;
+      background: linear-gradient(to top, rgba(9, 11, 16, 0.95) 10%, rgba(9, 11, 16, 0.3) 70%), 
+                  url('https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=2000&auto=format&fit=crop') center/cover no-repeat;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+
+    .hero-content {
+      max-width: 650px;
+      z-index: 2;
+    }
+
+    .hero-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: linear-gradient(90deg, rgba(0, 240, 255, 0.2), rgba(168, 85, 247, 0.2));
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: var(--accent);
+      margin-bottom: 16px;
+      text-transform: uppercase;
+    }
+
+    .hero-title {
+      font-size: 44px;
+      font-weight: 900;
+      letter-spacing: -1px;
+      margin-bottom: 12px;
+      line-height: 1.1;
+      text-shadow: 0 4px 20px rgba(0,0,0,0.8);
+    }
+
+    .hero-desc {
+      font-size: 15px;
+      line-height: 1.5;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 16px;
+    }
+
+    /* CAROUSELS (NETFLIX STYLE) */
+    .section {
+      margin-bottom: 40px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 36px;
+      margin-bottom: 18px;
+    }
+
+    .section-title {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .section-count {
+      font-size: 12px;
+      padding: 3px 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .carousel {
+      display: flex;
+      gap: 20px;
+      overflow-x: auto;
+      padding: 8px 36px 20px;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: none;
+    }
+
+    .carousel::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* GAME CARD */
+    .card {
+      flex: 0 0 220px;
+      border-radius: 16px;
+      background: var(--card-bg);
+      overflow: hidden;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      scroll-snap-align: start;
+    }
+
+    .card:hover {
+      transform: translateY(-8px) scale(1.03);
+      box-shadow: 0 20px 40px rgba(0, 240, 255, 0.25);
+      border-color: var(--accent);
+    }
+
+    .card-thumb {
+      height: 290px;
+      width: 100%;
+      position: relative;
+      background-size: cover;
+      background-position: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 14px;
+    }
+
+    .card-thumb::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(19, 23, 34, 0.95) 0%, rgba(19, 23, 34, 0.2) 60%, rgba(0,0,0,0.4) 100%);
+      pointer-events: none;
+    }
+
+    .card-badge {
+      align-self: flex-start;
+      z-index: 2;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    .badge-windows {
+      background: rgba(0, 240, 255, 0.2);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+    }
+
+    .badge-native {
+      background: rgba(16, 185, 129, 0.2);
+      border: 1px solid var(--green);
+      color: var(--green);
+    }
+
+    .badge-aaa {
+      background: rgba(168, 85, 247, 0.2);
+      border: 1px solid var(--purple);
+      color: var(--purple);
+    }
+
+    .card-info {
+      z-index: 2;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .card-engine {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+      margin-bottom: 12px;
+    }
+
+    .card-btn {
+      width: 100%;
+      padding: 8px 0;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      border: none;
+      background: linear-gradient(135deg, var(--accent), #0099ff);
+      color: #000;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .card-btn:hover {
+      filter: brightness(1.2);
+    }
+
+    /* TELEMETRY FOOTER */
+    footer {
+      margin-top: auto;
+      padding: 24px 36px;
+      background: rgba(19, 23, 34, 0.6);
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .telemetry-grid {
+      display: flex;
+      gap: 24px;
+    }
+
+    .telemetry-item strong {
+      color: #fff;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- TOP BAR -->
+  <header>
+    <div class="brand">
+      <div class="logo-badge">⚡</div>
+      <div class="brand-title">METALMAX GAMING HUB</div>
+      <div class="chip-badge">
+        <span class="apple-icon"></span>
+        <span>M3 MAX (40 CORES GPU) • 48 GB VRAM • METAL 4</span>
+        <span class="turbo-dot" title="Turbo M3 Max Activé"></span>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <input type="text" id="searchInput" class="search-input" placeholder="Rechercher un jeu...">
+      <button class="btn btn-secondary" onclick="openSteamWindows()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.237 2.636 7.855 6.356 9.312l2.457-3.601A4.5 4.5 0 0 1 10.5 16a4.5 4.5 0 0 1 4.5-4.5h.01a4.5 4.5 0 0 1 4.49 4.148l3.666 1.488C23.684 15.65 24 13.882 24 12c0-5.523-4.477-10-10-10z"/></svg>
+        Steam Débridé
+      </button>
+      <button class="btn btn-secondary" onclick="openHighball()">
+        Highball
+      </button>
+      <button class="btn btn-primary" onclick="reapplyBoost()">
+        ⚡ Turbo 100%
+      </button>
+    </div>
+  </header>
+
+  <!-- HERO BANNER -->
+  <div class="hero" id="heroBanner">
+    <div class="hero-content">
+      <div class="hero-tag">⚡ M3 MAX ULTRA ACCELERATED • 120 FPS RETINA XDR</div>
+      <h1 class="hero-title" id="heroTitle">CYBERPUNK 2077</h1>
+      <p class="hero-desc" id="heroDesc">
+        Exécution avec traduction directe D3DMetal 2 (DirectX 12 vers Metal 4). Les 40 cœurs GPU de la puce Apple M3 Max délivrent toute leur puissance avec MetalFX Spatial Upscaling.
+      </p>
+      <div class="hero-actions">
+        <button class="btn btn-primary" style="padding: 14px 28px; font-size: 15px;" onclick="openSteamWindows()">
+          ▶ JOUER EN ULTRA (40 CORES)
+        </button>
+        <button class="btn btn-secondary" style="padding: 14px 24px; font-size: 15px;" onclick="reapplyBoost()">
+          Vérifier l'optimisation
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 1: STEAM WINDOWS DÉBRIDÉS -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">
+        <span>🎮 Vos Jeux Steam Windows Débridés</span>
+        <span class="section-count" id="countWindows">0</span>
+      </div>
+    </div>
+    <div class="carousel" id="carouselWindows"></div>
+  </div>
+
+  <!-- SECTION 2: JEUX MAC NATIFS -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">
+        <span>🍏 Vos Jeux Mac Natifs & Metal 4</span>
+        <span class="section-count" id="countNative">0</span>
+      </div>
+    </div>
+    <div class="carousel" id="carouselNative"></div>
+  </div>
+
+  <!-- SECTION 3: CATALOGUE RECOMMANDÉ AAA (1-CLIC INSTALL) -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">
+        <span>🌟 Catalogue Recommandé M3 Max (1-Clic Steam)</span>
+        <span class="section-count">8</span>
+      </div>
+    </div>
+    <div class="carousel" id="carouselAAA"></div>
+  </div>
+
+  <!-- FOOTER TELEMETRY -->
+  <footer>
+    <div class="telemetry-grid">
+      <div class="telemetry-item">Processeur : <strong>Apple M3 Max (16 cœurs)</strong></div>
+      <div class="telemetry-item">Graphismes : <strong>40 cœurs GPU Metal 4</strong></div>
+      <div class="telemetry-item">VRAM : <strong>48 Go Mémoire Unifiée</strong></div>
+      <div class="telemetry-item">Écran : <strong>Liquid Retina XDR (3456x2234)</strong></div>
+    </div>
+    <div>Statut moteur : <strong style="color: var(--green);">D3DMetal 2 + MSync + MetalFX ACTIF (100%)</strong></div>
+  </footer>
+
+  <script>
+    // Bridge helper
+    function callNative(action, payload = {}) {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.metalmax) {
+        window.webkit.messageHandlers.metalmax.postMessage({ action, ...payload });
+      } else {
+        console.log("Native call:", action, payload);
+      }
+    }
+
+    function openSteamWindows() {
+      callNative("openSteamWindows");
+    }
+
+    function openHighball() {
+      callNative("openHighball");
+    }
+
+    function reapplyBoost() {
+      callNative("applyMaxBoost");
+      alert("✅ Turbo Graphique 100% réappliqué : D3DMetal, MSync et MetalFX sont verrouillés au maximum pour votre M3 Max !");
+    }
+
+    function launchGame(path, type) {
+      callNative("launchGame", { path, type });
+    }
+
+    function installSteam(appId) {
+      callNative("installSteamGame", { appId });
+    }
+
+    // Games data
+    const windowsGames = [
+      { id: "the_surge_2", title: "The Surge 2", path: "/Users/robtech/Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/The Surge 2", engine: "D3DMetal 2 (Metal 4)", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/644830/library_600x900.jpg" },
+      { id: "yet_another_zombie_survivors", title: "Yet Another Zombie Survivors", path: "/Users/robtech/Applications/CrossOver/Yet Another Zombie Survivors.app", engine: "D3DMetal 2 (MSync)", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2163330/library_600x900.jpg" },
+      { id: "onimusha", title: "Onimusha WotS Demo", path: "/Users/robtech/Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/OnimushaWotS_Demo", engine: "D3DMetal 2", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/761620/library_600x900.jpg" },
+      { id: "idle_slayer", title: "Idle Slayer", path: "/Users/robtech/Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/Idle Slayer", engine: "DirectX / MSync", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1353300/library_600x900.jpg" },
+      { id: "aniimo", title: "Aniimo", path: "/Users/robtech/Applications/CrossOver/Steam/Steam.app", engine: "D3DMetal 2", bg: "https://images.unsplash.com/photo-1579373903781-fd5c0c30c4cd?q=80&w=600&auto=format&fit=crop" },
+      { id: "star_wars", title: "STAR WARS Zero Company", path: "/Users/robtech/Applications/CrossOver/Steam/Steam.app", engine: "D3DMetal 2", bg: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=600&auto=format&fit=crop" }
+    ];
+
+    const nativeGames = [
+      { id: "stray", title: "Stray", path: "/Users/robtech/Applications/Stray.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1332010/library_600x900.jpg" },
+      { id: "rocket_league", title: "Rocket League", path: "/Users/robtech/Applications/Rocket League.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/252950/library_600x900.jpg" },
+      { id: "factorio", title: "Factorio", path: "/Users/robtech/Applications/Factorio.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/427520/library_600x900.jpg" },
+      { id: "the_crust", title: "The Crust", path: "/Users/robtech/Library/Application Support/Steam/steamapps/common/The Crust", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1465470/library_600x900.jpg" },
+      { id: "terraria", title: "Terraria", path: "/Users/robtech/Applications/Terraria.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/105600/library_600x900.jpg" },
+      { id: "sandustry", title: "Sandustry", path: "/Users/robtech/Applications/Sandustry.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2764460/library_600x900.jpg" },
+      { id: "rogue_legacy", title: "Rogue Legacy", path: "/Users/robtech/Applications/Rogue Legacy.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/241600/library_600x900.jpg" },
+      { id: "starbound", title: "Starbound", path: "/Users/robtech/Library/Application Support/Steam/steamapps/common/Starbound", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/211820/library_600x900.jpg" }
+    ];
+
+    const aaaCatalog = [
+      { id: "cyberpunk", title: "Cyberpunk 2077", appId: "1091500", engine: "DirectX 12 / Metal 4", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1091500/library_600x900.jpg" },
+      { id: "elden_ring", title: "Elden Ring", appId: "1245620", engine: "DirectX 12 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1245620/library_600x900.jpg" },
+      { id: "baldurs_gate_3", title: "Baldur's Gate 3", appId: "1086940", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1086940/library_600x900.jpg" },
+      { id: "ghost_of_tsushima", title: "Ghost of Tsushima", appId: "2215430", engine: "DirectX 12 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2215430/library_600x900.jpg" },
+      { id: "gta_v", title: "Grand Theft Auto V", appId: "271590", engine: "DirectX 11 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/271590/library_600x900.jpg" },
+      { id: "hogwarts_legacy", title: "Hogwarts Legacy", appId: "990080", engine: "DirectX 12 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/990080/library_600x900.jpg" },
+      { id: "god_of_war", title: "God of War", appId: "1593500", engine: "DirectX 11 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1593500/library_600x900.jpg" },
+      { id: "armored_core_6", title: "Armored Core VI", appId: "1888110", engine: "DirectX 12 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1888110/library_600x900.jpg" }
+    ];
+
+    function renderCards() {
+      // Windows
+      const winContainer = document.getElementById("carouselWindows");
+      winContainer.innerHTML = windowsGames.map(g => `
+        <div class="card" onclick="launchGame('${g.path}', 'crossover_steam')">
+          <div class="card-thumb" style="background-image: url('${g.bg}')">
+            <span class="card-badge badge-windows">Windows Steam</span>
+            <div class="card-info">
+              <div class="card-title">${g.title}</div>
+              <div class="card-engine">${g.engine}</div>
+              <button class="card-btn">▶ LANCER</button>
+            </div>
+          </div>
+        </div>
+      `).join("");
+      document.getElementById("countWindows").innerText = windowsGames.length;
+
+      // Native
+      const natContainer = document.getElementById("carouselNative");
+      natContainer.innerHTML = nativeGames.map(g => `
+        <div class="card" onclick="launchGame('${g.path}', 'native_mac')">
+          <div class="card-thumb" style="background-image: url('${g.bg}')">
+            <span class="card-badge badge-native">Mac Natif</span>
+            <div class="card-info">
+              <div class="card-title">${g.title}</div>
+              <div class="card-engine">${g.engine}</div>
+              <button class="card-btn">▶ LANCER</button>
+            </div>
+          </div>
+        </div>
+      `).join("");
+      document.getElementById("countNative").innerText = nativeGames.length;
+
+      // AAA
+      const aaaContainer = document.getElementById("carouselAAA");
+      aaaContainer.innerHTML = aaaCatalog.map(g => `
+        <div class="card" onclick="installSteam('${g.appId}')">
+          <div class="card-thumb" style="background-image: url('${g.bg}')">
+            <span class="card-badge badge-aaa">100% M3 Max Ready</span>
+            <div class="card-info">
+              <div class="card-title">${g.title}</div>
+              <div class="card-engine">${g.engine}</div>
+              <button class="card-btn" style="background: linear-gradient(135deg, var(--purple), #ec4899); color: #fff;">
+                📥 INSTALLER STEAM
+              </button>
+            </div>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    // Search filter
+    document.getElementById("searchInput").addEventListener("input", (e) => {
+      const q = e.target.value.toLowerCase().trim();
+      document.querySelectorAll(".card").forEach(c => {
+        const title = c.querySelector(".card-title").innerText.toLowerCase();
+        c.style.display = title.includes(q) ? "block" : "none";
+      });
+    });
+
+    renderCards();
+  </script>
+</body>
+</html>
