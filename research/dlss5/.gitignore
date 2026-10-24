@@ -1,0 +1,11 @@
+# Runtime captures/models are private external inputs, never source assets.
+*.f32
+*.raw
+*.safetensors
+*.dll
+*.dlssmodel/
+__pycache__/
+capture.json
+manifest.json
+qualification.json
+planned-run.json

@@ -196,6 +196,8 @@ struct Game {
         return ["id": id, "appId": appId, "title": title, "store": store, "installed": installed,
                 "platform": platform, "runtimeId": runtimeId, "runtimeName": runtimeName, "ownership": ownership,
                 "platforms": supportedPlatforms.isEmpty ? (platform == "unknown" ? [] : [platform]) : supportedPlatforms,
+                "requiredRenderer": store == "steam" ? SteamGameLaunchProfile.requiredRenderer(appID: appId) : "auto",
+                "requiredGraphicsAPI": store == "steam" ? SteamGameLaunchProfile.requiredGraphicsAPI(appID: appId) : "unknown",
                 "imageURL": !customImageURL.isEmpty ? customImageURL : store == "steam" ? "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appId)/header.jpg" : "",
                 "localImageURL": store == "steam" ? "metalmaxart://steam/\(appId)" : "",
                 "portraitImageURL": !customPortraitURL.isEmpty ? customPortraitURL : store == "steam" ? "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appId)/library_600x900.jpg" : "",
@@ -208,6 +210,8 @@ struct Game {
 }
 
 enum SteamGameLaunchProfile {
+    static func requiredRenderer(appID: String) -> String { appID == "2584270" ? "d3dmetal" : appID == "526870" ? "dxmt" : "auto" }
+    static func requiredGraphicsAPI(appID: String) -> String { appID == "2584270" ? "DirectX12" : appID == "526870" ? "DirectX11" : "unknown" }
     static func blockReason(appID: String, platform: String) -> String? {
         // Mortal Shell II's official Steam requirements specify DirectX 12.
         // The current Playmelt renderer is DXMT (DirectX 10/11), not a DX12 backend.

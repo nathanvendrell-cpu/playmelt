@@ -510,6 +510,55 @@
         width: 100%;
         margin-top: 7px;
       }
+      .renderer-config {
+        display: grid;
+        gap: 15px;
+      }
+      .renderer-labels {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 12px;
+      }
+      .renderer-status {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .renderer-actions {
+        display: grid;
+        gap: 12px;
+      }
+      .renderer-download {
+        justify-self: center;
+        font-size: 11px;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .renderer-config-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 24px;
+        padding-top: 20px;
+        margin-top: 20px;
+        border-top: 1px solid var(--line);
+      }
+      .renderer-config-row .renderer-labels {
+        display: grid;
+        gap: 5px;
+      }
+      .renderer-config-row .renderer-actions {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      @media (max-width: 700px) {
+        .renderer-config-row {
+          grid-template-columns: 1fr;
+          gap: 14px;
+        }
+      }
       .dialog-note {
         font-size: 11px;
         line-height: 1.5;
@@ -954,6 +1003,8 @@
           "openWindowsSteam",
           "installAndPlay",
           "cancelInstallAndPlay",
+          "importD3DMetal",
+          "openD3DMetalDownload",
         ]);
         function el(tag, className, text) {
           const node = document.createElement(tag);
@@ -1184,6 +1235,97 @@
           renderGameDialog(game);
           if (!$("gameDialog").open) $("gameDialog").showModal();
         }
+        function d3dMetalViewState() {
+          const runtime = state.windowsRuntime,
+            component = runtime?.d3dMetal;
+          const job = state.installJob;
+          const busy =
+            component?.busy === true ||
+            runtime?.steamBusy === true ||
+            ["downloading", "verifying", "extracting", "initializing"].includes(
+              runtime?.status,
+            ) ||
+            (job &&
+              ![
+                "launch-requested",
+                "failed",
+                "cancelled",
+                "timed-out",
+              ].includes(job.status));
+          const status =
+            component?.busy === true
+              ? "Importation…"
+              : component?.imported === true
+                ? "Importé — validation restante"
+                : "À importer";
+          return {
+            component,
+            busy: !!busy,
+            status,
+            signature: JSON.stringify([
+              !!component,
+              !!busy,
+              status,
+              component?.message || "",
+              component?.abiStatus || "",
+            ]),
+          };
+        }
+        function createD3DMetalControls(asRow = false) {
+          const view = d3dMetalViewState();
+          const box = el(
+            "div",
+            asRow ? "renderer-config renderer-config-row" : "renderer-config",
+          );
+          const labels = el("div", "renderer-labels");
+          labels.append(
+            el("span", "", "DirectX 12"),
+            el("span", "renderer-status", view.status),
+          );
+          labels.title = view.component?.message || "";
+          const actions = el("div", "renderer-actions");
+          const importButton = el(
+            "button",
+            "button primary",
+            "Importer le composant Apple",
+          );
+          importButton.disabled = !view.component || view.busy;
+          importButton.addEventListener("click", () => {
+            importButton.disabled = true;
+            importButton.dataset.pendingD3dImport = "true";
+            send("importD3DMetal");
+          });
+          const download = el(
+            "button",
+            "text-button renderer-download",
+            "Obtenir auprès d’Apple",
+          );
+          download.disabled = !view.component || view.busy;
+          download.addEventListener("click", () =>
+            send("openD3DMetalDownload"),
+          );
+          actions.append(importButton, download);
+          box.append(labels, actions);
+          return box;
+        }
+        function updateD3DMetalSettings(
+          target = document.getElementById("d3dMetalSettings"),
+        ) {
+          if (!target) return;
+          const signature = d3dMetalViewState().signature;
+          if (target.dataset.signature === signature) return;
+          target.replaceChildren(createD3DMetalControls(true));
+          target.dataset.signature = signature;
+        }
+        function restoreD3DMetalImportControls() {
+          const view = d3dMetalViewState();
+          document
+            .querySelectorAll("[data-pending-d3d-import]")
+            .forEach((button) => {
+              delete button.dataset.pendingD3dImport;
+              button.disabled = !view.component || view.busy;
+            });
+        }
         function renderGameDialog(game) {
           $("dialogTitle").textContent = game.title;
           $("dialogStore").textContent = [
@@ -1196,6 +1338,15 @@
           const previousRuntime =
             document.getElementById("runtimeSelect")?.value;
           ui.dialogProgress = null;
+          if (game.requiredRenderer === "d3dmetal") {
+            const key = game.id + ":" + d3dMetalViewState().signature;
+            if (body.dataset.rendererKey !== key) {
+              body.replaceChildren(createD3DMetalControls());
+              body.dataset.rendererKey = key;
+            }
+            return;
+          }
+          delete body.dataset.rendererKey;
           body.replaceChildren();
           const job = installJobFor(game);
           if (job) {
@@ -1550,6 +1701,10 @@
           if (!$("gameDialog").open) return;
           const game = state.games.find((g) => g.id === ui.dialogGameId);
           if (!game) return;
+          if (game.requiredRenderer === "d3dmetal") {
+            renderGameDialog(game);
+            return;
+          }
           const job = installJobFor(game);
           if (job && patchInstallProgress(job)) return;
           if (!job && patchRuntimeProgress(state.windowsRuntime)) return;
@@ -1578,13 +1733,16 @@
         function createGameCard(game) {
           const card = el("article", "game-card");
           card.dataset.gameId = game.id;
-          const action = game.canLaunch
-            ? "Jouer"
-            : game.canInstallAndPlay
-              ? "Installer et jouer"
-              : game.canInstall
-                ? "Installer"
-                : "Ouvrir";
+          const action =
+            game.requiredRenderer === "d3dmetal"
+              ? "Configurer"
+              : game.canLaunch
+                ? "Jouer"
+                : game.canInstallAndPlay
+                  ? "Installer et jouer"
+                  : game.canInstall
+                    ? "Installer"
+                    : "Ouvrir";
           const open = el("button", "card-open");
           open.type = "button";
           open.setAttribute(
@@ -1615,7 +1773,11 @@
           actionButton.addEventListener("click", () => {
             const current = state.games.find((g) => g.id === game.id);
             if (!current) return;
-            if (installJobFor(current)) openGame(current);
+            if (
+              current.requiredRenderer === "d3dmetal" ||
+              installJobFor(current)
+            )
+              openGame(current);
             else if (current.canLaunch)
               send("launchGame", { gameId: current.id });
             else openGame(current);
@@ -1638,6 +1800,8 @@
               game.canLaunch,
               game.canInstall,
               game.canInstallAndPlay,
+              game.requiredRenderer,
+              game.requiredGraphicsAPI,
               game.localPortraitURL,
               game.localImageURL,
               game.portraitImageURL,
@@ -1746,7 +1910,11 @@
             );
             runtimes.append(row);
           }
+          const d3dMetalSettings = el("div");
+          d3dMetalSettings.id = "d3dMetalSettings";
+          runtimes.append(d3dMetalSettings);
           panel.append(runtimes);
+          updateD3DMetalSettings(d3dMetalSettings);
           if (state.warnings.length) {
             const warnings = el("section", "diagnostic-panel");
             warnings.append(el("h2", "", "À vérifier"));
@@ -1819,15 +1987,19 @@
         window.onNativeRuntime = (snapshot) => {
           if (!snapshot || typeof snapshot !== "object") return;
           state.windowsRuntime = snapshot;
+          if (ui.view === "diagnostics") updateD3DMetalSettings();
           refreshVisibleDialog();
         };
         window.onNativeInstallJob = (job) => {
           if (job !== null && (!job || typeof job !== "object")) return;
           state.installJob = job;
+          if (ui.view === "diagnostics") updateD3DMetalSettings();
           updateJobIndicator();
           refreshVisibleDialog();
         };
         window.onNativeResult = (result) => {
+          if (result && typeof result === "object")
+            restoreD3DMetalImportControls();
           if (result && typeof result === "object")
             notify(
               String(result.message || "Action terminée."),

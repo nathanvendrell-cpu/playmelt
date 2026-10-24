@@ -15,6 +15,7 @@ function node(tag, cls, text) {
       return this.textContent;
     },
     children: [],
+    dataset: {},
     handlers: {},
     value: "",
     textContent: text ?? "",

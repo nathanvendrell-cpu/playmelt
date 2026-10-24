@@ -153,6 +153,30 @@ assert.equal(
   "Explicit refresh regenerates visible artwork when new native state arrives",
 );
 assert.equal(cache.size, 2);
+games[1].requiredRenderer = "d3dmetal";
+games[1].requiredGraphicsAPI = "DirectX12";
+games[1].canLaunch = true;
+filtered = [games[1]];
+render();
+const walk = (node) => [node, ...node.children.flatMap(walk)];
+const configure = walk(elements.gameGrid.children[0]).find(
+  (node) => node.className === "game-action",
+);
+assert.equal(
+  configure.textContent,
+  "Configurer",
+  "A DX12 card never advertises Play before renderer validation",
+);
+let opened = null;
+context.openGame = (game) => {
+  opened = game.id;
+};
+configure.handlers.click();
+assert.equal(
+  opened,
+  games[1].id,
+  "DX12 quick action opens configuration instead of dispatching launch",
+);
 console.log(
-  "Grid reuse passed: retained nodes preserved; eviction/replacement/refresh dispose only retired artwork",
+  "Grid reuse passed; artwork disposal preserved; DX12 card routes only to configuration",
 );

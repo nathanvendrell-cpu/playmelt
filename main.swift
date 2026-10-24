@@ -139,6 +139,9 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     let model = LibraryModel()
     let epicConnector = EpicConnector()
     let runtimeSetup = RuntimeSetup()
+    let d3dMetalStore = D3DMetalStore()
+    private let rendererImportQueue = DispatchQueue(label: "fr.playmelt.renderer-import", qos: .utility)
+    private var rendererImportBusy = false
     lazy var steamBootstrap = SteamWindowsBootstrap(runtime: runtimeSetup)
     let installCoordinator = SteamInstallCoordinator()
     let requestGate = SteamRequestGate()
@@ -172,6 +175,9 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                 if case .failure(let error) = outcome { self?.result(false, error.localizedDescription) }
             }
         case "cancelWindowsRuntime": runtimeSetup.cancel()
+        case "importD3DMetal": importD3DMetal()
+        case "openD3DMetalDownload":
+            NSWorkspace.shared.open(URL(string: "https://developer.apple.com/games/game-porting-toolkit/")!)
         case "installSteamWindows":
             guard !CommandLine.arguments.contains("--audit-read-only"), !runtimeIsBusy, !installCoordinator.isActive else { result(false, "Installation Steam indisponible pendant cette opération."); return }
             steamBootstrap.start()
@@ -218,7 +224,45 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     }
     var runtimeIsBusy: Bool { ["downloading", "verifying", "extracting", "initializing"].contains(runtimeSetup.snapshot()["status"] as? String ?? "") }
     func runtimePayload() -> [String: Any] {
-        var state = runtimeSetup.snapshot(); state.merge(steamBootstrap.snapshot) { _, latest in latest }; return state
+        var state = runtimeSetup.snapshot(); state.merge(steamBootstrap.snapshot) { _, latest in latest }
+        var directX12 = d3dMetalStore.snapshot(); directX12["busy"] = rendererImportBusy
+        state["d3dMetal"] = directX12
+        return state
+    }
+    func importD3DMetal() {
+        guard !closing, !rendererImportBusy, !runtimeIsBusy, !steamBootstrap.busy,
+              !installCoordinator.isActive, !CommandLine.arguments.contains("--audit-read-only"),
+              let window = webView?.window else { result(false, "Import indisponible pendant cette opération."); return }
+        let picker = NSOpenPanel()
+        picker.title = "Importer DirectX 12"
+        picker.message = "Sélectionnez le dossier D3DMetal du paquet Apple."
+        picker.prompt = "Importer"
+        picker.canChooseDirectories = true; picker.canChooseFiles = false
+        picker.allowsMultipleSelection = false; picker.canCreateDirectories = false
+        rendererImportBusy = true; notifyRuntime()
+        picker.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            guard !self.closing, response == .OK, let source = picker.url else {
+                self.rendererImportBusy = false; self.notifyRuntime(); return
+            }
+            self.rendererImportQueue.async { [self] in
+                let outcome = Result { try self.d3dMetalStore.importLocal(sourceURL: source) }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.rendererImportBusy = false
+                    guard !self.closing else { return }
+                    self.notifyRuntime()
+                    switch outcome {
+                    case .success: self.result(true, "Composant Apple importé. La validation graphique reste à effectuer.")
+                    case .failure(let error): self.result(false, error.localizedDescription)
+                    }
+                }
+            }
+        }
+    }
+    func finishRendererImport(_ completion: @escaping () -> Void) {
+        // A close waits for the exact import queue to finish or roll back staging.
+        rendererImportQueue.async { DispatchQueue.main.async(execute: completion) }
     }
     func sendState() {
         model.epicAvailability = epicConnector.availability()
@@ -399,7 +443,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         guard handler != nil else { return .terminateNow }
         handler?.beginShutdown()
         handler?.steamBootstrap.shutdown { [weak self] in
-            self?.handler?.runtimeSetup.shutdown { NSApp.reply(toApplicationShouldTerminate: true) }
+            self?.handler?.runtimeSetup.shutdown { [weak self] in
+                self?.handler?.finishRendererImport { NSApp.reply(toApplicationShouldTerminate: true) }
+            }
         }
         return .terminateLater
     }
@@ -408,7 +454,8 @@ if CommandLine.arguments.contains("--self-test") {
     runSelfTests()
 } else if CommandLine.arguments.contains("--diagnose-json") {
     let model = LibraryModel(); let runtime = RuntimeSetup(); model.windowsDescriptor = runtime.descriptor(); model.refresh(); model.epicAvailability = EpicConnector().availability()
-    var state = model.state(); state["windowsRuntime"] = runtime.snapshot(); state["installJob"] = NSNull()
+    var state = model.state(); var runtimeState = runtime.snapshot(); runtimeState["d3dMetal"] = D3DMetalStore().snapshot()
+    state["windowsRuntime"] = runtimeState; state["installJob"] = NSNull()
     if let data = try? JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys]) { FileHandle.standardOutput.write(data); print("") }
 } else {
     let app = NSApplication.shared; app.setActivationPolicy(.regular)

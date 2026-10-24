@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "mlx": {
+    "repository": "https://github.com/iamwavecut/MLX-DLSS",
+    "commit": "7870371e8bf6c03967213f1a5d40db6c5a3bee38",
+    "files": {
+      "Sources/mlxdlss/RunSequenceCommand.swift": "0b1dd356b89373f55e3ae65a5e495987057c64bd32f03dcd0e22a0b4c110fd57",
+      "Sources/DLSSCore/NeuralRenderingTemporalReferencePreprocessor.swift": "c7a6824c2aa5979c152ede050dcc8fd4ae951e507dd27b2dfabec9d9509a3dc7",
+      "Tools/compare_neural_rendering_golden_bundle.py": "0c1f1493b400ddeea2f3434553e4d0e0b4c2a48b4f6c827f9a31446e9010c5f6",
+      "Tools/run_neural_rendering_golden_bundle.py": "d4e78f52d78fc1bbc22818d88c79d28db44ca13f97f45a9692ff3aab2657001b",
+      "Tools/compare_f32.py": "7576647fb4eee20ac3b83a17cc00e5f5b2415b88558bbb11fa3b61b31691b23b",
+      "Sources/DLSSCore/NeuralRenderingTemporalReferenceBackend.swift": "d8b481534336a9b50ab791441c0e8c603d7cfae263cfdbb8f804e0f93d9b5297"
+    }
+  },
+  "openDLSSNR": {
+    "repository": "https://github.com/aloshdenny/open-dlss",
+    "commit": "b9d4f7e8dc04a946a60207db73330177a586f1f1",
+    "role": "Numerics reference only; not a selected Apple execution backend"
+  },
+  "officialRuntime": {
+    "release": "https://github.com/NVIDIAGameWorks/rtx-remix/releases/tag/remix-1.6.1",
+    "manifest": "https://github.com/NVIDIAGameWorks/rtx-remix/releases/download/remix-1.6.1/rtx-remix-for-x64-games-release-remix-1.6.1-crc.txt",
+    "member": "runtime/nvngx_dlssnr.dll",
+    "bytes": 266424944,
+    "downloaded": false
+  },
+  "knownNetworks": {
+    "310.8.0.0": ["ht71"],
+    "310.9.16.0": ["ht71", "small31"]
+  }
+}
