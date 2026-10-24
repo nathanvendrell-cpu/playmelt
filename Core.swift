@@ -192,6 +192,7 @@ struct Game {
     var customPortraitURL = ""
     func json(runtimes: [Runtime]) -> [String: Any] {
         let available = runtimes.contains { $0.id == runtimeId && $0.available }
+        let launchSupported = store != "steam" || SteamGameLaunchProfile.blockReason(appID: appId, platform: platform) == nil
         return ["id": id, "appId": appId, "title": title, "store": store, "installed": installed,
                 "platform": platform, "runtimeId": runtimeId, "runtimeName": runtimeName, "ownership": ownership,
                 "platforms": supportedPlatforms.isEmpty ? (platform == "unknown" ? [] : [platform]) : supportedPlatforms,
@@ -199,10 +200,22 @@ struct Game {
                 "localImageURL": store == "steam" ? "metalmaxart://steam/\(appId)" : "",
                 "portraitImageURL": !customPortraitURL.isEmpty ? customPortraitURL : store == "steam" ? "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appId)/library_600x900.jpg" : "",
                 "localPortraitURL": store == "steam" ? "metalmaxart://steam/\(appId)/portrait" : "",
-                "canLaunch": installed && complete && (store == "epic" ? FileManager.default.fileExists(atPath: "/Applications/Epic Games Launcher.app") : available),
+                "canLaunch": installed && complete && launchSupported && (store == "epic" ? FileManager.default.fileExists(atPath: "/Applications/Epic Games Launcher.app") : available),
                 "canInstall": store == "steam" && !complete && platform != "unknown" && available,
-                "canInstallAndPlay": store == "steam" && !complete && platform != "unknown" && available,
+                "canInstallAndPlay": store == "steam" && !complete && platform != "unknown" && available && launchSupported,
                 "installComplete": complete]
+    }
+}
+
+enum SteamGameLaunchProfile {
+    static func blockReason(appID: String, platform: String) -> String? {
+        // Mortal Shell II's official Steam requirements specify DirectX 12.
+        // The current Playmelt renderer is DXMT (DirectX 10/11), not a DX12 backend.
+        platform == "windows" && appID == "2584270" ? "Ce jeu nécessite DirectX 12. Le moteur actuel prend en charge DirectX 10 et 11." : nil
+    }
+    static func windowsArguments(appID: String) -> [String]? {
+        guard LibraryModel.validAppID(appID), blockReason(appID: appID, platform: "windows") == nil else { return nil }
+        return ["-applaunch", appID] + (appID == "526870" ? ["-dx11"] : [])
     }
 }
 
@@ -308,8 +321,8 @@ final class LibraryModel {
            let data = preferences.data(forKey: "steamLibrarySnapshot." + selectedAccountID), data.count < 8_000_000,
            let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
            saved["accountId"] as? String == selectedAccountID,
-           saved["source"] as? String == "steamcommunity-authenticated-all-games",
-           let rows = saved["games"] as? [[String: Any]], rows.count < 20_000,
+           let source = saved["source"] as? String, Self.steamLibrarySources.contains(source),
+           let rows = saved["games"] as? [[String: Any]], !rows.isEmpty, rows.count < 20_000,
            rows.allSatisfy({ ($0["appid"] as? String).map(Self.validAppID) == true }),
            let date = saved["updatedAt"] as? String, ISO8601DateFormatter().date(from: date) != nil {
             authenticatedGames[selectedAccountID] = rows
@@ -413,8 +426,12 @@ final class LibraryModel {
     }
     func mergeVerified(_ list: [[String: Any]]) {
         let ids = Set(list.compactMap { ($0["appid"] as? String).flatMap { Self.validAppID($0) ? $0 : nil } })
+        // A verified account list supersedes cached history. Local installations
+        // remain visible without claiming that the selected account owns them.
+        games.removeAll { $0.store == "steam" && !$0.installed && !ids.contains($0.appId) }
         for index in games.indices where games[index].store == "steam" {
             if ids.contains(games[index].appId) { games[index].ownership = "authenticated-library" }
+            else if games[index].installed { games[index].ownership = "installed-only" }
         }
         for row in list {
             guard let id = row["appid"] as? String, Self.validAppID(id) else { continue }
@@ -424,13 +441,25 @@ final class LibraryModel {
             }
         }
     }
-    func acceptAuthenticatedLibrary(accountID: String, list: [[String: Any]]) -> Bool {
-        guard accountID == selectedAccountID, Self.validAccountID(accountID), list.count < 20000,
-              list.allSatisfy({ ($0["appid"] as? String).map(Self.validAppID) == true }) else { return false }
+    static let steamLibrarySources: Set<String> = ["steamcommunity-authenticated-all-games", "steamcommunity-profile-gameslist"]
+    func beginSteamLibrarySync() {
+        liveAuthenticatedAccounts.remove(selectedAccountID)
+        if let cached = authenticatedGames[selectedAccountID] {
+            libraryStatus = "snapshot"; lastSync = authenticatedDates[selectedAccountID] ?? ""
+            libraryMessage = "Dernière bibliothèque Steam vérifiée : \(cached.count) jeux. Synchronisation en attente."
+        } else {
+            libraryStatus = "local"; lastSync = ""
+            libraryMessage = "Connexion Steam en attente. Historique local disponible."
+        }
+    }
+    func acceptAuthenticatedLibrary(accountID: String, list: [[String: Any]], source: String = "steamcommunity-authenticated-all-games") -> Bool {
+        guard accountID == selectedAccountID, Self.validAccountID(accountID), Self.steamLibrarySources.contains(source), !list.isEmpty, list.count < 20000,
+              list.allSatisfy({ ($0["appid"] as? String).map(Self.validAppID) == true && !($0["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+              Set(list.compactMap { $0["appid"] as? String }).count == list.count else { return false }
         let sanitized = list.map { ["appid": $0["appid"] as! String, "name": String(($0["name"] as? String ?? "").prefix(200))] }
         authenticatedGames[accountID] = sanitized; liveAuthenticatedAccounts.insert(accountID)
         libraryStatus = "synced"; lastSync = ISO8601DateFormatter().string(from: Date()); authenticatedDates[accountID] = lastSync
-        if let data = try? JSONSerialization.data(withJSONObject: ["accountId": accountID, "games": sanitized, "source": "steamcommunity-authenticated-all-games", "updatedAt": lastSync]) {
+        if let data = try? JSONSerialization.data(withJSONObject: ["accountId": accountID, "games": sanitized, "source": source, "updatedAt": lastSync]) {
             preferences.set(data, forKey: "steamLibrarySnapshot." + accountID)
         }
         libraryMessage = "Bibliothèque lue dans votre session Steam officielle (\(list.count) jeux). Les installations et les performances restent vérifiées séparément."

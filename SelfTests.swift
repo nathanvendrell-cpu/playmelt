@@ -39,7 +39,8 @@ func runSelfTests() {
     check("metadata external URL rejected", !SteamAppInfo.validArtworkPath("https://attacker.example/library_capsule.jpg"))
     check("metadata unrelated image rejected", !SteamAppInfo.validArtworkPath(artworkHash + "/logo.png"))
     check("metadata exact CDN path retained", SteamAppInfo.artworkURL(appID: "4731620", path: artworkHash + "/library_capsule.jpg") == "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/4731620/" + artworkHash + "/library_capsule.jpg")
-    let prefs = UserDefaults(suiteName: "com.robtech.metalmax.selftest.\(UUID().uuidString)")!
+    let preferenceSuite = "com.robtech.metalmax.selftest.\(UUID().uuidString)"
+    let prefs = UserDefaults(suiteName: preferenceSuite)!
     let model = LibraryModel(home: URL(fileURLWithPath: "/nonexistent-metalmax-fixture"), preferences: prefs)
     check("discovery exposes only native Steam without independent engine", model.discoverRuntimes().allSatisfy { $0.id == "steam-mac" && $0.platform == "mac" })
     check("recent Steam account preferred over autologin", activeSteamAccount(["76561198000000000": ["AutoLogin": "1"], "76561198000000001": ["MostRecent": "1"]]) == "76561198000000001")
@@ -68,6 +69,7 @@ func runSelfTests() {
     gate.shutdown()
     check("shutdown refuses every new dispatch", gate.acquire("other") == nil)
     check("Satisfactory launch profile explicitly selects DX11", ScriptHandler.windowsLaunchArguments(appID: "526870") == ["-applaunch", "526870", "-dx11"])
+    check("known DX12-only game has no DX11 launch profile", ScriptHandler.windowsLaunchArguments(appID: "2584270") == nil)
     check("injected game launch args rejected", ScriptHandler.windowsLaunchArguments(appID: "526870 -exec anything") == nil)
     model.selectedAccountID = "76561198000000000"
     check("account mismatch rejected", !model.acceptAuthenticatedLibrary(accountID: "76561198000000001", list: [["appid": "427520", "name": "Factorio"]]))
@@ -90,6 +92,24 @@ func runSelfTests() {
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
         let cache = temporary.appendingPathComponent("cache")
+        let fixtureHome = temporary.appendingPathComponent("home")
+        let loginConfig = fixtureHome.appendingPathComponent("Library/Application Support/Steam/config")
+        try FileManager.default.createDirectory(at: loginConfig, withIntermediateDirectories: true)
+        try "\"users\" { \"76561198000000000\" { \"PersonaName\" \"Fixture\" \"MostRecent\" \"1\" } }".write(to: loginConfig.appendingPathComponent("loginusers.vdf"), atomically: true, encoding: .utf8)
+        let authenticated = LibraryModel(home: fixtureHome, preferences: prefs)
+        authenticated.selectedAccountID = "76561198000000000"
+        check("empty Steam library cannot overwrite a snapshot", !authenticated.acceptAuthenticatedLibrary(accountID: authenticated.selectedAccountID, list: []))
+        check("duplicate Steam ownership entries rejected", !authenticated.acceptAuthenticatedLibrary(accountID: authenticated.selectedAccountID, list: [["appid":"427520","name":"A"],["appid":"427520","name":"B"]]))
+        check("modern Steam source accepted for matching account", authenticated.acceptAuthenticatedLibrary(accountID: authenticated.selectedAccountID, list: [["appid":"427520","name":"Factorio"]], source: "steamcommunity-profile-gameslist") && authenticated.libraryStatus == "synced")
+        authenticated.beginSteamLibrarySync()
+        check("new sync invalidates stale connected status", authenticated.libraryStatus == "snapshot" && authenticated.authenticatedGames[authenticated.selectedAccountID]?.count == 1 && authenticated.liveAuthenticatedAccounts.isEmpty)
+        let verified180: [[String: Any]] = (0..<180).map { ["appid": String(1000 + $0), "name": "Game \($0)"] }
+        authenticated.games = (0..<195).map { authenticated.makeGame(String(1000 + $0), ownership: "account-cache") }
+        authenticated.mergeVerified(verified180)
+        check("180 verified games replace 195 historical cards", authenticated.games.count == 180 && authenticated.games.allSatisfy { $0.ownership == "authenticated-library" })
+        var otherInstalled = authenticated.makeGame("1194", ownership: "authenticated-library"); otherInstalled.installed = true
+        authenticated.games.append(otherInstalled); authenticated.mergeVerified(verified180)
+        check("unowned local installation preserved without ownership claim", authenticated.games.count == 181 && authenticated.games.first(where: { $0.appId == "1194" })?.ownership == "installed-only")
         let bootstrap = SteamWindowsBootstrap(runtime: RuntimeSetup(root: temporary.appendingPathComponent("runtime")))
         let staleSession = URLSession(configuration: .ephemeral)
         let staleTask = staleSession.downloadTask(with: URL(string: "https://example.invalid/never-requested")!)
@@ -197,9 +217,20 @@ func runSelfTests() {
         let timeoutID = observer.begin(gameID: "fixture", appID: "526870", title: "Fixture", runtime: fixtureRuntime, accountID: accountID) { _ in launched += 1 }!
         observer.receive(ready, id: timeoutID, expired: true) { _ in launched += 1 }
         check("expired job stops without launch", !observer.isActive && launched == 1 && observer.snapshot?["status"] as? String == "timed-out")
+        let launchID = observer.begin(gameID: "fixture", appID: "526870", title: "Fixture", runtime: fixtureRuntime, accountID: accountID) { _ in }!
+        observer.didRequestLaunch(id: launchID, success: true, message: "Requested")
+        observer.launchFailed(id: launchID, message: "Client exited with error")
+        check("late client failure replaces launch-requested status", observer.snapshot?["status"] as? String == "failed")
+        let nextID = observer.begin(gameID: "next", appID: "427520", title: "Next", runtime: fixtureRuntime, accountID: accountID) { _ in }!
+        observer.launchFailed(id: launchID, message: "Old failure")
+        check("late launch failure cannot overwrite another job", observer.snapshot?["id"] as? String == nextID.uuidString && observer.isActive)
+        observer.didRequestLaunch(id: nextID, success: true, message: "Requested")
         observer.shutdown()
+        observer.launchFailed(id: nextID, message: "Callback after shutdown")
+        check("shutdown ignores late client failure", observer.snapshot?["status"] as? String == "launch-requested")
         check("new app session never restores an automatic job", SteamInstallCoordinator().snapshot == nil)
     } catch { failed += 1; print("FAIL temporary fixture setup") }
+    prefs.removePersistentDomain(forName: preferenceSuite)
     print("\(passed) passed; \(failed) failed")
     exit(failed == 0 ? 0 : 1)
 }

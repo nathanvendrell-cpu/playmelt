@@ -10,6 +10,21 @@ enum RuntimeSetupTests {
         func require(_ condition: @autoclosure () -> Bool, _ description: String) {
             if !condition() { fatalError(description) }
         }
+        let layout = scratch.appendingPathComponent("runtime-layout")
+        for relative in RuntimeSetup.requiredEngineFiles {
+            let file = layout.appendingPathComponent(relative)
+            try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data([0x4d, 0x5a]).write(to: file)
+        }
+        require(RuntimeSetup.hasRequiredEngineFiles(layout), "Complete fixture layout")
+        let bridge = layout.appendingPathComponent("renderers/dxmt/wine/x86_64-unix/winemetal.so")
+        try fm.removeItem(at: bridge)
+        require(!RuntimeSetup.hasRequiredEngineFiles(layout), "Missing Metal bridge must block runtime readiness")
+        try Data().write(to: bridge)
+        require(!RuntimeSetup.hasRequiredEngineFiles(layout), "Empty Metal bridge must block runtime readiness")
+        try fm.removeItem(at: bridge)
+        try fm.createDirectory(at: bridge, withIntermediateDirectories: false)
+        require(!RuntimeSetup.hasRequiredEngineFiles(layout), "Directory cannot substitute for a renderer binary")
         for bad in ["/etc/passwd", "../outside", "safe/../../outside", "a\\b", "a\0b"] {
             require(!RuntimeSetup.safeArchivePath(bad), "Rejected traversal: " + bad)
         }

@@ -920,6 +920,7 @@
           dialogGameId: null,
           dismissedJobId: null,
           dialogProgress: null,
+          artworkGeneration: 0,
         };
         let state = {
             accounts: [],
@@ -1028,21 +1029,32 @@
         }
         function art(game) {
           const box = el("span", "game-art");
+          box.disposeArtwork = () => {};
           const sources = imageSources(game);
           if (!sources.length) return box;
           const img = el("img");
-          let sourceIndex = 0;
+          let sourceIndex = 0,
+            retired = false;
           img.alt = "";
           img.loading = "lazy";
           img.decoding = "async";
           img.width = 600;
           img.height = 900;
           img.referrerPolicy = "no-referrer";
-          img.addEventListener("error", () => {
+          const onError = () => {
+            if (retired) return;
             sourceIndex += 1;
             if (sourceIndex < sources.length) img.src = sources[sourceIndex];
-            else img.remove();
-          });
+            else box.disposeArtwork();
+          };
+          box.disposeArtwork = () => {
+            if (retired) return;
+            retired = true;
+            img.removeEventListener("error", onError);
+            img.removeAttribute("src");
+            img.remove();
+          };
+          img.addEventListener("error", onError);
           img.src = sources[0];
           box.append(img);
           return box;
@@ -1584,8 +1596,10 @@
             const current = state.games.find((g) => g.id === game.id);
             if (current) openGame(current);
           });
+          const artwork = art(game);
+          card.disposeArtwork = () => artwork.disposeArtwork?.();
           card.append(
-            art(game),
+            artwork,
             el("span", "store-badge", storeName(game.store)),
             open,
           );
@@ -1617,6 +1631,7 @@
             visibleIds = new Set(visible.map((g) => g.id));
           visible.forEach((game, index) => {
             const signature = JSON.stringify([
+              ui.artworkGeneration,
               game.title,
               game.store,
               platforms(game),
@@ -1630,6 +1645,7 @@
             ]);
             let cached = gameCardCache.get(game.id);
             if (!cached || cached.signature !== signature) {
+              cached?.node.disposeArtwork?.();
               cached = { signature, node: createGameCard(game) };
               gameCardCache.set(game.id, cached);
             }
@@ -1638,8 +1654,12 @@
           });
           while (grid.children.length > visible.length)
             grid.lastElementChild.remove();
-          for (const id of gameCardCache.keys())
-            if (!visibleIds.has(id)) gameCardCache.delete(id);
+          for (const id of gameCardCache.keys()) {
+            if (!visibleIds.has(id)) {
+              gameCardCache.get(id)?.node.disposeArtwork?.();
+              gameCardCache.delete(id);
+            }
+          }
           $("empty").hidden = games.length > 0;
           $("emptyTitle").textContent = !received
             ? "Chargement…"
@@ -1843,7 +1863,7 @@
         );
         $("refresh").addEventListener("click", () => {
           lastGamesSignature = "";
-          gameCardCache.clear();
+          ui.artworkGeneration += 1;
           send("refresh");
         });
         $("installJobButton").addEventListener("click", () => {

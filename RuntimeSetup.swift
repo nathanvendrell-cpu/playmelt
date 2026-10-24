@@ -32,6 +32,9 @@ enum RuntimeSetupError: LocalizedError {
 /// This is a candidate Wine/DXMT combination, not a claim of game compatibility.
 final class RuntimeSetup {
     static let engineID = "playmelt-wine10-dxmt-20261017"
+    // The pinned winemetal.so was built with LC_BUILD_VERSION minos 15.0.
+    // The upstream project's general Sonoma support does not apply to this archive.
+    static var hostSupported: Bool { if #available(macOS 15, *) { return true }; return false }
     static let components: [RuntimeComponent] = [
         .init(name: "Wine Sikarugir 10.0_6", url: "https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineSikarugir10.0_6.tar.xz", sha256: "9da7ee0cbf386522f3a9906943726d9c3c125dbbd9ab120e3cde80e88d6091b2", archivePath: "wswine.bundle", destination: "engine", license: "LGPL-2.1-or-later; Sikarugir-App/Engines", bytes: 166304096),
         .init(name: "Bibliothèques Wine", url: "https://github.com/Sikarugir-App/Wrapper/releases/download/v1.0/Template-1.0.11.tar.xz", sha256: "9fa15479e7ff6abd99c1d07be285fb95f41fc6991586502427152b1f7d6ccb8a", archivePath: "Template-1.0.11.app/Contents/Frameworks", destination: "frameworks", license: "Mixed: LGPL GStreamer/gnutls, Apache-2.0 MoltenVK; Sikarugir-App/Wrapper. Apple renderer excluded.", bytes: 84533420),
@@ -75,9 +78,9 @@ final class RuntimeSetup {
         ]
         let fm = FileManager.default
         let marker = (try? Data(contentsOf: receipt)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        let ready = marker?["engineID"] as? String == Self.engineID &&
+        let ready = Self.hostSupported && marker?["engineID"] as? String == Self.engineID &&
             fm.isExecutableFile(atPath: wine.path) && fm.isExecutableFile(atPath: server.path) &&
-            Self.requiredEngineFiles.allSatisfy { fm.fileExists(atPath: engineRoot.appendingPathComponent($0).path) } &&
+            Self.hasRequiredEngineFiles(engineRoot) &&
             (try? Self.validatePrefix(prefix)) != nil
         let steamEXE = steam.appendingPathComponent("steam.exe")
         let header: Data? = (try? FileHandle(forReadingFrom: steamEXE)).flatMap { handle in
@@ -148,12 +151,22 @@ final class RuntimeSetup {
     }
 
     static let requiredEngineFiles = ["engine/bin/wine", "engine/bin/wineserver",
-        "engine/lib/wine/x86_64-unix/ntdll.so", "engine/lib/wine/x86_64-windows/kernel32.dll",
-        "renderers/dxmt/wine/x86_64-windows/d3d11.dll", "renderers/dxmt/wine/x86_64-windows/dxgi.dll"]
+        "engine/lib/wine/x86_64-unix/ntdll.so", "engine/lib/wine/x86_64-unix/winemac.so",
+        "engine/lib/wine/x86_64-windows/kernel32.dll", "renderers/dxmt/wine/x86_64-unix/winemetal.so"] +
+        ["x86_64-windows", "i386-windows"].flatMap { architecture in
+            ["d3d10core.dll", "d3d11.dll", "dxgi.dll", "winemetal.dll"].map { "renderers/dxmt/wine/\(architecture)/\($0)" }
+        }
+
+    static func hasRequiredEngineFiles(_ root: URL) -> Bool {
+        requiredEngineFiles.allSatisfy { relative in
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: root.appendingPathComponent(relative).path) else { return false }
+            return attributes[.type] as? FileAttributeType == .typeRegular && ((attributes[.size] as? NSNumber)?.int64Value ?? 0) > 0
+        }
+    }
 
     private func prepare() throws {
         let fm = FileManager.default
-        guard #available(macOS 14, *) else { throw RuntimeSetupError.failed("macOS 14 ou plus récent est requis.") }
+        guard Self.hostSupported else { throw RuntimeSetupError.failed("Ce moteur graphique nécessite macOS 15 ou plus récent.") }
         guard FileManager.default.fileExists(atPath: "/Library/Apple/usr/libexec/oah/libRosettaRuntime") else {
             throw RuntimeSetupError.failed("Rosetta 2 est requis. Sa présence doit être vérifiée avant la préparation; Playmelt ne l’installe pas automatiquement.")
         }
@@ -191,7 +204,7 @@ final class RuntimeSetup {
             }
             try linkRuntime(assembled)
             try Self.validateTree(assembled)
-            guard Self.requiredEngineFiles.allSatisfy({ fm.fileExists(atPath: assembled.appendingPathComponent($0).path) }) else {
+            guard Self.hasRequiredEngineFiles(assembled) else {
                 throw RuntimeSetupError.failed("Le contenu du moteur ne correspond pas aux fichiers attendus. Aucune initialisation n’a été lancée.")
             }
             // Sikarugir carries the prepend extension; plain WineHQ does not. Refuse a

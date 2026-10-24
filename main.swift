@@ -54,6 +54,8 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate {
     var webView: WKWebView?
     let model: LibraryModel
     let result: (Bool, String) -> Void
+    private var captureInFlight = false
+    private var captureGeneration = UUID()
     init(model: LibraryModel, result: @escaping (Bool, String) -> Void) { self.model = model; self.result = result }
     static func allowed(_ url: URL) -> Bool {
         guard url.scheme == "https", url.user == nil, url.password == nil, url.port == nil || url.port == 443, let host = url.host?.lowercased() else { return false }
@@ -83,6 +85,7 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url, Self.allowed(url) { webView.load(URLRequest(url: url)) }; return nil
     }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { captureGeneration = UUID(); captureInFlight = false }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { capture(manual: false) }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { result(false, "Steam n’a pas chargé la bibliothèque. Réessayez dans la fenêtre officielle.") }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { result(false, "Connexion Steam indisponible. Vérifiez le réseau puis réessayez.") }
@@ -91,37 +94,38 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard let webView, let url = webView.url, Self.allowed(url), url.host == "steamcommunity.com", url.path.contains("/games") else {
             if manual { result(false, "Terminez la connexion Steam, puis ouvrez Tous les jeux et cliquez sur Lire la bibliothèque affichée.") }; return
         }
-        // Fetch the all-games XML inside the official session. Cookies remain
-        // in this isolated WebKit store and never enter the native bridge.
-        // A partially rendered or lazy-loaded DOM is not an ownership source.
-        let script = """
-        {
-          const viewer = String(window.g_steamID || '');
-          if (!/^\\d{17}$/.test(viewer)) return { status: 'identity-unverified' };
-          const abort = new AbortController();
-          const timeout = setTimeout(() => abort.abort(), 20000);
-          let response, source;
-          try {
-            response = await fetch('/profiles/' + viewer + '/games/?tab=all&xml=1', { credentials: 'same-origin', signal: abort.signal });
-            source = await response.text();
-          }
-          finally { clearTimeout(timeout); }
-          if (!response.ok || !response.url.startsWith('https://steamcommunity.com/profiles/' + viewer + '/games/')) return { status: 'unavailable' };
-          if (source.length > 8000000) return { status: 'too-large' };
-          const xml = new DOMParser().parseFromString(source, 'application/xml');
-          if (xml.querySelector('parsererror,error') || xml.documentElement.tagName !== 'gamesList') return { status: 'unsupported' };
-          const owner = xml.querySelector('gamesList > steamID64')?.textContent?.trim() || '';
-          const games = xml.querySelector('gamesList > games');
-          if (!games || owner !== viewer) return { status: 'identity-unverified' };
-          return { status: 'complete', accountId: owner, games: Array.from(games.children).filter(g => g.tagName === 'game').map(g => ({ appid: g.querySelector('appID')?.textContent?.trim() || '', name: (g.querySelector('name')?.textContent || '').slice(0,200) })) };
+        guard !captureInFlight else { return }
+        guard let scriptURL = Bundle.main.url(forResource: "SteamLibraryReader", withExtension: "js"),
+              let script = try? String(contentsOf: scriptURL, encoding: .utf8) else {
+            result(false, "Le lecteur de bibliothèque Steam est absent. Réinstallez Playmelt."); return
         }
-        """
-        webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { [weak self] evaluation in
-            guard let self else { return }
-            guard case .success(let value) = evaluation, let data = value as? [String: Any], data["status"] as? String == "complete", let id = data["accountId"] as? String, let rows = data["games"] as? [[String: Any]] else {
-                if manual { self.result(false, "La page Steam ne fournit pas une liste complète vérifiable. Aucun jeu n’a été ajouté comme possédé. L’historique local reste disponible.") }; return
+        let generation = UUID(); captureGeneration = generation; captureInFlight = true
+        let selectedAccount = model.selectedAccountID
+        webView.callAsyncJavaScript(script, arguments: ["expectedAccountId": selectedAccount], in: nil, in: .page) { [weak self] evaluation in
+            guard let self, self.captureGeneration == generation else { return }
+            self.captureInFlight = false
+            guard self.model.selectedAccountID == selectedAccount else { return }
+            guard case .success(let value) = evaluation, let data = value as? [String: Any],
+                  data["status"] as? String == "complete", data["source"] as? String == "steamcommunity-profile-gameslist",
+                  let id = data["accountId"] as? String, let rows = data["games"] as? [[String: Any]],
+                  data["count"] as? Int == rows.count else {
+                if manual {
+                    let status: String
+                    if case .success(let value) = evaluation, let data = value as? [String: Any] { status = data["status"] as? String ?? "unavailable" }
+                    else { status = "unavailable" }
+                    let message: String
+                    switch status {
+                    case "account-mismatch", "identity-mismatch": message = "Le compte affiché ne correspond pas au compte Steam sélectionné."
+                    case "signed-out", "identity-unverified": message = "Terminez la connexion dans la fenêtre Steam officielle."
+                    case "wrong-page": message = "Ouvrez Tous les jeux dans votre profil Steam, puis relancez la lecture."
+                    case "empty-unverified": message = "Steam ne fournit pas encore une liste vérifiable. La bibliothèque mémorisée est conservée."
+                    default: message = "Les données complètes de la bibliothèque ne sont pas disponibles sur cette page Steam. Rechargez Tous les jeux, puis réessayez."
+                    }
+                    self.result(false, message)
+                }
+                return
             }
-            guard self.model.acceptAuthenticatedLibrary(accountID: id, list: rows) else {
+            guard self.model.acceptAuthenticatedLibrary(accountID: id, list: rows, source: "steamcommunity-profile-gameslist") else {
                 self.result(false, "Le compte Steam connecté ne correspond pas au compte sélectionné, ou la liste reçue est invalide. Aucun compte n’a été remplacé."); return
             }
             self.result(true, "Bibliothèque Steam synchronisée : \(rows.count) jeux, identité du compte vérifiée.")
@@ -183,6 +187,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         case "syncLibrary", "openSteamLogin":
             guard !model.selectedAccountID.isEmpty else { result(false, "Ouvrez Steam, connectez votre compte puis actualisez Playmelt."); return }
             if authentication == nil { authentication = SteamAuthentication(model: model) { [weak self] ok, message in self?.sendState(); self?.result(ok, message) } }
+            model.beginSteamLibrarySync(); sendState()
             authentication?.open(); result(true, "Fenêtre Steam officielle ouverte. Connectez-vous pour vérifier la bibliothèque complète.")
         case "openSteam": openSteam()
         case "connectEpic": connectEpic()
@@ -270,6 +275,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         guard !installCoordinator.isActive, !runtimeIsBusy, !steamBootstrap.busy else { result(false, "Une opération est déjà en cours."); return }
         guard game.store == "steam", !model.selectedAccountID.isEmpty,
               let runtime = validatedSteamRuntime(game, installing: true, requestedRuntime: runtimeID) else { return }
+        if let reason = SteamGameLaunchProfile.blockReason(appID: game.appId, platform: runtime.platform) { result(false, reason); return }
         let account = model.selectedAccountID
         guard let id = installCoordinator.begin(gameID: game.id, appID: game.appId, title: game.title, runtime: runtime, accountID: account, onReady: { [weak self] id in
             guard let self, !self.closing else { return }
@@ -279,7 +285,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                   let currentRuntime = self.validatedSteamRuntime(installed, installing: false, requestedRuntime: runtime.id) else {
                 self.installCoordinator.didRequestLaunch(id: id, success: false, message: "Installation à vérifier dans Steam."); return
             }
-            self.dispatchSteam(installed, runtime: currentRuntime, installing: false, onFailure: { [weak self] message in self?.installCoordinator.requestFailed(id: id, message: message) }) { [weak self] ok, message in
+            self.dispatchSteam(installed, runtime: currentRuntime, installing: false, onFailure: { [weak self] message in self?.installCoordinator.launchFailed(id: id, message: message) }) { [weak self] ok, message in
                 self?.installCoordinator.didRequestLaunch(id: id, success: ok, message: message)
             }
         }) else { result(false, "Un suivi d’installation est déjà actif."); return }
@@ -289,6 +295,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     }
     func validatedSteamRuntime(_ game: Game, installing: Bool, requestedRuntime: String?) -> Runtime? {
         guard LibraryModel.validAppID(game.appId), let runtime = model.runtimes.first(where: { $0.id == (installing ? requestedRuntime ?? game.runtimeId : game.runtimeId) && $0.available }) else { result(false, "Aucun client Steam utilisable pour cette route."); return nil }
+        if !installing, let reason = SteamGameLaunchProfile.blockReason(appID: game.appId, platform: runtime.platform) { result(false, reason); return nil }
         if runtime.platform == "windows" && (runtimeIsBusy || steamBootstrap.busy) { result(false, "La préparation Windows est encore en cours."); return nil }
         if installing {
             guard !game.complete, let info = model.metadata[game.appId], info.platforms.contains(runtime.platform == "mac" ? "macos" : "windows") else { result(false, "Cette édition ne peut pas être installée avec le client choisi."); return nil }
@@ -298,9 +305,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         return runtime
     }
     static func windowsLaunchArguments(appID: String) -> [String]? {
-        guard LibraryModel.validAppID(appID) else { return nil }
-        let profiles = ["526870": ["-dx11"]]
-        return ["-applaunch", appID] + (profiles[appID] ?? [])
+        SteamGameLaunchProfile.windowsArguments(appID: appID)
     }
     func dispatchSteam(_ game: Game, runtime: Runtime, installing: Bool, onFailure: @escaping (String) -> Void,
                        completion: @escaping (Bool, String) -> Void) {

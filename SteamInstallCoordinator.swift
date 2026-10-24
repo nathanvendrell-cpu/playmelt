@@ -91,6 +91,7 @@ final class SteamInstallCoordinator {
     private var token: UUID?
     private var job: [String: Any]?
     private var readySignature: String?
+    private var closed = false
     private let queue = DispatchQueue(label: "com.robtech.playmelt.install-observer", qos: .utility)
     var onChange: (() -> Void)?
     var snapshot: [String: Any]? { job }
@@ -98,7 +99,7 @@ final class SteamInstallCoordinator {
 
     func begin(gameID: String, appID: String, title: String, runtime: Runtime, accountID: String,
                timeout: TimeInterval = 12 * 60 * 60, onReady: @escaping (UUID) -> Void) -> UUID? {
-        guard token == nil, LibraryModel.validAppID(appID) else { return nil }
+        guard !closed, token == nil, LibraryModel.validAppID(appID) else { return nil }
         let id = UUID(); token = id; readySignature = nil; let started = Date()
         job = ["id": id.uuidString, "gameId": gameID, "appId": appID, "title": title,
                "status": "requesting", "message": "Ouverture de l’installation Steam…", "bytesDownloaded": 0, "bytesTotal": 0,
@@ -145,12 +146,19 @@ final class SteamInstallCoordinator {
         if readyTwice { onReady(id) }
     }
     func requestFailed(id: UUID, message: String) { guard token == id else { return }; finish(status: "failed", message: message) }
+    func launchFailed(id: UUID, message: String) {
+        // Process.run only confirms dispatch. Preserve the last job correlation
+        // so an asynchronous client failure can replace "launch-requested".
+        guard !closed, job?["id"] as? String == id.uuidString,
+              token == id || job?["status"] as? String == "launch-requested" else { return }
+        finish(status: "failed", message: message)
+    }
     func didRequestLaunch(id: UUID, success: Bool, message: String) {
         guard token == id else { return }
         finish(status: success ? "launch-requested" : "failed", message: message)
     }
     func cancel(message: String = "Suivi et lancement automatique arrêtés. Le téléchargement reste géré par Steam.") { if token != nil { finish(status: "cancelled", message: message) } }
-    func shutdown() { stopTimer(); token = nil }
+    func shutdown() { closed = true; stopTimer(); token = nil }
     private func finish(status: String, message: String) {
         stopTimer(); token = nil; readySignature = nil
         job?["status"] = status; job?["message"] = message; job?["cancellable"] = false

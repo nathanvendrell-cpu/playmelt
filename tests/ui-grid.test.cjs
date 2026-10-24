@@ -49,6 +49,7 @@ class Node {
   }
 }
 let imagesCreated = 0;
+const disposedArtwork = [];
 const elements = Object.fromEntries(
   ["gameGrid", "empty", "emptyTitle", "loadMore"].map((id) => [
     id,
@@ -68,9 +69,11 @@ const cache = new Map();
 const context = {
   el: (...args) => new Node(...args),
   $: (id) => elements[id],
-  art: () => {
+  art: (game) => {
     imagesCreated++;
-    return new Node("img");
+    const node = new Node("img");
+    node.disposeArtwork = () => disposedArtwork.push(game.id);
+    return node;
   },
   platforms: (g) => g.platforms,
   platformLabel: () => "Mac",
@@ -117,6 +120,11 @@ assert.equal(
   2,
   "Invisible covers are released, not retained in an unbounded cache",
 );
+assert.deepEqual(
+  disposedArtwork.slice().sort(),
+  [games[0].id, games[2].id].sort(),
+  "Only evicted cards dispose their artwork",
+);
 render();
 assert.equal(
   imagesCreated,
@@ -132,6 +140,19 @@ assert.notEqual(
 );
 assert.equal(elements.gameGrid.children[1], selected[1]);
 assert.equal(imagesCreated, 5);
+assert.equal(
+  disposedArtwork.filter((id) => id === games[1].id).length,
+  1,
+  "Replacing a changed card disposes its old artwork once",
+);
+context.ui.artworkGeneration = 1;
+render();
+assert.equal(
+  imagesCreated,
+  7,
+  "Explicit refresh regenerates visible artwork when new native state arrives",
+);
+assert.equal(cache.size, 2);
 console.log(
-  "Grid reuse passed: pagination appends, filters preserve nodes, hidden cache released, changed card replaced",
+  "Grid reuse passed: retained nodes preserved; eviction/replacement/refresh dispose only retired artwork",
 );

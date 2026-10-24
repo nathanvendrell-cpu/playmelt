@@ -16,6 +16,7 @@ mkdir -p "$PRODUCT/Contents/MacOS" "$PRODUCT/Contents/Resources"
 swiftc -O -module-name MetalMax "$TASK_ROOT/EpicConnector.swift" "$TASK_ROOT/RuntimeSetup.swift" "$TASK_ROOT/Core.swift" "$TASK_ROOT/SteamInstallCoordinator.swift" "$TASK_ROOT/SteamWindowsBootstrap.swift" "$TASK_ROOT/SelfTests.swift" "$TASK_ROOT/main.swift" -o "$PRODUCT/Contents/MacOS/MetalMax" -framework AppKit -framework WebKit -framework Metal
 cp "$TASK_ROOT/index.html" "$PRODUCT/Contents/Resources/index.html"
 cp "$TASK_ROOT/scripts/epic-worker.py" "$PRODUCT/Contents/Resources/epic-worker.py"
+cp "$TASK_ROOT/Resources/SteamLibraryReader.js" "$PRODUCT/Contents/Resources/SteamLibraryReader.js"
 for image in PlaymeltLogo.png PlaymeltIcon.png; do
   if [[ -f "$TASK_ROOT/Resources/$image" ]]; then
     cp "$TASK_ROOT/Resources/$image" "$PRODUCT/Contents/Resources/$image"
@@ -36,7 +37,7 @@ cat > "$PRODUCT/Contents/Info.plist" <<PLIST
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>2.0.0</string>
 <key>CFBundleVersion</key><string>2</string>
-<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
