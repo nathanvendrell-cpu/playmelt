@@ -1,4 +1,7 @@
 Products.noindex/
+Dependencies.noindex/
 Backups.noindex/
 work/
 .DS_Store
+__pycache__/
+*.pyc

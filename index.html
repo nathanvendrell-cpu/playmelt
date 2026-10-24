@@ -1,647 +1,1903 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MetalMax Gaming Hub</title>
-  <style>
-    :root {
-      --bg: #090b10;
-      --card-bg: #131722;
-      --accent: #00f0ff;
-      --accent-glow: rgba(0, 240, 255, 0.4);
-      --purple: #a855f7;
-      --purple-glow: rgba(168, 85, 247, 0.4);
-      --green: #10b981;
-      --text: #ffffff;
-      --text-muted: #8b9bb4;
-      --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: var(--font);
-      overflow-x: hidden;
-      overflow-y: overlay;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* Scrollbar */
-    ::-webkit-scrollbar {
-      width: 8px;
-    }
-    ::-webkit-scrollbar-track {
-      background: rgba(0,0,0,0.2);
-    }
-    ::-webkit-scrollbar-thumb {
-      background: rgba(255,255,255,0.15);
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: rgba(0,240,255,0.4);
-    }
-
-    /* TOP BAR */
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 18px 36px;
-      background: rgba(9, 11, 16, 0.85);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .logo-badge {
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      background: linear-gradient(135deg, var(--accent), var(--purple));
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 900;
-      font-size: 18px;
-      box-shadow: 0 0 20px var(--accent-glow);
-    }
-
-    .brand-title {
-      font-size: 20px;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      background: linear-gradient(to right, #fff, #b9d2fb);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .chip-badge {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 16px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(0, 240, 255, 0.25);
-      border-radius: 20px;
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.3px;
-      box-shadow: 0 0 15px rgba(0, 240, 255, 0.1);
-    }
-
-    .chip-badge span.apple-icon {
-      font-size: 15px;
-      color: #fff;
-    }
-
-    .chip-badge span.turbo-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 8px var(--green);
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.5; transform: scale(0.9); }
-    }
-
-    .top-actions {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .search-input {
-      padding: 9px 16px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 20px;
-      color: #fff;
-      font-size: 13px;
-      outline: none;
-      width: 220px;
-      transition: all 0.2s;
-    }
-
-    .search-input:focus {
-      width: 280px;
-      border-color: var(--accent);
-      background: rgba(0, 240, 255, 0.08);
-      box-shadow: 0 0 15px var(--accent-glow);
-    }
-
-    .btn {
-      padding: 9px 18px;
-      border-radius: 10px;
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      border: none;
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-
-    .btn-primary {
-      background: linear-gradient(135deg, #00f0ff, #0088ff);
-      color: #000;
-      box-shadow: 0 4px 18px var(--accent-glow);
-    }
-
-    .btn-primary:hover {
-      transform: translateY(-2px) scale(1.02);
-      box-shadow: 0 6px 24px var(--accent-glow);
-    }
-
-    .btn-secondary {
-      background: rgba(255, 255, 255, 0.08);
-      color: #fff;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-    }
-
-    .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.15);
-      border-color: rgba(255, 255, 255, 0.3);
-    }
-
-    /* HERO BANNER */
-    .hero {
-      position: relative;
-      margin: 24px 36px 40px;
-      border-radius: 24px;
-      overflow: hidden;
-      min-height: 420px;
-      display: flex;
-      align-items: flex-end;
-      padding: 48px;
-      background: linear-gradient(to top, rgba(9, 11, 16, 0.95) 10%, rgba(9, 11, 16, 0.3) 70%), 
-                  url('https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=2000&auto=format&fit=crop') center/cover no-repeat;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-    }
-
-    .hero-content {
-      max-width: 650px;
-      z-index: 2;
-    }
-
-    .hero-tag {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
-      background: linear-gradient(90deg, rgba(0, 240, 255, 0.2), rgba(168, 85, 247, 0.2));
-      border: 1px solid var(--accent);
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 1px;
-      color: var(--accent);
-      margin-bottom: 16px;
-      text-transform: uppercase;
-    }
-
-    .hero-title {
-      font-size: 44px;
-      font-weight: 900;
-      letter-spacing: -1px;
-      margin-bottom: 12px;
-      line-height: 1.1;
-      text-shadow: 0 4px 20px rgba(0,0,0,0.8);
-    }
-
-    .hero-desc {
-      font-size: 15px;
-      line-height: 1.5;
-      color: var(--text-muted);
-      margin-bottom: 24px;
-      text-shadow: 0 2px 8px rgba(0,0,0,0.8);
-    }
-
-    .hero-actions {
-      display: flex;
-      gap: 16px;
-    }
-
-    /* CAROUSELS (NETFLIX STYLE) */
-    .section {
-      margin-bottom: 40px;
-    }
-
-    .section-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 36px;
-      margin-bottom: 18px;
-    }
-
-    .section-title {
-      font-size: 20px;
-      font-weight: 800;
-      letter-spacing: -0.3px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .section-count {
-      font-size: 12px;
-      padding: 3px 8px;
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 12px;
-      color: var(--text-muted);
-      font-weight: 600;
-    }
-
-    .carousel {
-      display: flex;
-      gap: 20px;
-      overflow-x: auto;
-      padding: 8px 36px 20px;
-      scroll-snap-type: x mandatory;
-      scrollbar-width: none;
-    }
-
-    .carousel::-webkit-scrollbar {
-      display: none;
-    }
-
-    /* GAME CARD */
-    .card {
-      flex: 0 0 220px;
-      border-radius: 16px;
-      background: var(--card-bg);
-      overflow: hidden;
-      cursor: pointer;
-      position: relative;
-      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
-      border: 1px solid rgba(255, 255, 255, 0.05);
-      scroll-snap-align: start;
-    }
-
-    .card:hover {
-      transform: translateY(-8px) scale(1.03);
-      box-shadow: 0 20px 40px rgba(0, 240, 255, 0.25);
-      border-color: var(--accent);
-    }
-
-    .card-thumb {
-      height: 290px;
-      width: 100%;
-      position: relative;
-      background-size: cover;
-      background-position: center;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      padding: 14px;
-    }
-
-    .card-thumb::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(to top, rgba(19, 23, 34, 0.95) 0%, rgba(19, 23, 34, 0.2) 60%, rgba(0,0,0,0.4) 100%);
-      pointer-events: none;
-    }
-
-    .card-badge {
-      align-self: flex-start;
-      z-index: 2;
-      padding: 4px 8px;
-      border-radius: 6px;
-      font-size: 10px;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-    }
-
-    .badge-windows {
-      background: rgba(0, 240, 255, 0.2);
-      border: 1px solid var(--accent);
-      color: var(--accent);
-    }
-
-    .badge-native {
-      background: rgba(16, 185, 129, 0.2);
-      border: 1px solid var(--green);
-      color: var(--green);
-    }
-
-    .badge-aaa {
-      background: rgba(168, 85, 247, 0.2);
-      border: 1px solid var(--purple);
-      color: var(--purple);
-    }
-
-    .card-info {
-      z-index: 2;
-    }
-
-    .card-title {
-      font-size: 16px;
-      font-weight: 700;
-      margin-bottom: 4px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .card-engine {
-      font-size: 11px;
-      color: var(--text-muted);
-      font-weight: 500;
-      margin-bottom: 12px;
-    }
-
-    .card-btn {
-      width: 100%;
-      padding: 8px 0;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 700;
-      border: none;
-      background: linear-gradient(135deg, var(--accent), #0099ff);
-      color: #000;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      transition: all 0.2s;
-    }
-
-    .card-btn:hover {
-      filter: brightness(1.2);
-    }
-
-    /* TELEMETRY FOOTER */
-    footer {
-      margin-top: auto;
-      padding: 24px 36px;
-      background: rgba(19, 23, 34, 0.6);
-      border-top: 1px solid rgba(255, 255, 255, 0.05);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 13px;
-      color: var(--text-muted);
-    }
-
-    .telemetry-grid {
-      display: flex;
-      gap: 24px;
-    }
-
-    .telemetry-item strong {
-      color: #fff;
-      font-weight: 700;
-    }
-  </style>
-</head>
-<body>
-
-  <!-- TOP BAR -->
-  <header>
-    <div class="brand">
-      <div class="logo-badge">⚡</div>
-      <div class="brand-title">METALMAX GAMING HUB</div>
-      <div class="chip-badge">
-        <span class="apple-icon"></span>
-        <span>M3 MAX (40 CORES GPU) • 48 GB VRAM • METAL 4</span>
-        <span class="turbo-dot" title="Turbo M3 Max Activé"></span>
-      </div>
-    </div>
-
-    <div class="top-actions">
-      <input type="text" id="searchInput" class="search-input" placeholder="Rechercher un jeu...">
-      <button class="btn btn-secondary" onclick="openSteamWindows()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.237 2.636 7.855 6.356 9.312l2.457-3.601A4.5 4.5 0 0 1 10.5 16a4.5 4.5 0 0 1 4.5-4.5h.01a4.5 4.5 0 0 1 4.49 4.148l3.666 1.488C23.684 15.65 24 13.882 24 12c0-5.523-4.477-10-10-10z"/></svg>
-        Steam Débridé
-      </button>
-      <button class="btn btn-secondary" onclick="openHighball()">
-        Highball
-      </button>
-      <button class="btn btn-primary" onclick="reapplyBoost()">
-        ⚡ Turbo 100%
-      </button>
-    </div>
-  </header>
-
-  <!-- HERO BANNER -->
-  <div class="hero" id="heroBanner">
-    <div class="hero-content">
-      <div class="hero-tag">⚡ M3 MAX ULTRA ACCELERATED • 120 FPS RETINA XDR</div>
-      <h1 class="hero-title" id="heroTitle">CYBERPUNK 2077</h1>
-      <p class="hero-desc" id="heroDesc">
-        Exécution avec traduction directe D3DMetal 2 (DirectX 12 vers Metal 4). Les 40 cœurs GPU de la puce Apple M3 Max délivrent toute leur puissance avec MetalFX Spatial Upscaling.
-      </p>
-      <div class="hero-actions">
-        <button class="btn btn-primary" style="padding: 14px 28px; font-size: 15px;" onclick="openSteamWindows()">
-          ▶ JOUER EN ULTRA (40 CORES)
-        </button>
-        <button class="btn btn-secondary" style="padding: 14px 24px; font-size: 15px;" onclick="reapplyBoost()">
-          Vérifier l'optimisation
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- SECTION 1: STEAM WINDOWS DÉBRIDÉS -->
-  <div class="section">
-    <div class="section-header">
-      <div class="section-title">
-        <span>🎮 Vos Jeux Steam Windows Débridés</span>
-        <span class="section-count" id="countWindows">0</span>
-      </div>
-    </div>
-    <div class="carousel" id="carouselWindows"></div>
-  </div>
-
-  <!-- SECTION 2: JEUX MAC NATIFS -->
-  <div class="section">
-    <div class="section-header">
-      <div class="section-title">
-        <span>🍏 Vos Jeux Mac Natifs & Metal 4</span>
-        <span class="section-count" id="countNative">0</span>
-      </div>
-    </div>
-    <div class="carousel" id="carouselNative"></div>
-  </div>
-
-  <!-- SECTION 3: CATALOGUE RECOMMANDÉ AAA (1-CLIC INSTALL) -->
-  <div class="section">
-    <div class="section-header">
-      <div class="section-title">
-        <span>🌟 Catalogue Recommandé M3 Max (1-Clic Steam)</span>
-        <span class="section-count">8</span>
-      </div>
-    </div>
-    <div class="carousel" id="carouselAAA"></div>
-  </div>
-
-  <!-- FOOTER TELEMETRY -->
-  <footer>
-    <div class="telemetry-grid">
-      <div class="telemetry-item">Processeur : <strong>Apple M3 Max (16 cœurs)</strong></div>
-      <div class="telemetry-item">Graphismes : <strong>40 cœurs GPU Metal 4</strong></div>
-      <div class="telemetry-item">VRAM : <strong>48 Go Mémoire Unifiée</strong></div>
-      <div class="telemetry-item">Écran : <strong>Liquid Retina XDR (3456x2234)</strong></div>
-    </div>
-    <div>Statut moteur : <strong style="color: var(--green);">D3DMetal 2 + MSync + MetalFX ACTIF (100%)</strong></div>
-  </footer>
-
-  <script>
-    // Bridge helper
-    function callNative(action, payload = {}) {
-      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.metalmax) {
-        window.webkit.messageHandlers.metalmax.postMessage({ action, ...payload });
-      } else {
-        console.log("Native call:", action, payload);
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'nonce-metalmax-local'; style-src 'unsafe-inline'; img-src 'self' metalmaxart: https://shared.fastly.steamstatic.com https://cdn.cloudflare.steamstatic.com https://cdn.akamai.steamstatic.com https://steamcdn-a.akamaihd.net https://cdn1.epicgames.com; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Playmelt</title>
+    <style>
+      :root {
+        --ink: #171b1f;
+        --muted: #5c6570;
+        --line: #44576620;
+        --accent: #234e70;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+        font-size: 13px;
+        color: var(--ink);
+        color-scheme: light;
       }
-    }
-
-    function openSteamWindows() {
-      callNative("openSteamWindows");
-    }
-
-    function openHighball() {
-      callNative("openHighball");
-    }
-
-    function reapplyBoost() {
-      callNative("applyMaxBoost");
-      alert("✅ Turbo Graphique 100% réappliqué : D3DMetal, MSync et MetalFX sont verrouillés au maximum pour votre M3 Max !");
-    }
-
-    function launchGame(path, type) {
-      callNative("launchGame", { path, type });
-    }
-
-    function installSteam(appId) {
-      callNative("installSteamGame", { appId });
-    }
-
-    // Games data
-    const windowsGames = [
-      { id: "the_surge_2", title: "The Surge 2", path: "/Users/robtech/Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/The Surge 2", engine: "D3DMetal 2 (Metal 4)", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/644830/library_600x900.jpg" },
-      { id: "yet_another_zombie_survivors", title: "Yet Another Zombie Survivors", path: "/Users/robtech/Applications/CrossOver/Yet Another Zombie Survivors.app", engine: "D3DMetal 2 (MSync)", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2163330/library_600x900.jpg" },
-      { id: "onimusha", title: "Onimusha WotS Demo", path: "/Users/robtech/Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/OnimushaWotS_Demo", engine: "D3DMetal 2", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/761620/library_600x900.jpg" },
-      { id: "idle_slayer", title: "Idle Slayer", path: "/Users/robtech/Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/Idle Slayer", engine: "DirectX / MSync", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1353300/library_600x900.jpg" },
-      { id: "aniimo", title: "Aniimo", path: "/Users/robtech/Applications/CrossOver/Steam/Steam.app", engine: "D3DMetal 2", bg: "https://images.unsplash.com/photo-1579373903781-fd5c0c30c4cd?q=80&w=600&auto=format&fit=crop" },
-      { id: "star_wars", title: "STAR WARS Zero Company", path: "/Users/robtech/Applications/CrossOver/Steam/Steam.app", engine: "D3DMetal 2", bg: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=600&auto=format&fit=crop" }
-    ];
-
-    const nativeGames = [
-      { id: "stray", title: "Stray", path: "/Users/robtech/Applications/Stray.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1332010/library_600x900.jpg" },
-      { id: "rocket_league", title: "Rocket League", path: "/Users/robtech/Applications/Rocket League.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/252950/library_600x900.jpg" },
-      { id: "factorio", title: "Factorio", path: "/Users/robtech/Applications/Factorio.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/427520/library_600x900.jpg" },
-      { id: "the_crust", title: "The Crust", path: "/Users/robtech/Library/Application Support/Steam/steamapps/common/The Crust", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1465470/library_600x900.jpg" },
-      { id: "terraria", title: "Terraria", path: "/Users/robtech/Applications/Terraria.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/105600/library_600x900.jpg" },
-      { id: "sandustry", title: "Sandustry", path: "/Users/robtech/Applications/Sandustry.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2764460/library_600x900.jpg" },
-      { id: "rogue_legacy", title: "Rogue Legacy", path: "/Users/robtech/Applications/Rogue Legacy.app", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/241600/library_600x900.jpg" },
-      { id: "starbound", title: "Starbound", path: "/Users/robtech/Library/Application Support/Steam/steamapps/common/Starbound", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/211820/library_600x900.jpg" }
-    ];
-
-    const aaaCatalog = [
-      { id: "cyberpunk", title: "Cyberpunk 2077", appId: "1091500", engine: "DirectX 12 / Metal 4", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1091500/library_600x900.jpg" },
-      { id: "elden_ring", title: "Elden Ring", appId: "1245620", engine: "DirectX 12 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1245620/library_600x900.jpg" },
-      { id: "baldurs_gate_3", title: "Baldur's Gate 3", appId: "1086940", engine: "Metal 4 Natif", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1086940/library_600x900.jpg" },
-      { id: "ghost_of_tsushima", title: "Ghost of Tsushima", appId: "2215430", engine: "DirectX 12 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2215430/library_600x900.jpg" },
-      { id: "gta_v", title: "Grand Theft Auto V", appId: "271590", engine: "DirectX 11 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/271590/library_600x900.jpg" },
-      { id: "hogwarts_legacy", title: "Hogwarts Legacy", appId: "990080", engine: "DirectX 12 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/990080/library_600x900.jpg" },
-      { id: "god_of_war", title: "God of War", appId: "1593500", engine: "DirectX 11 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1593500/library_600x900.jpg" },
-      { id: "armored_core_6", title: "Armored Core VI", appId: "1888110", engine: "DirectX 12 / D3DMetal", bg: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1888110/library_600x900.jpg" }
-    ];
-
-    function renderCards() {
-      // Windows
-      const winContainer = document.getElementById("carouselWindows");
-      winContainer.innerHTML = windowsGames.map(g => `
-        <div class="card" onclick="launchGame('${g.path}', 'crossover_steam')">
-          <div class="card-thumb" style="background-image: url('${g.bg}')">
-            <span class="card-badge badge-windows">Windows Steam</span>
-            <div class="card-info">
-              <div class="card-title">${g.title}</div>
-              <div class="card-engine">${g.engine}</div>
-              <button class="card-btn">▶ LANCER</button>
-            </div>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        height: 100vh;
+        overflow: hidden;
+        background: linear-gradient(130deg, #f9fafbea, #dbe0e5e8);
+        -webkit-font-smoothing: antialiased;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        color: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.4;
+      }
+      button,
+      input,
+      select {
+        outline: none;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: 3px solid #3673a4;
+        outline-offset: 4px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      .titlebar {
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        color: #69727b;
+        letter-spacing: 0.02em;
+        user-select: none;
+      }
+      .app {
+        display: grid;
+        grid-template-columns: 190px minmax(0, 1fr);
+        height: calc(100vh - 36px);
+      }
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        padding: 26px 16px 20px;
+        border-right: 1px solid var(--line);
+        background: #edf0f340;
+        gap: 28px;
+      }
+      .brand {
+        padding: 0 9px;
+        font-size: 25px;
+        font-weight: 720;
+        letter-spacing: -1px;
+      }
+      .brand {
+        padding: 0;
+      }
+      .brand img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .nav {
+        display: grid;
+        gap: 5px;
+      }
+      .nav-button {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 11px;
+        min-height: 39px;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        background: transparent;
+        text-align: left;
+        font-size: 12px;
+        font-weight: 540;
+      }
+      .nav-button:hover {
+        background: #ffffff50;
+      }
+      .nav-button[aria-current="page"] {
+        background: linear-gradient(#ffffffb5, #ffffff65);
+        border-color: #ffffffb8;
+        box-shadow: 0 2px 7px #2634410b;
+      }
+      .nav-count {
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        color: var(--muted);
+      }
+      .nav-separator {
+        border: 0;
+        border-top: 1px solid var(--line);
+        margin: 16px 9px;
+      }
+      .side-account {
+        margin-top: auto;
+        padding: 0 3px;
+      }
+      .account-select {
+        width: 100%;
+        padding: 8px 6px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: #ffffff65;
+        font-size: 12px;
+        font-weight: 550;
+      }
+      .account-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: 9px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .text-button {
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--accent);
+        font-size: 10px;
+      }
+      .main {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        min-width: 0;
+      }
+      .toolbar {
+        padding: 27px 30px 19px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+      .toolbar h1 {
+        font-size: 28px;
+        font-weight: 650;
+        letter-spacing: -0.8px;
+        margin: 0;
+        line-height: 1.2;
+      }
+      .toolbar-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .button {
+        border: 1px solid #7a8b9a42;
+        background: linear-gradient(#ffffffd4, #ffffff65);
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 12px;
+        font-weight: 550;
+        min-height: 34px;
+        white-space: nowrap;
+        box-shadow: 0 1px 2px #15283c06;
+      }
+      .button:hover:not(:disabled) {
+        background: #fff;
+        border-color: #738b9e80;
+      }
+      .button.secondary {
+        background: transparent;
+        box-shadow: none;
+      }
+      .button.primary {
+        background: #263b4c;
+        color: #fff;
+        border-color: #263b4c;
+      }
+      .button.primary:hover:not(:disabled) {
+        background: #1a2e3e;
+      }
+      .filters {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 0 30px 22px;
+      }
+      .search {
+        flex: 1;
+        min-width: 120px;
+      }
+      .search input {
+        width: 100%;
+        background: #ffffff70;
+        border: 1px solid #64788b2b;
+        border-radius: 9px;
+        padding: 10px 13px;
+        font-size: 12px;
+      }
+      .search input::placeholder {
+        color: #67727e;
+      }
+      .filter-select {
+        border: 0;
+        background: transparent;
+        padding: 7px 18px 7px 6px;
+        font-size: 12px;
+        max-width: 170px;
+      }
+      .library-pane {
+        padding: 3px 30px 30px;
+        min-height: 0;
+        overflow: auto;
+        flex: 1;
+      }
+      .game-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+        gap: 23px 18px;
+      }
+      .game-card {
+        display: block;
+        position: relative;
+        aspect-ratio: 2/3;
+        overflow: hidden;
+        border: 1px solid #ffffffac;
+        border-radius: 12px;
+        background: #aeb7bf;
+        box-shadow: 0 4px 13px #24374b1c;
+        padding: 0;
+        text-align: left;
+        color: #fff;
+        isolation: isolate;
+      }
+      .game-art {
+        position: absolute;
+        inset: 0;
+        background: #aeb7bf;
+        overflow: hidden;
+      }
+      .game-art img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .game-card:after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          180deg,
+          #00000021 0%,
+          transparent 33%,
+          #07101915 53%,
+          #071019c9 82%,
+          #071019ee 100%
+        );
+        z-index: 1;
+        pointer-events: none;
+      }
+      .game-card:hover,
+      .game-card:focus-within {
+        box-shadow: 0 6px 20px #24374b30;
+        border-color: #fff;
+      }
+      .card-open {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        border-radius: 12px;
+      }
+      .card-open:hover {
+        background: transparent;
+      }
+      .game-card:focus-within {
+        outline: 3px solid #3673a4;
+        outline-offset: 3px;
+      }
+      .card-open:focus-visible {
+        outline: none;
+      }
+      .game-copy,
+      .store-badge {
+        pointer-events: none;
+      }
+      .game-action {
+        pointer-events: auto;
+        border: 0;
+      }
+      .store-badge {
+        position: absolute;
+        left: 12px;
+        top: 12px;
+        z-index: 2;
+        font-size: 10px;
+        line-height: 1;
+        letter-spacing: 0.01em;
+        font-weight: 550;
+        padding: 6px 8px;
+        border-radius: 5px;
+        background: #101b26b8;
+        color: #fff;
+        border: 1px solid #ffffff30;
+      }
+      .game-copy {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        bottom: 15px;
+        z-index: 2;
+        display: block;
+      }
+      .game-title {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        font-size: 16px;
+        font-weight: 650;
+        line-height: 1.23;
+        letter-spacing: -0.3px;
+        text-shadow: 0 1px 6px #0005;
+      }
+      .game-platforms {
+        display: block;
+        font-size: 11px;
+        font-weight: 450;
+        color: #f5f7f9d1;
+        margin-top: 7px;
+      }
+      .game-action {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 7px 11px;
+        border-radius: 6px;
+        background: #fff;
+        color: #1c2c39;
+        font-size: 11px;
+        font-weight: 650;
+        opacity: 0;
+        transform: translateY(3px);
+        transition:
+          opacity 0.12s ease,
+          transform 0.12s ease;
+      }
+      .game-card:hover .game-action,
+      .game-card:focus-within .game-action {
+        opacity: 1;
+        transform: none;
+      }
+      .game-card:not(:hover):not(:focus-within) .game-copy {
+        bottom: -19px;
+      }
+      .game-copy {
+        transition: bottom 0.12s ease;
+      }
+      .empty {
+        max-width: 380px;
+        margin: 80px auto;
+        text-align: center;
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .empty h2 {
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.3px;
+        color: var(--ink);
+        margin: 0 0 12px;
+      }
+      .load-more {
+        display: block;
+        margin: 28px auto 0;
+      }
+      .toast {
+        position: fixed;
+        left: calc(50% + 75px);
+        bottom: 24px;
+        transform: translateX(-50%);
+        z-index: 20;
+        max-width: 560px;
+        display: flex;
+        gap: 18px;
+        align-items: flex-start;
+        background: #f7f9fbf7;
+        border: 1px solid #a6b6c3;
+        border-radius: 10px;
+        box-shadow: 0 6px 24px #23374b30;
+        padding: 13px 17px;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .toast.error {
+        border-color: #ab8a63;
+      }
+      .toast-close {
+        border: 0;
+        background: none;
+        padding: 0 1px;
+        color: #5b6771;
+        font-size: 14px;
+      }
+      .game-dialog {
+        width: 360px;
+        max-width: calc(100vw - 40px);
+        padding: 25px;
+        border: 1px solid #ffffffdb;
+        border-radius: 16px;
+        background: linear-gradient(130deg, #f8fafb, #e2e7ec);
+        box-shadow: 0 20px 80px #081a2e40;
+        color: var(--ink);
+      }
+      .game-dialog::backdrop {
+        background: #10223352;
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+      }
+      .dialog-close {
+        position: absolute;
+        right: 15px;
+        top: 12px;
+        border: 0;
+        background: transparent;
+        font-size: 22px;
+        color: #5c6c79;
+        padding: 3px 5px;
+      }
+      .dialog-store {
+        font-size: 11px;
+        color: var(--muted);
+        margin: 0 28px 9px 0;
+      }
+      .game-dialog h2 {
+        font-size: 23px;
+        font-weight: 630;
+        letter-spacing: -0.6px;
+        line-height: 1.2;
+        margin: 0 0 22px;
+      }
+      .dialog-label {
+        display: block;
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+      .route-select {
+        width: 100%;
+        border: 1px solid #60778c38;
+        border-radius: 8px;
+        padding: 10px;
+        background: #ffffff8c;
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+      .dialog-action {
+        width: 100%;
+      }
+      .setup-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 12px;
+        margin: 0 0 12px;
+      }
+      .setup-progress {
+        width: 100%;
+        height: 6px;
+        display: block;
+        accent-color: #344e63;
+        margin: 0 0 15px;
+      }
+      .setup-cancel {
+        width: 100%;
+        margin-top: 7px;
+      }
+      .dialog-note {
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--muted);
+        margin: 12px 0 0;
+      }
+      .diagnostics {
+        padding: 3px 30px 30px;
+        min-height: 0;
+        overflow: auto;
+        flex: 1;
+      }
+      .diagnostic-panel {
+        border: 1px solid #ffffffb8;
+        border-radius: 13px;
+        background: #ffffff50;
+        padding: 24px;
+        margin: 0 0 18px;
+      }
+      .diagnostic-panel h2 {
+        font-size: 17px;
+        font-weight: 620;
+        letter-spacing: -0.3px;
+        margin: 0 0 21px;
+      }
+      .hardware-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 25px 28px;
+        margin: 0;
+      }
+      .fact dt {
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 7px;
+      }
+      .fact dd {
+        font-size: 21px;
+        font-weight: 550;
+        letter-spacing: -0.4px;
+        margin: 0;
+      }
+      .fact dd.compact {
+        font-size: 13px;
+        line-height: 1.5;
+        letter-spacing: 0;
+      }
+      .diagnostic-note {
+        font-size: 11px;
+        line-height: 1.6;
+        color: var(--muted);
+        margin: 20px 0 0;
+      }
+      .runtime-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 15px;
+        padding: 13px 0;
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+      }
+      .runtime-row:first-child {
+        padding-top: 0;
+      }
+      .runtime-row:last-child {
+        padding-bottom: 0;
+        border: 0;
+      }
+      .runtime-row span:last-child {
+        color: var(--muted);
+      }
+      .diagnostic-list {
+        padding-left: 18px;
+        margin: 0;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+      .diagnostic-list li + li {
+        margin-top: 7px;
+      }
+      @media (max-width: 1100px) {
+        .app {
+          grid-template-columns: 170px minmax(0, 1fr);
+        }
+        .sidebar {
+          padding-left: 12px;
+          padding-right: 12px;
+        }
+        .brand {
+          font-size: 24px;
+        }
+        .toolbar {
+          padding: 24px 24px 18px;
+        }
+        .filters {
+          padding: 0 24px 20px;
+        }
+        .library-pane,
+        .diagnostics {
+          padding-left: 24px;
+          padding-right: 24px;
+        }
+        .game-grid {
+          grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+          gap: 18px 15px;
+        }
+        .game-title {
+          font-size: 15px;
+        }
+        .filter-select {
+          max-width: 145px;
+        }
+      }
+      @media (max-width: 800px) {
+        .app {
+          grid-template-columns: 145px minmax(0, 1fr);
+        }
+        .sidebar {
+          padding: 23px 10px 18px;
+        }
+        .brand {
+          font-size: 21px;
+          padding-left: 5px;
+        }
+        .nav-button {
+          font-size: 11px;
+          padding: 9px 7px;
+        }
+        .nav-count {
+          font-size: 10px;
+        }
+        .toolbar {
+          padding: 23px 18px 17px;
+          gap: 10px;
+        }
+        .toolbar h1 {
+          font-size: 24px;
+        }
+        .toolbar-actions .button {
+          font-size: 10px;
+          padding: 8px 9px;
+        }
+        .filters {
+          padding: 0 18px 18px;
+          gap: 5px;
+          flex-wrap: wrap;
+        }
+        .search {
+          flex-basis: 100%;
+        }
+        .library-pane,
+        .diagnostics {
+          padding-left: 18px;
+          padding-right: 18px;
+        }
+        .game-grid {
+          grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+          gap: 17px 13px;
+        }
+        .game-title {
+          font-size: 14px;
+        }
+        .game-copy {
+          left: 11px;
+          right: 11px;
+        }
+        .store-badge {
+          left: 10px;
+          top: 10px;
+          font-size: 9px;
+        }
+        .hardware-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .account-select {
+          font-size: 10px;
+          padding: 7px 4px;
+        }
+        .account-line {
+          font-size: 9px;
+          flex-wrap: wrap;
+        }
+      }
+      @media (max-width: 560px) {
+        .app {
+          grid-template-columns: 125px minmax(0, 1fr);
+        }
+        .brand {
+          font-size: 20px;
+        }
+        .sidebar {
+          padding-left: 8px;
+          padding-right: 8px;
+        }
+        .toolbar {
+          align-items: flex-start;
+          gap: 8px;
+          padding: 19px 14px 15px;
+        }
+        .toolbar h1 {
+          font-size: 21px;
+        }
+        .toolbar-actions {
+          flex-direction: column;
+          gap: 5px;
+        }
+        .filters {
+          padding: 0 14px 15px;
+        }
+        .filter-select {
+          font-size: 10px;
+          max-width: 130px;
+        }
+        .library-pane,
+        .diagnostics {
+          padding-left: 14px;
+          padding-right: 14px;
+        }
+        .game-grid {
+          grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+          gap: 15px 11px;
+        }
+        .game-title {
+          font-size: 13px;
+        }
+        .game-platforms {
+          font-size: 10px;
+        }
+        .hardware-grid {
+          grid-template-columns: 1fr;
+        }
+        .toast {
+          max-width: calc(100vw - 150px);
+          left: calc(50% + 55px);
+        }
+      }
+      @media (hover: none) {
+        .game-action {
+          opacity: 1;
+          transform: none;
+        }
+        .game-card:not(:hover):not(:focus-within) .game-copy {
+          bottom: 15px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+          animation: none !important;
+          scroll-behavior: auto !important;
+        }
+      }
+      @media (prefers-reduced-transparency: reduce) {
+        body {
+          background: #edf0f3;
+        }
+        .sidebar {
+          background: #e5e9ed;
+        }
+        .diagnostic-panel {
+          background: #f8fafb;
+        }
+        .game-dialog::backdrop {
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="titlebar">Playmelt</div>
+    <div class="app">
+      <aside class="sidebar" aria-label="Navigation principale">
+        <div class="brand">
+          <img
+            src="PlaymeltLogo.png"
+            alt="Playmelt"
+            width="2172"
+            height="724"
+          />
+        </div>
+        <nav class="nav">
+          <button class="nav-button" data-view="library" aria-current="page">
+            <span>Bibliothèque</span
+            ><span class="nav-count" id="countAll">—</span></button
+          ><button class="nav-button" data-view="steam">
+            <span>Steam</span
+            ><span class="nav-count" id="countSteam">—</span></button
+          ><button class="nav-button" data-view="epic">
+            <span>Epic Games</span
+            ><span class="nav-count" id="countEpic">—</span>
+          </button>
+          <hr class="nav-separator" />
+          <button class="nav-button" data-view="diagnostics">
+            <span>État du Mac</span>
+          </button>
+        </nav>
+        <div class="side-account">
+          <select
+            class="account-select"
+            id="accountSelect"
+            aria-label="Compte Steam"
+            disabled
+          >
+            <option>Steam</option>
+          </select>
+          <div class="account-line">
+            <span id="accountStatus">À synchroniser</span
+            ><button class="text-button" id="steamLogin">Connexion</button>
           </div>
         </div>
-      `).join("");
-      document.getElementById("countWindows").innerText = windowsGames.length;
-
-      // Native
-      const natContainer = document.getElementById("carouselNative");
-      natContainer.innerHTML = nativeGames.map(g => `
-        <div class="card" onclick="launchGame('${g.path}', 'native_mac')">
-          <div class="card-thumb" style="background-image: url('${g.bg}')">
-            <span class="card-badge badge-native">Mac Natif</span>
-            <div class="card-info">
-              <div class="card-title">${g.title}</div>
-              <div class="card-engine">${g.engine}</div>
-              <button class="card-btn">▶ LANCER</button>
-            </div>
+      </aside>
+      <main class="main">
+        <header class="toolbar">
+          <h1 id="viewTitle">Bibliothèque</h1>
+          <div class="toolbar-actions">
+            <button class="button" id="installJobButton" hidden>
+              Installation</button
+            ><button class="button secondary" id="refresh">Actualiser</button
+            ><button class="button" id="syncLibrary" disabled>
+              Synchroniser</button
+            ><button class="button secondary" id="openEpic" hidden>
+              Ouvrir Epic Games</button
+            ><button class="button" id="epicAction" hidden>
+              Connecter Epic
+            </button>
           </div>
-        </div>
-      `).join("");
-      document.getElementById("countNative").innerText = nativeGames.length;
-
-      // AAA
-      const aaaContainer = document.getElementById("carouselAAA");
-      aaaContainer.innerHTML = aaaCatalog.map(g => `
-        <div class="card" onclick="installSteam('${g.appId}')">
-          <div class="card-thumb" style="background-image: url('${g.bg}')">
-            <span class="card-badge badge-aaa">100% M3 Max Ready</span>
-            <div class="card-info">
-              <div class="card-title">${g.title}</div>
-              <div class="card-engine">${g.engine}</div>
-              <button class="card-btn" style="background: linear-gradient(135deg, var(--purple), #ec4899); color: #fff;">
-                📥 INSTALLER STEAM
-              </button>
-            </div>
+        </header>
+        <div class="filters" id="filters">
+          <div class="search">
+            <input
+              type="search"
+              id="search"
+              placeholder="Rechercher un jeu"
+              aria-label="Rechercher un jeu"
+              autocomplete="off"
+              spellcheck="false"
+            />
           </div>
+          <select
+            class="filter-select"
+            id="installFilter"
+            aria-label="Filtrer par installation"
+          >
+            <option value="all">Tous les jeux</option>
+            <option value="installed">Installés</option>
+            <option value="not-installed">Non installés</option></select
+          ><select
+            class="filter-select"
+            id="platformFilter"
+            aria-label="Filtrer par plateforme"
+          >
+            <option value="all">Mac & Windows</option>
+            <option value="mac">Mac</option>
+            <option value="windows">Windows</option>
+          </select>
         </div>
-      `).join("");
-    }
-
-    // Search filter
-    document.getElementById("searchInput").addEventListener("input", (e) => {
-      const q = e.target.value.toLowerCase().trim();
-      document.querySelectorAll(".card").forEach(c => {
-        const title = c.querySelector(".card-title").innerText.toLowerCase();
-        c.style.display = title.includes(q) ? "block" : "none";
-      });
-    });
-
-    renderCards();
-  </script>
-</body>
+        <section
+          class="library-pane"
+          id="libraryPane"
+          aria-label="Bibliothèque de jeux"
+        >
+          <div class="game-grid" id="gameGrid" aria-label="Jeux"></div>
+          <div class="empty" id="empty">
+            <h2 id="emptyTitle">Chargement…</h2>
+          </div>
+          <button class="button load-more" id="loadMore" hidden>
+            Afficher davantage
+          </button>
+        </section>
+        <section
+          class="diagnostics"
+          id="diagnostics"
+          aria-label="État du Mac"
+          hidden
+        ></section>
+      </main>
+    </div>
+    <dialog class="game-dialog" id="gameDialog" aria-labelledby="dialogTitle">
+      <button class="dialog-close" id="dialogClose" aria-label="Fermer">
+        ×
+      </button>
+      <p class="dialog-store" id="dialogStore"></p>
+      <h2 id="dialogTitle"></h2>
+      <div id="dialogBody"></div>
+    </dialog>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden>
+      <span id="toastMessage"></span
+      ><button
+        class="toast-close"
+        id="toastClose"
+        aria-label="Fermer la notification"
+      >
+        ×
+      </button>
+    </div>
+    <script nonce="metalmax-local">
+      "use strict";
+      (() => {
+        const $ = (id) => document.getElementById(id);
+        const ui = {
+          view: "library",
+          query: "",
+          install: "all",
+          platform: "all",
+          limit: 48,
+          dialogGameId: null,
+          dismissedJobId: null,
+          dialogProgress: null,
+        };
+        let state = {
+            accounts: [],
+            games: [],
+            runtimes: [],
+            hardware: {},
+            warnings: [],
+            epic: {},
+            libraryStatus: { status: "loading" },
+          },
+          received = false,
+          toastTimer,
+          lastGamesSignature = "";
+        const locale = new Intl.NumberFormat("fr-FR");
+        const gameCardCache = new Map();
+        const allowedActions = new Set([
+          "refresh",
+          "selectAccount",
+          "syncLibrary",
+          "launchGame",
+          "installGame",
+          "openSteam",
+          "openEpic",
+          "connectEpic",
+          "syncEpic",
+          "openSteamLogin",
+          "openGameFolder",
+          "setupWindowsRuntime",
+          "cancelWindowsRuntime",
+          "installSteamWindows",
+          "openWindowsSteam",
+          "installAndPlay",
+          "cancelInstallAndPlay",
+        ]);
+        function el(tag, className, text) {
+          const node = document.createElement(tag);
+          if (className) node.className = className;
+          if (text !== undefined) node.textContent = String(text);
+          return node;
+        }
+        function notify(message, error = false) {
+          $("toastMessage").textContent = message;
+          $("toast").classList.toggle("error", error);
+          $("toast").hidden = false;
+          clearTimeout(toastTimer);
+          toastTimer = setTimeout(() => {
+            $("toast").hidden = true;
+          }, 8500);
+        }
+        function send(action, payload = {}) {
+          if (!allowedActions.has(action)) return;
+          const bridge = window.webkit?.messageHandlers?.metalmax;
+          if (!bridge) {
+            notify("Connexion native indisponible.", true);
+            return;
+          }
+          bridge.postMessage({ action, ...payload });
+        }
+        function imageSources(game) {
+          const sources = [];
+          const appId = String(game.appId ?? "");
+          if (game.store === "steam" && /^[1-9][0-9]{0,9}$/.test(appId)) {
+            for (const [candidate, expectedPath] of [
+              [game.localPortraitURL, "/" + appId + "/portrait"],
+              [game.localImageURL, "/" + appId],
+            ]) {
+              if (!candidate) continue;
+              try {
+                const url = new URL(candidate);
+                if (
+                  url.protocol === "metalmaxart:" &&
+                  url.hostname === "steam" &&
+                  url.pathname === expectedPath &&
+                  !url.username &&
+                  !url.password &&
+                  !url.port &&
+                  !url.search &&
+                  !url.hash
+                )
+                  sources.push(url.href);
+              } catch {}
+            }
+          }
+          for (const candidate of [game.portraitImageURL, game.imageURL]) {
+            if (!candidate) continue;
+            try {
+              const url = new URL(candidate);
+              const allowed = [
+                "shared.fastly.steamstatic.com",
+                "cdn.cloudflare.steamstatic.com",
+                "cdn.akamai.steamstatic.com",
+                "steamcdn-a.akamaihd.net",
+                "cdn1.epicgames.com",
+              ];
+              if (
+                url.protocol === "https:" &&
+                allowed.includes(url.hostname) &&
+                !url.username &&
+                !url.password &&
+                !url.port
+              )
+                sources.push(url.href);
+            } catch {}
+          }
+          return [...new Set(sources)];
+        }
+        function art(game) {
+          const box = el("span", "game-art");
+          const sources = imageSources(game);
+          if (!sources.length) return box;
+          const img = el("img");
+          let sourceIndex = 0;
+          img.alt = "";
+          img.loading = "lazy";
+          img.decoding = "async";
+          img.width = 600;
+          img.height = 900;
+          img.referrerPolicy = "no-referrer";
+          img.addEventListener("error", () => {
+            sourceIndex += 1;
+            if (sourceIndex < sources.length) img.src = sources[sourceIndex];
+            else img.remove();
+          });
+          img.src = sources[0];
+          box.append(img);
+          return box;
+        }
+        function platforms(game) {
+          const known = Array.isArray(game.platforms)
+            ? game.platforms.filter((p) => p === "mac" || p === "windows")
+            : [];
+          if (known.length) return [...new Set(known)];
+          return game.platform === "mac" || game.platform === "windows"
+            ? [game.platform]
+            : [];
+        }
+        function platformLabel(game) {
+          const values = platforms(game);
+          return [
+            values.includes("mac") ? "Mac" : null,
+            values.includes("windows") ? "Windows" : null,
+          ]
+            .filter(Boolean)
+            .join(" · ");
+        }
+        function storeName(store) {
+          return store === "epic" ? "Epic Games" : "Steam";
+        }
+        function normalizedGame(g) {
+          return {
+            ...g,
+            id: String(g.id ?? ""),
+            title: String(g.title || "Jeu sans titre"),
+            store: g.store === "epic" ? "epic" : "steam",
+            installed: g.installed === true,
+            canLaunch: g.canLaunch === true,
+            canInstall: g.canInstall === true,
+            canInstallAndPlay: g.canInstallAndPlay === true,
+            platform: ["mac", "windows"].includes(g.platform)
+              ? g.platform
+              : "unknown",
+          };
+        }
+        function filteredGames() {
+          return state.games
+            .filter(
+              (g) =>
+                (ui.view === "library" || g.store === ui.view) &&
+                (!ui.query ||
+                  g.title.toLocaleLowerCase("fr").includes(ui.query)) &&
+                (ui.install === "all" ||
+                  (ui.install === "installed" ? g.installed : !g.installed)) &&
+                (ui.platform === "all" || platforms(g).includes(ui.platform)),
+            )
+            .sort(
+              (a, b) =>
+                Number(b.installed) - Number(a.installed) ||
+                a.title.localeCompare(b.title, "fr", { sensitivity: "base" }),
+            );
+        }
+        function updateSidebar() {
+          for (const [id, count] of [
+            ["countAll", state.games.length],
+            [
+              "countSteam",
+              state.games.filter((g) => g.store === "steam").length,
+            ],
+            ["countEpic", state.games.filter((g) => g.store === "epic").length],
+          ])
+            $(id).textContent = received ? locale.format(count) : "—";
+          const select = $("accountSelect");
+          select.replaceChildren();
+          if (!state.accounts.length) {
+            select.append(new Option("Steam", ""));
+            select.disabled = true;
+          } else {
+            state.accounts.forEach((a) =>
+              select.append(new Option(a.name || "Compte Steam", a.id)),
+            );
+            select.disabled = false;
+            select.value =
+              state.selectedAccountId ||
+              state.accounts.find((a) => a.selected)?.id ||
+              state.accounts[0].id;
+          }
+          $("accountStatus").textContent =
+            {
+              synced: "Synchronisé",
+              snapshot: "Mémorisé",
+              syncing: "Synchronisation…",
+            }[state.libraryStatus.status] || "À synchroniser";
+          $("accountStatus").title = state.libraryStatus.message || "";
+        }
+        function updateToolbar() {
+          const titles = {
+            library: "Bibliothèque",
+            steam: "Steam",
+            epic: "Epic Games",
+            diagnostics: "État du Mac",
+          };
+          $("viewTitle").textContent = titles[ui.view];
+          const syncing = state.libraryStatus.status === "syncing";
+          $("syncLibrary").disabled = syncing || !state.accounts.length;
+          $("syncLibrary").textContent = syncing
+            ? "Synchronisation…"
+            : "Synchroniser";
+          $("syncLibrary").hidden =
+            ui.view === "diagnostics" || ui.view === "epic";
+          $("openEpic").hidden = ui.view !== "epic";
+          $("epicAction").hidden = ui.view !== "epic";
+          $("epicAction").disabled =
+            !state.epic.available || state.epic.busy === true;
+          $("epicAction").textContent = state.epic.busy
+            ? "Connexion…"
+            : state.epic.authenticated
+              ? "Synchroniser Epic"
+              : "Connecter Epic";
+          $("epicAction").title = state.epic.message || "";
+          $("filters").hidden = ui.view === "diagnostics";
+          $("libraryPane").hidden = ui.view === "diagnostics";
+          $("diagnostics").hidden = ui.view !== "diagnostics";
+          document.querySelectorAll("[data-view]").forEach((button) => {
+            if (button.dataset.view === ui.view)
+              button.setAttribute("aria-current", "page");
+            else button.removeAttribute("aria-current");
+          });
+        }
+        function openGame(game) {
+          ui.dialogGameId = game.id;
+          renderGameDialog(game);
+          if (!$("gameDialog").open) $("gameDialog").showModal();
+        }
+        function renderGameDialog(game) {
+          $("dialogTitle").textContent = game.title;
+          $("dialogStore").textContent = [
+            storeName(game.store),
+            platformLabel(game),
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          const body = $("dialogBody");
+          const previousRuntime =
+            document.getElementById("runtimeSelect")?.value;
+          ui.dialogProgress = null;
+          body.replaceChildren();
+          const job = installJobFor(game);
+          if (job) {
+            renderInstallJob(body, job, game);
+            return;
+          }
+          const needsWindowsEngine =
+            game.store === "steam" &&
+            platforms(game).length === 1 &&
+            platforms(game)[0] === "windows" &&
+            ((!game.canLaunch && !game.canInstall && !game.canInstallAndPlay) ||
+              state.windowsRuntime?.steamBusy === true ||
+              [
+                "downloading",
+                "verifying",
+                "extracting",
+                "initializing",
+              ].includes(state.windowsRuntime?.status));
+          if (needsWindowsEngine) {
+            const runtime = state.windowsRuntime;
+            const busy =
+              runtime &&
+              (runtime.steamBusy === true ||
+                [
+                  "downloading",
+                  "verifying",
+                  "extracting",
+                  "initializing",
+                ].includes(runtime.status));
+            if (busy) {
+              const line = el("div", "setup-line");
+              const phase = el("span"),
+                percent = el("span"),
+                progress = el("progress", "setup-progress");
+              progress.max = 1;
+              line.append(phase, percent);
+              body.append(line, progress);
+              ui.dialogProgress = {
+                kind: "runtime",
+                gameId: game.id,
+                cancellable: !!runtime.cancellable,
+                phase,
+                percent,
+                progress,
+              };
+              patchRuntimeProgress(runtime);
+              if (runtime.cancellable) {
+                const cancel = el(
+                  "button",
+                  "button secondary setup-cancel",
+                  "Annuler",
+                );
+                cancel.addEventListener("click", () => {
+                  cancel.disabled = true;
+                  send("cancelWindowsRuntime");
+                });
+                body.append(cancel);
+              }
+            } else {
+              const steamMissing =
+                runtime?.readyEngine && !runtime.steamInstalled;
+              const steamReady = runtime?.readyEngine && runtime.steamInstalled;
+              const setup = el(
+                "button",
+                "button primary dialog-action",
+                steamMissing
+                  ? "Installer Steam Windows"
+                  : steamReady
+                    ? "Ouvrir Steam Windows"
+                    : runtime
+                      ? "Configurer le moteur"
+                      : "Moteur Windows à configurer",
+              );
+              setup.disabled = !runtime || runtime.steamBusy === true;
+              setup.title = runtime?.message || "";
+              if (runtime)
+                setup.addEventListener("click", () => {
+                  setup.disabled = true;
+                  send(
+                    steamMissing
+                      ? "installSteamWindows"
+                      : steamReady
+                        ? "openWindowsSteam"
+                        : "setupWindowsRuntime",
+                  );
+                });
+              body.append(setup);
+            }
+          } else if (game.canLaunch) {
+            const play = el("button", "button primary dialog-action", "Jouer");
+            play.addEventListener("click", () => {
+              send("launchGame", { gameId: game.id });
+              $("gameDialog").close();
+            });
+            body.append(play);
+          } else if (game.store === "steam" && !game.installed) {
+            const supported = platforms(game);
+            const available = state.runtimes.filter(
+              (r) => r.available && supported.includes(r.platform),
+            );
+            if (
+              (game.canInstall || game.canInstallAndPlay) &&
+              available.length
+            ) {
+              const label = el("label", "dialog-label", "Installer avec");
+              label.htmlFor = "runtimeSelect";
+              const select = el("select", "route-select");
+              select.id = "runtimeSelect";
+              available.forEach((r) => select.append(new Option(r.name, r.id)));
+              if (available.some((r) => r.id === previousRuntime))
+                select.value = previousRuntime;
+              else if (available.some((r) => r.id === game.runtimeId))
+                select.value = game.runtimeId;
+              const install = el(
+                "button",
+                "button primary dialog-action",
+                game.canInstallAndPlay ? "Installer et jouer" : "Installer",
+              );
+              install.addEventListener("click", () => {
+                install.disabled = true;
+                send(
+                  game.canInstallAndPlay ? "installAndPlay" : "installGame",
+                  {
+                    gameId: game.id,
+                    runtimeId: select.value,
+                  },
+                );
+                if (!game.canInstallAndPlay) $("gameDialog").close();
+              });
+              body.append(label, select, install);
+            } else {
+              const open = el(
+                "button",
+                "button primary dialog-action",
+                "Ouvrir Steam",
+              );
+              open.addEventListener("click", () => {
+                send("openSteam");
+                $("gameDialog").close();
+              });
+              body.append(
+                open,
+                el(
+                  "p",
+                  "dialog-note",
+                  supported.length
+                    ? "Environnement compatible indisponible."
+                    : "Plateforme à vérifier dans Steam.",
+                ),
+              );
+            }
+          } else {
+            const open = el(
+              "button",
+              "button primary dialog-action",
+              game.store === "epic" ? "Ouvrir Epic Games" : "Ouvrir Steam",
+            );
+            open.addEventListener("click", () => {
+              send(game.store === "epic" ? "openEpic" : "openSteam");
+              $("gameDialog").close();
+            });
+            body.append(open);
+            if (game.installed)
+              body.append(
+                el("p", "dialog-note", "Lancement direct indisponible."),
+              );
+          }
+        }
+        function installJobFor(game) {
+          const job = state.installJob;
+          return job && job.gameId === game.id && job.id !== ui.dismissedJobId
+            ? job
+            : null;
+        }
+        function jobPhase(job) {
+          return (
+            {
+              requesting: "Demande envoyée",
+              "awaiting-steam": "En attente de Steam",
+              downloading: "Téléchargement",
+              paused: "En pause",
+              validating: "Vérification",
+              installing: "Installation",
+              "disk-space": "Espace disque insuffisant",
+              "launch-requested": "Lancement demandé",
+              failed: "Installation échouée",
+              cancelled: "Suivi arrêté",
+              "timed-out": "Suivi expiré",
+            }[job.status] || "Installation"
+          );
+        }
+        function jobRatio(job) {
+          return ["downloading", "paused"].includes(job.status) &&
+            typeof job.bytesDownloaded === "number" &&
+            Number.isFinite(job.bytesDownloaded) &&
+            job.bytesDownloaded >= 0 &&
+            typeof job.bytesTotal === "number" &&
+            Number.isFinite(job.bytesTotal) &&
+            job.bytesTotal > 0
+            ? Math.max(0, Math.min(1, job.bytesDownloaded / job.bytesTotal))
+            : null;
+        }
+        function renderInstallJob(body, job, game) {
+          const terminal = [
+            "launch-requested",
+            "failed",
+            "cancelled",
+            "timed-out",
+          ].includes(job.status);
+          const line = el("div", "setup-line"),
+            phase = el("span"),
+            percent = el("span");
+          line.append(phase, percent);
+          body.append(line);
+          const progress = terminal ? null : el("progress", "setup-progress");
+          if (progress) {
+            progress.max = 1;
+            body.append(progress);
+          }
+          const note = el("p", "dialog-note");
+          body.append(note);
+          ui.dialogProgress = {
+            kind: "install",
+            gameId: game.id,
+            jobId: job.id,
+            terminal,
+            cancellable: !!job.cancellable,
+            launchRequested: job.status === "launch-requested",
+            phase,
+            percent,
+            progress,
+            note,
+          };
+          patchInstallProgress(job);
+          if (job.cancellable) {
+            const cancel = el(
+              "button",
+              "button secondary setup-cancel",
+              "Arrêter le suivi",
+            );
+            cancel.title = "Le téléchargement Steam continue.";
+            cancel.addEventListener("click", () => {
+              cancel.disabled = true;
+              send("cancelInstallAndPlay");
+            });
+            body.append(cancel);
+          }
+          if (terminal) {
+            const back = el(
+              "button",
+              "button secondary dialog-action",
+              job.status === "launch-requested" ? "Fermer" : "Retour",
+            );
+            back.addEventListener("click", () => {
+              ui.dismissedJobId = job.id;
+              updateJobIndicator();
+              if (job.status === "launch-requested") $("gameDialog").close();
+              else renderGameDialog(game);
+            });
+            body.append(back);
+          }
+        }
+        function patchProgressValues(refs, phase, ratio) {
+          if (refs.phase.textContent !== phase) refs.phase.textContent = phase;
+          const text = ratio === null ? "" : Math.floor(ratio * 100) + " %";
+          if (refs.percent.textContent !== text)
+            refs.percent.textContent = text;
+          refs.percent.hidden = ratio === null;
+          if (refs.progress) {
+            refs.progress.setAttribute("aria-label", phase);
+            if (ratio === null) refs.progress.removeAttribute("value");
+            else if (
+              refs.progress.value !== ratio ||
+              !refs.progress.hasAttribute("value")
+            )
+              refs.progress.value = ratio;
+          }
+        }
+        function patchRuntimeProgress(runtime) {
+          const refs = ui.dialogProgress;
+          const busy =
+            runtime &&
+            (runtime.steamBusy ||
+              [
+                "downloading",
+                "verifying",
+                "extracting",
+                "initializing",
+              ].includes(runtime.status));
+          if (
+            !refs ||
+            refs.kind !== "runtime" ||
+            refs.gameId !== ui.dialogGameId ||
+            !busy ||
+            refs.cancellable !== !!runtime.cancellable
+          )
+            return false;
+          const phase = runtime.steamBusy
+            ? "Installation de Steam"
+            : {
+                downloading: "Téléchargement du moteur",
+                verifying: "Vérification",
+                extracting: "Extraction",
+                initializing: "Initialisation",
+              }[runtime.status];
+          const ratio =
+            !runtime.steamBusy &&
+            runtime.status === "downloading" &&
+            typeof runtime.bytesTotal === "number" &&
+            Number.isFinite(runtime.bytesTotal) &&
+            runtime.bytesTotal > 0 &&
+            typeof runtime.bytesDownloaded === "number" &&
+            Number.isFinite(runtime.bytesDownloaded) &&
+            runtime.bytesDownloaded >= 0
+              ? Math.max(
+                  0,
+                  Math.min(1, runtime.bytesDownloaded / runtime.bytesTotal),
+                )
+              : null;
+          patchProgressValues(refs, phase, ratio);
+          return true;
+        }
+        function patchInstallProgress(job) {
+          const refs = ui.dialogProgress;
+          const terminal =
+            job &&
+            ["launch-requested", "failed", "cancelled", "timed-out"].includes(
+              job.status,
+            );
+          if (
+            !refs ||
+            refs.kind !== "install" ||
+            refs.gameId !== ui.dialogGameId ||
+            !job ||
+            refs.jobId !== job.id ||
+            refs.terminal !== terminal ||
+            refs.cancellable !== !!job.cancellable ||
+            refs.launchRequested !== (job.status === "launch-requested")
+          )
+            return false;
+          patchProgressValues(refs, jobPhase(job), jobRatio(job));
+          const note = ["failed", "disk-space", "timed-out"].includes(
+            job.status,
+          )
+            ? job.message || ""
+            : "";
+          refs.note.hidden = !note;
+          if (refs.note.textContent !== note) refs.note.textContent = note;
+          return true;
+        }
+        function refreshVisibleDialog() {
+          if (!$("gameDialog").open) return;
+          const game = state.games.find((g) => g.id === ui.dialogGameId);
+          if (!game) return;
+          const job = installJobFor(game);
+          if (job && patchInstallProgress(job)) return;
+          if (!job && patchRuntimeProgress(state.windowsRuntime)) return;
+          renderGameDialog(game);
+        }
+        function updateJobIndicator() {
+          const job = state.installJob;
+          const active = job && job.id !== ui.dismissedJobId;
+          const header = $("installJobButton");
+          header.hidden = !active;
+          if (active) {
+            const ratio = jobRatio(job);
+            header.textContent =
+              jobPhase(job) +
+              (ratio !== null ? " " + Math.floor(ratio * 100) + " %" : "");
+            header.title = job.title || "";
+          }
+          document
+            .querySelectorAll(".game-action[data-game-id]")
+            .forEach((button) => {
+              const following = active && button.dataset.gameId === job.gameId;
+              const label = following ? "Suivre" : button.dataset.defaultLabel;
+              if (button.textContent !== label) button.textContent = label;
+            });
+        }
+        function createGameCard(game) {
+          const card = el("article", "game-card");
+          card.dataset.gameId = game.id;
+          const action = game.canLaunch
+            ? "Jouer"
+            : game.canInstallAndPlay
+              ? "Installer et jouer"
+              : game.canInstall
+                ? "Installer"
+                : "Ouvrir";
+          const open = el("button", "card-open");
+          open.type = "button";
+          open.setAttribute(
+            "aria-label",
+            `Ouvrir la fiche · ${game.title} · ${storeName(game.store)}${platformLabel(game) ? " · " + platformLabel(game) : ""}`,
+          );
+          open.title = game.title;
+          open.addEventListener("click", () => {
+            const current = state.games.find((g) => g.id === game.id);
+            if (current) openGame(current);
+          });
+          card.append(
+            art(game),
+            el("span", "store-badge", storeName(game.store)),
+            open,
+          );
+          const copy = el("span", "game-copy");
+          copy.append(el("span", "game-title", game.title));
+          if (platformLabel(game))
+            copy.append(el("span", "game-platforms", platformLabel(game)));
+          const actionButton = el("button", "game-action", action);
+          actionButton.type = "button";
+          actionButton.dataset.gameId = game.id;
+          actionButton.dataset.defaultLabel = action;
+          actionButton.setAttribute("aria-label", `${action} · ${game.title}`);
+          actionButton.addEventListener("click", () => {
+            const current = state.games.find((g) => g.id === game.id);
+            if (!current) return;
+            if (installJobFor(current)) openGame(current);
+            else if (current.canLaunch)
+              send("launchGame", { gameId: current.id });
+            else openGame(current);
+          });
+          copy.append(actionButton);
+          card.append(copy);
+          return card;
+        }
+        function renderLibrary() {
+          const games = filteredGames();
+          const grid = $("gameGrid");
+          const visible = games.slice(0, ui.limit),
+            visibleIds = new Set(visible.map((g) => g.id));
+          visible.forEach((game, index) => {
+            const signature = JSON.stringify([
+              game.title,
+              game.store,
+              platforms(game),
+              game.canLaunch,
+              game.canInstall,
+              game.canInstallAndPlay,
+              game.localPortraitURL,
+              game.localImageURL,
+              game.portraitImageURL,
+              game.imageURL,
+            ]);
+            let cached = gameCardCache.get(game.id);
+            if (!cached || cached.signature !== signature) {
+              cached = { signature, node: createGameCard(game) };
+              gameCardCache.set(game.id, cached);
+            }
+            if (grid.children[index] !== cached.node)
+              grid.insertBefore(cached.node, grid.children[index] || null);
+          });
+          while (grid.children.length > visible.length)
+            grid.lastElementChild.remove();
+          for (const id of gameCardCache.keys())
+            if (!visibleIds.has(id)) gameCardCache.delete(id);
+          $("empty").hidden = games.length > 0;
+          $("emptyTitle").textContent = !received
+            ? "Chargement…"
+            : ui.query || ui.install !== "all" || ui.platform !== "all"
+              ? "Aucun résultat"
+              : ui.view === "epic"
+                ? "Aucun jeu Epic détecté"
+                : "Aucun jeu détecté";
+          $("loadMore").hidden = games.length <= ui.limit;
+          $("loadMore").textContent =
+            `Afficher les ${Math.min(48, Math.max(0, games.length - ui.limit))} suivants`;
+          updateJobIndicator();
+        }
+        function fact(label, value, compact = false) {
+          const item = el("div", "fact");
+          item.append(
+            el("dt", "", label),
+            el("dd", compact ? "compact" : "", value),
+          );
+          return item;
+        }
+        function renderDiagnostics() {
+          const panel = $("diagnostics");
+          panel.replaceChildren();
+          const h = state.hardware;
+          const top = el("section", "diagnostic-panel");
+          top.append(el("h2", "", "Matériel"));
+          const grid = el("dl", "hardware-grid");
+          grid.append(
+            fact("Puce", h.chip || "Indisponible"),
+            fact(
+              "Mémoire unifiée",
+              h.memoryGB ? `${locale.format(h.memoryGB)} Go` : "Indisponible",
+            ),
+            fact(
+              "Cœurs CPU",
+              h.cpuCores ? locale.format(h.cpuCores) : "Indisponible",
+            ),
+            fact(
+              "Swap utilisé",
+              typeof h.swapUsedGB === "number"
+                ? `${locale.format(h.swapUsedGB)} Go`
+                : "Indisponible",
+            ),
+            fact("Graphismes", h.gpuName || "Indisponible", true),
+            fact(
+              "Économie d’énergie",
+              typeof h.lowPowerMode === "boolean"
+                ? h.lowPowerMode
+                  ? "Activée"
+                  : "Désactivée"
+                : "Indisponible",
+              true,
+            ),
+            fact(
+              "État thermique",
+              {
+                nominal: "Normal",
+                fair: "Modéré",
+                serious: "Élevé",
+                critical: "Critique",
+              }[h.thermalState] ||
+                h.thermalState ||
+                "Indisponible",
+              true,
+            ),
+          );
+          top.append(
+            grid,
+            el(
+              "p",
+              "diagnostic-note",
+              "Le volume de swap ne mesure pas la pression mémoire instantanée.",
+            ),
+          );
+          panel.append(top);
+          const runtimes = el("section", "diagnostic-panel");
+          runtimes.append(el("h2", "", "Clients & environnements"));
+          for (const runtime of state.runtimes) {
+            const row = el("div", "runtime-row");
+            row.append(
+              el("span", "", runtime.name),
+              el("span", "", runtime.available ? "Disponible" : "Absent"),
+            );
+            runtimes.append(row);
+          }
+          panel.append(runtimes);
+          if (state.warnings.length) {
+            const warnings = el("section", "diagnostic-panel");
+            warnings.append(el("h2", "", "À vérifier"));
+            const list = el("ul", "diagnostic-list");
+            state.warnings.forEach((w) =>
+              list.append(
+                el("li", "", typeof w === "string" ? w : w.message || ""),
+              ),
+            );
+            warnings.append(list);
+            panel.append(warnings);
+          }
+          const sync = el("section", "diagnostic-panel");
+          sync.append(
+            el("h2", "", "Steam"),
+            el(
+              "p",
+              "diagnostic-note",
+              state.libraryStatus.message || "Aucune synchronisation.",
+            ),
+          );
+          if (state.libraryStatus.updatedAt) {
+            const date = new Date(state.libraryStatus.updatedAt);
+            if (!Number.isNaN(date.getTime()))
+              sync.append(
+                el("p", "diagnostic-note", date.toLocaleString("fr-FR")),
+              );
+          }
+          panel.append(sync);
+        }
+        function render() {
+          updateSidebar();
+          updateToolbar();
+          if (ui.view === "diagnostics") renderDiagnostics();
+          else renderLibrary();
+        }
+        window.onNativeState = (incoming) => {
+          if (!incoming || typeof incoming !== "object") return;
+          const nextGames = Array.isArray(incoming.games)
+            ? incoming.games.map(normalizedGame).filter((g) => g.id)
+            : state.games;
+          const signature = JSON.stringify(nextGames);
+          const libraryChanged = !received || signature !== lastGamesSignature;
+          lastGamesSignature = signature;
+          state = {
+            ...state,
+            ...incoming,
+            accounts: Array.isArray(incoming.accounts)
+              ? incoming.accounts
+              : state.accounts,
+            games: nextGames,
+            runtimes: Array.isArray(incoming.runtimes)
+              ? incoming.runtimes
+              : state.runtimes,
+            hardware: incoming.hardware || state.hardware,
+            warnings: Array.isArray(incoming.warnings)
+              ? incoming.warnings
+              : state.warnings,
+            epic: incoming.epic || state.epic,
+            libraryStatus: incoming.libraryStatus || state.libraryStatus,
+          };
+          received = true;
+          updateSidebar();
+          updateToolbar();
+          if (ui.view === "diagnostics") renderDiagnostics();
+          else if (libraryChanged) renderLibrary();
+          updateJobIndicator();
+          refreshVisibleDialog();
+        };
+        window.onNativeRuntime = (snapshot) => {
+          if (!snapshot || typeof snapshot !== "object") return;
+          state.windowsRuntime = snapshot;
+          refreshVisibleDialog();
+        };
+        window.onNativeInstallJob = (job) => {
+          if (job !== null && (!job || typeof job !== "object")) return;
+          state.installJob = job;
+          updateJobIndicator();
+          refreshVisibleDialog();
+        };
+        window.onNativeResult = (result) => {
+          if (result && typeof result === "object")
+            notify(
+              String(result.message || "Action terminée."),
+              result.ok === false,
+            );
+        };
+        document.querySelectorAll("[data-view]").forEach((button) =>
+          button.addEventListener("click", () => {
+            ui.view = button.dataset.view;
+            ui.limit = 48;
+            updateToolbar();
+            if (ui.view === "diagnostics") renderDiagnostics();
+            else renderLibrary();
+          }),
+        );
+        $("search").addEventListener("input", (event) => {
+          ui.query = event.target.value.trim().toLocaleLowerCase("fr");
+          ui.limit = 48;
+          renderLibrary();
+        });
+        $("installFilter").addEventListener("change", (event) => {
+          ui.install = event.target.value;
+          ui.limit = 48;
+          renderLibrary();
+        });
+        $("platformFilter").addEventListener("change", (event) => {
+          ui.platform = event.target.value;
+          ui.limit = 48;
+          renderLibrary();
+        });
+        $("accountSelect").addEventListener("change", (event) =>
+          send("selectAccount", { accountId: event.target.value }),
+        );
+        $("refresh").addEventListener("click", () => {
+          lastGamesSignature = "";
+          gameCardCache.clear();
+          send("refresh");
+        });
+        $("installJobButton").addEventListener("click", () => {
+          const game = state.games.find(
+            (g) => g.id === state.installJob?.gameId,
+          );
+          if (game) openGame(game);
+        });
+        $("syncLibrary").addEventListener("click", () => send("syncLibrary"));
+        $("openEpic").addEventListener("click", () => send("openEpic"));
+        $("epicAction").addEventListener("click", () =>
+          send(state.epic.authenticated ? "syncEpic" : "connectEpic"),
+        );
+        $("steamLogin").addEventListener("click", () => send("openSteamLogin"));
+        $("loadMore").addEventListener("click", () => {
+          ui.limit += 48;
+          renderLibrary();
+        });
+        $("toastClose").addEventListener("click", () => {
+          $("toast").hidden = true;
+          clearTimeout(toastTimer);
+        });
+        $("gameDialog").addEventListener("close", () => {
+          ui.dialogProgress = null;
+        });
+        $("dialogClose").addEventListener("click", () =>
+          $("gameDialog").close(),
+        );
+        $("gameDialog").addEventListener("click", (event) => {
+          if (event.target === $("gameDialog")) {
+            const r = $("gameDialog").getBoundingClientRect();
+            if (
+              event.clientX < r.left ||
+              event.clientX > r.right ||
+              event.clientY < r.top ||
+              event.clientY > r.bottom
+            )
+              $("gameDialog").close();
+          }
+        });
+        document.addEventListener("keydown", (event) => {
+          if (
+            (event.metaKey || event.ctrlKey) &&
+            event.key.toLowerCase() === "f" &&
+            ui.view !== "diagnostics"
+          ) {
+            event.preventDefault();
+            $("search").focus();
+          }
+          if (event.key === "Escape") $("toast").hidden = true;
+        });
+        render();
+        send("refresh");
+      })();
+    </script>
+  </body>
 </html>
