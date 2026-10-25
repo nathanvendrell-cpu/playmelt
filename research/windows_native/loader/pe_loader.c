@@ -18,6 +18,9 @@
 #define PM_MAX_DLLS 64u
 #define PM_MAX_RELOCS 4096u
 #define PM_MAX_BLOCKS 256u
+#define PM_MAX_EXPORTS 1024u
+#define PM_MAX_EXPORT_NAMES 1024u
+#define PM_MAX_EXPORT_STRINGS (128u * 1024u)
 #define PM_SCN_EXECUTE 0x20000000u
 #define PM_SCN_READ 0x40000000u
 #define PM_SCN_WRITE 0x80000000u
@@ -27,6 +30,21 @@ typedef struct {
 } pm_section;
 
 typedef struct {
+    uint32_t rva, forwarder_offset;
+    pm_pe_export_kind kind; /* 0 is an ordinal hole, never returned as an address. */
+    int executable, writable;
+} pm_export_entry;
+typedef struct { uint32_t name_offset, index; } pm_export_name;
+struct pm_pe_export_catalog {
+    const void *bound_mapping;
+    size_t bound_mapping_size;
+    uint32_t image_size, base, count, name_count, string_bytes;
+    pm_export_entry entries[PM_MAX_EXPORTS];
+    pm_export_name names[PM_MAX_EXPORT_NAMES];
+    char strings[PM_MAX_EXPORT_STRINGS];
+};
+
+typedef struct {
     const uint8_t *bytes;
     size_t size, page_size, mapping_size;
     uint64_t image_base;
@@ -34,6 +52,7 @@ typedef struct {
     uint32_t dirs[16][2];
     pm_section sections[PM_MAX_SECTIONS];
     uint8_t *mapping, *permissions;
+    struct pm_pe_export_catalog *exports;
     char *error;
     size_t error_cap;
 } pm_loader;
@@ -126,7 +145,6 @@ static int parse_headers(pm_loader *p) {
     if (p->section_count == 0 || p->section_count > PM_MAX_SECTIONS)
         return fail(p, "section-limit: expected 1..32 sections");
     if (!(attributes & 0x0002)) return fail(p, "unsupported-image: executable-image flag is absent");
-    if (attributes & 0x2000) return fail(p, "unsupported-dll: module initialization is not implemented");
     if (attributes & 0x0001) return fail(p, "unsupported-image: relocation-stripped image");
     size_t opt_offset = (size_t)pe + 24;
     if (opt_size < 112 || opt_size > 4096 || !within(opt_offset, opt_size, p->size))
@@ -138,6 +156,8 @@ static int parse_headers(pm_loader *p) {
         !power_of_two(file_align) || file_align < 512 || file_align > 65536 || file_align > section_align)
         return fail(p, "unsupported-alignment: invalid section/file alignment");
     p->image_base = u64(opt + 24); p->entry = u32(opt + 16);
+    int is_dll = (attributes & 0x2000) != 0;
+    if (is_dll && p->entry != 0) return fail(p, "unsupported-dll: nonzero DLL initialization entry point");
     p->image_size = u32(opt + 56); p->header_size = u32(opt + 60);
     if (p->image_size == 0 || p->image_size > PM_MAX_IMAGE || p->image_size % section_align != 0 ||
         p->header_size == 0 || p->header_size > 1024u * 1024u || p->header_size % file_align != 0 ||
@@ -177,7 +197,7 @@ static int parse_headers(pm_loader *p) {
         }
     }
     static const char *unsupported[16] = {
-        "unsupported-directory: exports", NULL, "unsupported-directory: resources",
+        NULL, NULL, "unsupported-directory: resources",
         "unsupported-directory: exception/unwind", "unsupported-directory: certificates", NULL,
         "unsupported-directory: debug", "unsupported-directory: architecture",
         "unsupported-directory: global-pointer", "unsupported-directory: TLS",
@@ -193,9 +213,11 @@ static int parse_headers(pm_loader *p) {
         }
         p->dirs[i][0] = rva; p->dirs[i][1] = size;
     }
-    const pm_section *entry_section = section_for(p, p->entry, 1);
-    if (p->entry == 0 || entry_section == NULL || !(entry_section->flags & PM_SCN_EXECUTE) || raw_at(p, p->entry, 1) == NULL)
-        return fail(p, "invalid-entry: entry point must be file-backed in an executable section");
+    if (!is_dll) {
+        const pm_section *entry_section = section_for(p, p->entry, 1);
+        if (p->entry == 0 || entry_section == NULL || !(entry_section->flags & PM_SCN_EXECUTE) || raw_at(p, p->entry, 1) == NULL)
+            return fail(p, "invalid-entry: EXE entry point must be file-backed in an executable section");
+    }
     long page = sysconf(_SC_PAGESIZE);
     if (page < 4096 || page > 65536 || !power_of_two((uint32_t)page))
         return fail(p, "unsupported-host: unexpected host page size");
@@ -211,6 +233,115 @@ static int parse_headers(pm_loader *p) {
         if (s->flags & PM_SCN_WRITE) protection |= PROT_WRITE | PROT_READ;
         if (s->flags & PM_SCN_EXECUTE) protection |= PROT_EXEC | PROT_READ;
         if (!mark_permissions(p, s->rva, s->extent, protection)) return 0;
+    }
+    return 1;
+}
+
+static int export_string(pm_loader *p, const char *text, uint32_t *offset) {
+    size_t size = strlen(text) + 1;
+    struct pm_pe_export_catalog *catalog = p->exports;
+    if (!within(catalog->string_bytes, size, PM_MAX_EXPORT_STRINGS))
+        return fail(p, "export-limit: strings exceed 128 KiB");
+    *offset = catalog->string_bytes;
+    memcpy(catalog->strings + catalog->string_bytes, text, size);
+    catalog->string_bytes += (uint32_t)size;
+    return 1;
+}
+
+/* Descriptive grammar only. Module identifiers are not paths. Splitting at the
+ * last dot permits OTHER.dll.Name; no file is opened and no target is resolved. */
+static int valid_forwarder(const char *text) {
+    const char *dot = strrchr(text, '.');
+    if (dot == NULL || dot == text || dot[1] == '\0' || text[0] == '.' || dot[-1] == '.') return 0;
+    for (const char *c = text; c < dot; ++c) {
+        int allowed = (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+                      (*c >= '0' && *c <= '9') || *c == '_' || *c == '-' || *c == '.';
+        if (!allowed || (*c == '.' && c + 1 < dot && c[1] == '.')) return 0;
+    }
+    if (dot[1] == '#') {
+        const char *digits = dot + 2;
+        uint64_t ordinal = 0;
+        if (*digits == '\0') return 0;
+        for (; *digits; ++digits) {
+            if (*digits < '0' || *digits > '9') return 0;
+            ordinal = ordinal * 10 + (unsigned)(*digits - '0');
+            if (ordinal > UINT32_MAX) return 0;
+        }
+    }
+    return 1;
+}
+
+static int ranges_overlap(uint32_t a, uint32_t asize, uint32_t b, uint32_t bsize) {
+    return asize && bsize && (uint64_t)a < (uint64_t)b + bsize && (uint64_t)b < (uint64_t)a + asize;
+}
+
+static int parse_exports(pm_loader *p) {
+    uint32_t start = p->dirs[0][0], size = p->dirs[0][1];
+    if (start == 0) return 1;
+    const uint8_t *header = raw_at(p, start, 40);
+    if (size < 40 || header == NULL) return fail(p, "invalid-exports: truncated directory");
+    if (u32(header) != 0) return fail(p, "invalid-exports: reserved flags are nonzero");
+    uint32_t dll_rva = u32(header + 12), base = u32(header + 16), count = u32(header + 20);
+    uint32_t names = u32(header + 24), eat = u32(header + 28), npt = u32(header + 32), ord = u32(header + 36);
+    if (count == 0 || count > PM_MAX_EXPORTS || names > PM_MAX_EXPORT_NAMES)
+        return fail(p, "export-limit: expected 1..1024 addresses and at most 1024 names");
+    if ((uint64_t)base + count - 1 > UINT32_MAX)
+        return fail(p, "invalid-exports: ordinal base overflows uint32");
+    const char *dll = ascii_at(p, dll_rva, 128);
+    if (dll == NULL) return fail(p, "invalid-exports: module name is not bounded printable ASCII");
+    const uint8_t *addresses = raw_at(p, eat, (size_t)count * 4);
+    const uint8_t *name_table = names ? raw_at(p, npt, (size_t)names * 4) : NULL;
+    const uint8_t *ord_table = names ? raw_at(p, ord, (size_t)names * 2) : NULL;
+    if (addresses == NULL || (names && (name_table == NULL || ord_table == NULL)))
+        return fail(p, "invalid-exports: unbacked address/name/ordinal table");
+    uint32_t ranges[4][2] = {{start, 40}, {eat, count * 4}, {npt, names * 4}, {ord, names * 2}};
+    for (unsigned i = 0; i < 4; ++i)
+        for (unsigned j = 0; j < i; ++j)
+            if (ranges_overlap(ranges[i][0], ranges[i][1], ranges[j][0], ranges[j][1]))
+                return fail(p, "invalid-exports: overlapping structural tables");
+    p->exports = calloc(1, sizeof(*p->exports));
+    if (p->exports == NULL) return fail(p, "allocation-failed: export catalogue");
+    struct pm_pe_export_catalog *catalog = p->exports;
+    catalog->base = base; catalog->count = count; catalog->name_count = names;
+    catalog->image_size = p->image_size;
+    uint32_t unused_module_offset = 0;
+    if (!export_string(p, dll, &unused_module_offset)) return 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        pm_export_entry *entry = &catalog->entries[i];
+        entry->rva = u32(addresses + (size_t)i * 4);
+        if (entry->rva == 0) continue; /* Valid ordinal hole; lookup will refuse. */
+        if (entry->rva >= start && (uint64_t)entry->rva < (uint64_t)start + size) {
+            const char *forwarder = ascii_at(p, entry->rva, 512);
+            if (forwarder == NULL || !within(entry->rva - start, strlen(forwarder) + 1, size))
+                return fail(p, "invalid-exports: truncated or unbounded forwarder");
+            if (!valid_forwarder(forwarder)) return fail(p, "invalid-exports: malformed forwarder description");
+            entry->kind = PM_PE_EXPORT_FORWARDER;
+            if (!export_string(p, forwarder, &entry->forwarder_offset)) return 0;
+        } else {
+            const pm_section *section = section_for(p, entry->rva, 1);
+            if (section == NULL || !(p->permissions[entry->rva / p->page_size] & PROT_READ))
+                return fail(p, "invalid-exports: direct target is not in a readable mapped section");
+            int protection = p->permissions[entry->rva / p->page_size];
+            entry->executable = (protection & PROT_EXEC) != 0;
+            entry->writable = (protection & PROT_WRITE) != 0;
+            if ((entry->executable && entry->writable) || (entry->executable && raw_at(p, entry->rva, 1) == NULL))
+                return fail(p, "invalid-exports: executable target is writable or unbacked");
+            entry->kind = PM_PE_EXPORT_DIRECT;
+        }
+    }
+    const char *previous_name = NULL;
+    for (uint32_t i = 0; i < names; ++i) {
+        uint32_t name_rva = u32(name_table + (size_t)i * 4);
+        uint32_t index = u16(ord_table + (size_t)i * 2);
+        const char *name = ascii_at(p, name_rva, 256);
+        if (name == NULL) return fail(p, "invalid-exports: name is not bounded printable ASCII");
+        if (index >= count || catalog->entries[index].kind == 0)
+            return fail(p, "invalid-exports: name refers to an invalid index or ordinal hole");
+        if (previous_name != NULL && strcmp(previous_name, name) >= 0)
+            return fail(p, "invalid-exports: names are not strictly sorted or are duplicated");
+        previous_name = name;
+        catalog->names[i].index = index;
+        if (!export_string(p, name, &catalog->names[i].name_offset)) return 0;
     }
     return 1;
 }
@@ -295,15 +426,23 @@ static int bind_imports(pm_loader *p, pm_import_resolver resolver, void *context
             slots[slot_count++] = (uint32_t)iat64;
             if (value == 0) { put64(p->mapping + (uint32_t)iat64, 0); break; }
             if (symbol_count >= PM_MAX_IMPORTS) return fail(p, "import-limit: more than 1024 named symbols");
-            if (value & (UINT64_C(1) << 63)) return fail(p, "unsupported-import: ordinal resolution is not implemented");
-            if (value >= UINT64_C(0x80000000) || raw_at(p, (uint32_t)value, 2) == NULL)
-                return fail(p, "invalid-imports: hint/name RVA is invalid");
-            const char *function = ascii_at(p, (uint32_t)value + 2u, 256);
-            if (function == NULL) return fail(p, "invalid-imports: symbol is not bounded printable ASCII");
+            int by_ordinal = (value & (UINT64_C(1) << 63)) != 0;
+            uint16_t ordinal = 0;
+            const char *function = NULL;
+            if (by_ordinal) {
+                if (value & ~((UINT64_C(1) << 63) | UINT64_C(0xffff)))
+                    return fail(p, "invalid-imports: reserved ordinal bits are nonzero");
+                ordinal = (uint16_t)(value & 0xffffu);
+            } else {
+                if (value >= UINT64_C(0x80000000) || raw_at(p, (uint32_t)value, 2) == NULL)
+                    return fail(p, "invalid-imports: hint/name RVA is invalid");
+                function = ascii_at(p, (uint32_t)value + 2u, 256);
+                if (function == NULL) return fail(p, "invalid-imports: symbol is not bounded printable ASCII");
+            }
             ++symbol_count;
             uintptr_t address = 0;
-            if (resolver == NULL || resolver(context, dll, function, 0, 0, &address) != 1 || address == 0)
-                return fail(p, "unresolved-import: resolver refused a named dependency");
+            if (resolver == NULL || resolver(context, dll, function, ordinal, by_ordinal, &address) != 1 || address == 0)
+                return fail(p, "unresolved-import: resolver refused dependency");
             put64(p->mapping + (uint32_t)iat64, (uint64_t)address);
         }
     }
@@ -328,9 +467,9 @@ int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
     p.bytes = bytes; p.size = size; p.error = error; p.error_cap = error_cap;
     if (error != NULL && error_cap) error[0] = '\0';
     if (image == NULL) return fail(&p, "invalid-argument: output image is null");
-    if (image->mapping != NULL || image->mapping_size != 0 || image->entrypoint_rva != 0)
+    if (image->mapping != NULL || image->mapping_size != 0 || image->entrypoint_rva != 0 || image->exports != NULL)
         return fail(&p, "invalid-argument: unload the previous image before reuse");
-    int ok = parse_headers(&p);
+    int ok = parse_headers(&p) && parse_exports(&p);
     if (ok) {
         void *mapping = mmap(NULL, p.mapping_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
         if (mapping == MAP_FAILED) ok = fail(&p, "allocation-failed: anonymous image mapping");
@@ -346,6 +485,7 @@ int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
     }
     free(p.permissions);
     if (!ok) {
+        free(p.exports);
         if (p.mapping != NULL && munmap(p.mapping, p.mapping_size) != 0) {
             image->mapping = p.mapping;
             image->mapping_size = p.mapping_size;
@@ -357,6 +497,11 @@ int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
     image->mapping = p.mapping;
     image->mapping_size = p.mapping_size;
     image->entrypoint_rva = p.entry;
+    if (p.exports != NULL) {
+        p.exports->bound_mapping = p.mapping;
+        p.exports->bound_mapping_size = p.mapping_size;
+    }
+    image->exports = p.exports;
     return 1;
 }
 
@@ -364,6 +509,58 @@ int pm_pe_unload(pm_pe_image *image) {
     if (image == NULL) return 1;
     if ((image->mapping == NULL) != (image->mapping_size == 0)) return 0;
     if (image->mapping != NULL && munmap(image->mapping, image->mapping_size) != 0) return 0;
+    free(image->exports);
     *image = (pm_pe_image){0};
+    return 1;
+}
+
+int pm_pe_find_export(const pm_pe_image *image, const char *name, uint32_t ordinal,
+                      int by_ordinal, pm_pe_export *result, char *error, size_t error_cap) {
+    pm_loader report = {0}; report.error = error; report.error_cap = error_cap;
+    if (error != NULL && error_cap) error[0] = '\0';
+    if (result == NULL) return fail(&report, "invalid-argument: export result is null");
+    *result = (pm_pe_export){0};
+    if (image == NULL || image->mapping == NULL || image->exports == NULL)
+        return fail(&report, "exports-unavailable: no live loaded catalogue");
+    const struct pm_pe_export_catalog *catalog = image->exports;
+    if (catalog->bound_mapping != image->mapping || catalog->bound_mapping_size != image->mapping_size)
+        return fail(&report, "exports-unavailable: catalogue does not belong to this mapping");
+    uint32_t index;
+    if (by_ordinal == 1) {
+        if (ordinal < catalog->base || ordinal - catalog->base >= catalog->count)
+            return fail(&report, "export-not-found: ordinal outside catalogue");
+        index = ordinal - catalog->base;
+    } else if (by_ordinal == 0) {
+        if (name == NULL) return fail(&report, "invalid-argument: export name is null");
+        size_t length = 0;
+        while (length <= 256 && name[length]) {
+            if ((unsigned char)name[length] < 32 || (unsigned char)name[length] > 126)
+                return fail(&report, "invalid-argument: export name must be printable ASCII");
+            ++length;
+        }
+        if (length == 0 || length > 256) return fail(&report, "invalid-argument: export name length");
+        uint32_t low = 0, high = catalog->name_count;
+        while (low < high) {
+            uint32_t middle = low + (high - low) / 2;
+            int comparison = strcmp(catalog->strings + catalog->names[middle].name_offset, name);
+            if (comparison < 0) low = middle + 1; else high = middle;
+        }
+        if (low == catalog->name_count || strcmp(catalog->strings + catalog->names[low].name_offset, name) != 0)
+            return fail(&report, "export-not-found: exact name absent");
+        index = catalog->names[low].index;
+    } else return fail(&report, "invalid-argument: by_ordinal must be zero or one");
+    const pm_export_entry *entry = &catalog->entries[index];
+    if (entry->kind == 0) return fail(&report, "export-not-found: ordinal hole");
+    pm_pe_export found = {0};
+    found.kind = entry->kind; found.ordinal = catalog->base + index; found.rva = entry->rva;
+    if (entry->kind == PM_PE_EXPORT_DIRECT) {
+        if (entry->rva >= catalog->image_size || entry->rva >= image->mapping_size)
+            return fail(&report, "exports-unavailable: direct address outside mapping");
+        found.address = (const uint8_t *)image->mapping + entry->rva;
+        found.executable = entry->executable; found.writable = entry->writable;
+    } else if (entry->kind == PM_PE_EXPORT_FORWARDER) {
+        found.forwarder = catalog->strings + entry->forwarder_offset;
+    } else return fail(&report, "exports-unavailable: unknown export kind");
+    *result = found;
     return 1;
 }

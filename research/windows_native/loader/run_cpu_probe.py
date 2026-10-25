@@ -7,18 +7,49 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.dont_write_bytecode = True
 from probe_fixture import make_fixture
 
 OWNED_GROUPS = []
 
+def group_exists(group):
+    try:
+        os.killpg(group, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Darwin can report EPERM while the last member is becoming a zombie.
+        # Treat it as still present; only ESRCH confirms group disappearance.
+        return True
+
+
+def stop_owned_group(process):
+    """Only the new session made by bounded(); never select processes by name."""
+    def signal_group(signum):
+        try: os.killpg(process.pid, signum)
+        except ProcessLookupError: pass
+
+    for signum, delay in ((signal.SIGTERM, 3), (signal.SIGKILL, 3)):
+        signal_group(signum)
+        deadline = time.monotonic() + delay
+        while True:
+            process.poll()  # Reap our direct child, including an already-exited parent.
+            if not group_exists(process.pid):
+                process.wait(timeout=1)
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
+    process.wait(timeout=1)
+    raise RuntimeError(f"Task-owned process group {process.pid} did not disappear after cleanup")
+
+
 def bounded(command, timeout):
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     OWNED_GROUPS.append(process.pid)
-    def stop_group(signum):
-        try: os.killpg(process.pid, signum)
-        except ProcessLookupError: pass
     try:
         out, err = process.communicate(timeout=timeout)
         if process.returncode:
@@ -29,12 +60,11 @@ def bounded(command, timeout):
     finally:
         # This group was created for this command alone. Also stop an orphaned
         # compiler child if its parent exited before communicate timed out.
-        stop_group(signal.SIGTERM)
-        try: process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            stop_group(signal.SIGKILL); process.wait()
-        for stream in (process.stdout, process.stderr):
-            if stream is not None: stream.close()
+        try:
+            stop_owned_group(process)
+        finally:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None: stream.close()
 
 
 def main():

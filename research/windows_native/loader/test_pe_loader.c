@@ -17,7 +17,9 @@
 #endif
 
 static unsigned map_calls, unmap_calls, protect_calls, live_mappings, wx_requests;
+static unsigned allocation_calls, live_allocations;
 static int fail_mapping, fail_allocation, fail_protection_at, fail_unmapping;
+static unsigned fail_allocation_at;
 static long page_override;
 static void *last_mapping;
 
@@ -43,8 +45,13 @@ static int tracked_mprotect(void *address, size_t size, int prot) {
     return mprotect(address, size, prot);
 }
 static void *tracked_calloc(size_t count, size_t size) {
-    return fail_allocation ? NULL : calloc(count, size);
+    ++allocation_calls;
+    if (fail_allocation || (fail_allocation_at && allocation_calls == fail_allocation_at)) return NULL;
+    void *result = calloc(count, size);
+    if (result != NULL) ++live_allocations;
+    return result;
 }
+static void tracked_free(void *pointer) { if (pointer != NULL) { --live_allocations; free(pointer); } }
 static long tracked_sysconf(int name) {
     return name == _SC_PAGESIZE && page_override ? page_override : sysconf(name);
 }
@@ -53,12 +60,14 @@ static long tracked_sysconf(int name) {
 #define munmap tracked_munmap
 #define mprotect tracked_mprotect
 #define calloc tracked_calloc
+#define free tracked_free
 #define sysconf tracked_sysconf
 #include "pe_loader.c"
 #undef mmap
 #undef munmap
 #undef mprotect
 #undef calloc
+#undef free
 #undef sysconf
 
 static unsigned checks;
@@ -107,22 +116,30 @@ static fixture make_fixture(void) {
     return f;
 }
 
-typedef struct { unsigned calls; unsigned reject_at; int zero_address; } resolver_state;
+typedef struct { unsigned calls; unsigned reject_at; int zero_address, allow_ordinal; uint16_t last_ordinal; } resolver_state;
 static void fixture_target_never_called(void) { abort(); }
 static int resolve(void *ctx, const char *dll, const char *name, uint16_t ordinal, int by_ordinal, uintptr_t *address) {
     resolver_state *state = ctx;
     ++state->calls;
-    CHECK(!ordinal && !by_ordinal);
     *address = 0;
     if (state->reject_at && state->calls == state->reject_at) return 0;
-    if (strcmp(dll, "KERNEL32.dll") || strcmp(name, "FixtureFunction")) return 0;
+    if (strcmp(dll, "KERNEL32.dll")) return 0;
+    if (by_ordinal) {
+        CHECK(name == NULL && by_ordinal == 1);
+        state->last_ordinal = ordinal;
+        if (!state->allow_ordinal || ordinal != 7) return 0;
+    } else {
+        CHECK(ordinal == 0 && name != NULL);
+        if (strcmp(name, "FixtureFunction")) return 0;
+    }
     if (!state->zero_address) *address = (uintptr_t)&fixture_target_never_called;
     return 1;
 }
 static void reset_tracking(void) {
-    CHECK(live_mappings == 0);
+    CHECK(live_mappings == 0 && live_allocations == 0);
     map_calls = unmap_calls = protect_calls = wx_requests = 0;
     fail_mapping = fail_allocation = fail_protection_at = fail_unmapping = 0;
+    allocation_calls = fail_allocation_at = 0;
     page_override = 0; last_mapping = NULL;
 }
 static void reject_fixture(fixture *f, const char *expected) {
@@ -130,8 +147,8 @@ static void reject_fixture(fixture *f, const char *expected) {
     reset_tracking();
     CHECK(!pm_pe_load(f->bytes, sizeof(f->bytes), resolve, &state, &image, error, sizeof(error)));
     CHECK(strstr(error, expected) != NULL);
-    CHECK(image.mapping == NULL && image.mapping_size == 0 && image.entrypoint_rva == 0);
-    CHECK(live_mappings == 0 && wx_requests == 0);
+    CHECK(image.mapping == NULL && image.mapping_size == 0 && image.entrypoint_rva == 0 && image.exports == NULL);
+    CHECK(live_mappings == 0 && live_allocations == 0 && wx_requests == 0);
 }
 #ifdef __APPLE__
 static int actual_permissions(void *pointer) {
@@ -200,7 +217,7 @@ static void test_rejections(void) {
     f = make_fixture(); w32(f.bytes + SECTIONS + 20, 0xffffff00); reject_fixture(&f, "invalid-section");
     f = make_fixture(); w32(f.bytes + OPT + 16, 0x8000); reject_fixture(&f, "invalid-entry");
     f = make_fixture(); w32(f.bytes + OPT + 16, 0); reject_fixture(&f, "invalid-entry");
-    const unsigned rejected[] = {0, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15};
+    const unsigned rejected[] = {2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15};
     for (unsigned i = 0; i < sizeof(rejected)/sizeof(rejected[0]); ++i) {
         f = make_fixture(); directory(&f, rejected[i], 0x8400, 16); reject_fixture(&f, "unsupported-directory");
         CHECK(map_calls == 0);
@@ -218,7 +235,8 @@ static void test_rejections(void) {
     f = make_fixture(); w64(f.bytes + OPT + 24, UINT64_C(0xffff000000000000)); w64(f.bytes + 0xc00, 0); reject_fixture(&f, "DIR64 underflow");
     f = make_fixture(); directory(&f, 1, 0x8000, 20); reject_fixture(&f, "descriptor terminator");
     f = make_fixture(); w32(f.bytes + 0x604, 1); reject_fixture(&f, "bound/forwarded");
-    f = make_fixture(); w64(f.bytes + 0x800, (UINT64_C(1) << 63) | 7); reject_fixture(&f, "ordinal");
+    f = make_fixture(); w64(f.bytes + 0x800, (UINT64_C(1) << 63) | 7); reject_fixture(&f, "unresolved-import");
+    f = make_fixture(); w64(f.bytes + 0x800, (UINT64_C(1) << 63) | 0x10007); reject_fixture(&f, "reserved ordinal");
     f = make_fixture(); w64(f.bytes + 0x800, UINT64_C(0x100008500)); reject_fixture(&f, "hint/name");
     f = make_fixture(); w32(f.bytes + 0x60c, 0xc300); reject_fixture(&f, "DLL name");
     f = make_fixture(); w32(f.bytes + 0x610, 0x4000); reject_fixture(&f, "IAT is executable");
@@ -310,9 +328,197 @@ static void test_seeded_mutations(void) {
     }
 }
 
+static fixture make_dll_fixture(void) {
+    fixture f = make_fixture();
+    w16(f.bytes + 0x96, 0x2022); w32(f.bytes + OPT + 16, 0);
+    directory(&f, 1, 0, 0); directory(&f, 12, 0, 0);
+    directory(&f, 0, 0x8400, 0x200);
+    memset(f.bytes + 0xa00, 0, 0x200);
+    w32(f.bytes + 0xa0c, 0x8428); w32(f.bytes + 0xa10, 17);
+    w32(f.bytes + 0xa14, 5); w32(f.bytes + 0xa18, 4);
+    w32(f.bytes + 0xa1c, 0x8440); w32(f.bytes + 0xa20, 0x8460); w32(f.bytes + 0xa24, 0x8470);
+    memcpy(f.bytes + 0xa28, "SYNTH.dll", 10);
+    const uint32_t addresses[] = {0x4000, 0xc000, 0x8500, 0, 0xc200};
+    const uint32_t names[] = {0x8480, 0x8490, 0x84a0, 0x84b0};
+    const uint16_t ordinals[] = {0, 1, 2, 4};
+    for (unsigned i = 0; i < 5; ++i) w32(f.bytes + 0xa40 + 4 * i, addresses[i]);
+    for (unsigned i = 0; i < 4; ++i) { w32(f.bytes + 0xa60 + 4 * i, names[i]); w16(f.bytes + 0xa70 + 2 * i, ordinals[i]); }
+    memcpy(f.bytes + 0xa80, "Alpha", 6); memcpy(f.bytes + 0xa90, "Beta", 5);
+    memcpy(f.bytes + 0xaa0, "Forward", 8); memcpy(f.bytes + 0xab0, "ZeroData", 9);
+    memcpy(f.bytes + 0xb00, "KERNEL32.GetCurrentProcessId", 28);
+    return f;
+}
+
+static void test_export_success(void) {
+    fixture f = make_dll_fixture(); pm_pe_image image = {0}; char error[192]; pm_pe_export result = {0};
+    reset_tracking();
+    CHECK(pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error)));
+    CHECK(image.entrypoint_rva == 0 && image.exports != NULL && live_allocations == 1);
+    CHECK(pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
+    CHECK(result.kind == PM_PE_EXPORT_DIRECT && result.ordinal == 17 && result.rva == 0x4000);
+    CHECK(result.address == (uint8_t *)image.mapping + 0x4000 && result.executable && !result.writable && result.forwarder == NULL);
+    CHECK(pm_pe_find_export(&image, NULL, 18, 1, &result, error, sizeof(error)));
+    CHECK(result.kind == PM_PE_EXPORT_DIRECT && !result.executable && result.writable && result.rva == 0xc000);
+    CHECK(u64(result.address) == (uint64_t)(uintptr_t)image.mapping + 0x4020);
+    CHECK(pm_pe_find_export(&image, "ZeroData", 0, 0, &result, error, sizeof(error)));
+    CHECK(result.ordinal == 21 && result.writable && !result.executable && u64(result.address) == 0);
+    CHECK(pm_pe_find_export(&image, "Forward", 0, 0, &result, error, sizeof(error)));
+    CHECK(result.kind == PM_PE_EXPORT_FORWARDER && result.address == NULL && !result.executable && !result.writable);
+    CHECK(strcmp(result.forwarder, "KERNEL32.GetCurrentProcessId") == 0 && result.ordinal == 19);
+    const char *owned_forwarder = result.forwarder;
+    memset(f.bytes + 0xa00, 'X', 0x200); /* Source lifetime is no longer needed. */
+    CHECK(pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
+    CHECK(strcmp(owned_forwarder, "KERNEL32.GetCurrentProcessId") == 0);
+    CHECK(!pm_pe_find_export(&image, NULL, 20, 1, &result, error, sizeof(error)));
+    CHECK(strstr(error, "hole") && result.kind == 0 && result.address == NULL && result.forwarder == NULL);
+    CHECK(!pm_pe_find_export(&image, "alpha", 0, 0, &result, error, sizeof(error)));
+    CHECK(!pm_pe_find_export(&image, NULL, 16, 1, &result, error, sizeof(error)));
+    CHECK(!pm_pe_find_export(&image, NULL, 22, 1, &result, error, sizeof(error)));
+    CHECK(!pm_pe_find_export(&image, "", 0, 0, &result, error, sizeof(error)));
+    CHECK(!pm_pe_find_export(&image, NULL, 0, 0, &result, error, sizeof(error)));
+    CHECK(!pm_pe_find_export(&image, "Alpha", 0, 2, &result, error, sizeof(error)));
+    CHECK(!pm_pe_find_export(&image, "Alpha", 0, 0, NULL, error, sizeof(error)));
+    char invalid_name[258]; memset(invalid_name, 'A', sizeof(invalid_name)); invalid_name[257] = 0;
+    CHECK(!pm_pe_find_export(&image, invalid_name, 0, 0, &result, error, sizeof(error)));
+    invalid_name[1] = '\1'; invalid_name[2] = 0;
+    CHECK(!pm_pe_find_export(&image, invalid_name, 0, 0, &result, error, sizeof(error)));
+    CHECK(!pm_pe_find_export(NULL, "Alpha", 0, 0, &result, error, sizeof(error)));
+    fail_unmapping = 1;
+    CHECK(!pm_pe_unload(&image) && live_allocations == 1);
+    CHECK(pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
+    fail_unmapping = 0;
+    CHECK(pm_pe_unload(&image) && live_allocations == 0 && live_mappings == 0);
+    CHECK(!pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
+
+    f = make_dll_fixture(); w16(f.bytes + 0xa72, 0); /* Two names may alias one export. */
+    reset_tracking();
+    CHECK(pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error)));
+    CHECK(pm_pe_find_export(&image, "Beta", 0, 0, &result, error, sizeof(error)) && result.ordinal == 17);
+    CHECK(pm_pe_unload(&image));
+    f = make_dll_fixture(); w32(f.bytes + 0xa18, 0); w32(f.bytes + 0xa20, 0); w32(f.bytes + 0xa24, 0);
+    CHECK(pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error)));
+    CHECK(pm_pe_find_export(&image, NULL, 17, 1, &result, error, sizeof(error)));
+    CHECK(!pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
+    CHECK(pm_pe_unload(&image));
+
+    f = make_dll_fixture(); w32(f.bytes + SECTIONS + 40 + 36, 0xc0000040);
+    CHECK(pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error)));
+    memset((uint8_t *)image.mapping + 0x8400, 0, 0x200); /* Mutable image export metadata cannot poison owned catalogue. */
+    CHECK(pm_pe_find_export(&image, "Forward", 0, 0, &result, error, sizeof(error)));
+    CHECK(strcmp(result.forwarder, "KERNEL32.GetCurrentProcessId") == 0);
+    CHECK(pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)) && result.rva == 0x4000);
+    CHECK(pm_pe_unload(&image));
+    f = make_dll_fixture(); memset(f.bytes + 0xb00, 0, 64); memcpy(f.bytes + 0xb00, "OTHER.dll.#18", 14);
+    CHECK(pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error)));
+    CHECK(pm_pe_find_export(&image, NULL, 19, 1, &result, error, sizeof(error)));
+    CHECK(result.kind == PM_PE_EXPORT_FORWARDER && strcmp(result.forwarder, "OTHER.dll.#18") == 0);
+    CHECK(pm_pe_unload(&image));
+    reset_tracking();
+}
+
+static void test_export_rejections(void) {
+    fixture f = make_dll_fixture(); directory(&f, 0, 0x8400, 39); reject_fixture(&f, "truncated directory");
+    f = make_dll_fixture(); w32(f.bytes + 0xa00, 1); reject_fixture(&f, "reserved flags");
+    f = make_dll_fixture(); w32(f.bytes + 0xa14, 1025); reject_fixture(&f, "export-limit");
+    f = make_dll_fixture(); w32(f.bytes + 0xa18, 1025); reject_fixture(&f, "export-limit");
+    f = make_dll_fixture(); w32(f.bytes + 0xa10, UINT32_MAX); reject_fixture(&f, "ordinal base");
+    f = make_dll_fixture(); w32(f.bytes + 0xa0c, 0); reject_fixture(&f, "module name");
+    f = make_dll_fixture(); w32(f.bytes + 0xa1c, 0x13ff0); reject_fixture(&f, "unbacked address/name/ordinal");
+    f = make_dll_fixture(); w32(f.bytes + 0xa20, 0xffffffff); reject_fixture(&f, "unbacked address/name/ordinal");
+    f = make_dll_fixture(); w32(f.bytes + 0xa24, 0x85ff); reject_fixture(&f, "unbacked address/name/ordinal");
+    f = make_dll_fixture(); w32(f.bytes + 0xa1c, 0x8400); reject_fixture(&f, "overlapping structural");
+    f = make_dll_fixture(); w32(f.bytes + 0xa20, 0x8440); reject_fixture(&f, "overlapping structural");
+    f = make_dll_fixture(); w32(f.bytes + 0xa40, 0x180); reject_fixture(&f, "readable mapped");
+    f = make_dll_fixture(); w32(f.bytes + 0xa40, 0x5000); reject_fixture(&f, "readable mapped");
+    f = make_dll_fixture(); w32(f.bytes + SECTIONS + 2 * 40 + 36, 0x40); reject_fixture(&f, "readable mapped");
+    f = make_dll_fixture(); w32(f.bytes + SECTIONS + 36, 0xe0000020); reject_fixture(&f, "unsupported-wx");
+    f = make_dll_fixture(); w32(f.bytes + SECTIONS + 8, 0x400); w32(f.bytes + 0xa40, 0x4200); reject_fixture(&f, "unbacked");
+    f = make_dll_fixture(); w16(f.bytes + 0xa70, 5); reject_fixture(&f, "invalid index");
+    f = make_dll_fixture(); w16(f.bytes + 0xa70, 3); reject_fixture(&f, "ordinal hole");
+    f = make_dll_fixture(); w32(f.bytes + 0xa60, 0x8490); reject_fixture(&f, "strictly sorted");
+    f = make_dll_fixture(); w32(f.bytes + 0xa60, 0x84b0); reject_fixture(&f, "strictly sorted");
+    f = make_dll_fixture(); f.bytes[0xa80] = 255; reject_fixture(&f, "name is not bounded");
+    f = make_dll_fixture(); w32(f.bytes + 0xa60, 0x85ff); f.bytes[0xbff] = 'X'; reject_fixture(&f, "name is not bounded");
+    f = make_dll_fixture(); directory(&f, 0, 0x8400, 0x110); reject_fixture(&f, "truncated or unbounded forwarder");
+    const char *bad_forwarders[] = {"MissingDot", ".Name", "DLL.", "DLL.#", "DLL.#abc", "DLL.#4294967296", "../DLL.Name", "DLL..Name", "C:\\DLL.Name", "DLL.#-1"};
+    for (unsigned i = 0; i < sizeof(bad_forwarders) / sizeof(bad_forwarders[0]); ++i) {
+        f = make_dll_fixture(); memset(f.bytes + 0xb00, 0, 0x100);
+        memcpy(f.bytes + 0xb00, bad_forwarders[i], strlen(bad_forwarders[i]));
+        reject_fixture(&f, "malformed forwarder");
+    }
+    f = make_dll_fixture(); directory(&f, 5, 0, 0); reject_fixture(&f, "missing-relocations");
+    CHECK(live_allocations == 0 && unmap_calls == 1);
+
+    pm_pe_image image = {0}; char error[192]; pm_pe_export result = {0};
+    reset_tracking(); f = make_dll_fixture(); fail_allocation_at = 2;
+    CHECK(!pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error)));
+    CHECK(strstr(error, "export catalogue") && live_allocations == 0 && map_calls == 0);
+    reset_tracking(); fail_mapping = 1;
+    CHECK(!pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error)));
+    CHECK(live_allocations == 0 && live_mappings == 0);
+    reset_tracking(); fail_protection_at = 1; fail_unmapping = 1;
+    CHECK(!pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error)));
+    CHECK(strstr(error, "cleanup-failed") && image.exports == NULL && image.mapping != NULL && live_allocations == 0);
+    CHECK(!pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
+    fail_unmapping = 0; CHECK(pm_pe_unload(&image));
+    reset_tracking();
+}
+
+static void test_export_string_budget(void) {
+    uint8_t bytes[0x4a00] = {0}; fixture f = make_dll_fixture();
+    memcpy(bytes, f.bytes, sizeof(f.bytes));
+    memcpy(bytes + 0x4600, f.bytes + 0xc00, 0x200); memcpy(bytes + 0x4800, f.bytes + 0xe00, 0x200);
+    w32(bytes + SECTIONS + 40 + 8, 0x4000); w32(bytes + SECTIONS + 40 + 16, 0x4000);
+    w32(bytes + SECTIONS + 80 + 20, 0x4600); w32(bytes + SECTIONS + 120 + 20, 0x4800);
+    w32(bytes + DIR + 4, 0x2000); w32(bytes + 0xa14, 1024); w32(bytes + 0xa18, 0);
+    w32(bytes + 0xa20, 0); w32(bytes + 0xa24, 0);
+    for (unsigned i = 0; i < 1024; ++i) w32(bytes + 0xa40 + i * 4, 0x9600);
+    memcpy(bytes + 0x1c00, "OTHER.", 6); memset(bytes + 0x1c06, 'A', 505); bytes[0x1dff] = 0;
+    pm_pe_image image = {0}; char error[192]; reset_tracking();
+    CHECK(!pm_pe_load(bytes, sizeof(bytes), NULL, NULL, &image, error, sizeof(error)));
+    CHECK(strstr(error, "strings exceed 128 KiB") && live_allocations == 0 && live_mappings == 0);
+}
+
+static void test_ordinal_imports(void) {
+    fixture f = make_fixture(); pm_pe_image image = {0}; char error[192]; resolver_state state = {.allow_ordinal = 1};
+    w64(f.bytes + 0x800, (UINT64_C(1) << 63) | 7);
+    reset_tracking();
+    CHECK(pm_pe_load(f.bytes, sizeof(f.bytes), resolve, &state, &image, error, sizeof(error)));
+    CHECK(state.calls == 1 && state.last_ordinal == 7);
+    CHECK(u64((uint8_t *)image.mapping + 0x8300) == (uint64_t)(uintptr_t)&fixture_target_never_called);
+    CHECK(pm_pe_unload(&image));
+    state = (resolver_state){.allow_ordinal = 1}; w64(f.bytes + 0x800, (UINT64_C(1) << 63) | 8);
+    CHECK(!pm_pe_load(f.bytes, sizeof(f.bytes), resolve, &state, &image, error, sizeof(error)));
+    CHECK(state.calls == 1 && state.last_ordinal == 8 && live_mappings == 0);
+    state = (resolver_state){.allow_ordinal = 1}; w64(f.bytes + 0x800, (UINT64_C(1) << 63) | 0x10007);
+    CHECK(!pm_pe_load(f.bytes, sizeof(f.bytes), resolve, &state, &image, error, sizeof(error)));
+    CHECK(state.calls == 0 && strstr(error, "reserved ordinal") && live_mappings == 0);
+    reset_tracking();
+}
+
+static void test_export_mutations(void) {
+    unsigned seed = 199;
+    for (unsigned iteration = 0; iteration < 256; ++iteration) {
+        fixture f = make_dll_fixture(); pm_pe_image image = {0}; pm_pe_export result = {0}; char error[192];
+        for (unsigned i = 0; i < 2; ++i) {
+            seed = seed * 1664525u + 1013904223u;
+            size_t offset = 0xa00 + seed % 0x200;
+            seed = seed * 1664525u + 1013904223u;
+            f.bytes[offset] = (uint8_t)(seed >> 24);
+        }
+        if (pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error))) {
+            (void)pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error));
+            (void)pm_pe_find_export(&image, NULL, 19, 1, &result, error, sizeof(error));
+            CHECK(pm_pe_unload(&image));
+        }
+        CHECK(image.mapping == NULL && image.exports == NULL && live_mappings == 0 && live_allocations == 0 && wx_requests == 0);
+    }
+}
+
 int main(void) {
     test_success(); test_rejections(); test_failures_and_limits(); test_seeded_mutations();
-    CHECK(live_mappings == 0 && wx_requests == 0);
-    printf("PE loader: %u checks PASS; 128 synthetic mutations; executionPerformed=false; wineUsed=false; liveMappings=0\n", checks);
+    test_export_success(); test_export_rejections(); test_export_string_budget(); test_ordinal_imports(); test_export_mutations();
+    CHECK(live_mappings == 0 && live_allocations == 0 && wx_requests == 0);
+    printf("PE loader: %u checks PASS; 384 synthetic mutations; executionPerformed=false; wineUsed=false; liveMappings=0; liveAllocations=0\n", checks);
     return 0;
 }
