@@ -24,6 +24,19 @@
     "bytes": 266424944,
     "downloaded": false
   },
+  "ngxAdapterSource": {
+    "repository": "https://github.com/NVIDIAGameWorks/dxvk-remix",
+    "commit": "bbd74a1287c2fa887f4a2b0e46a1530177890b64",
+    "files": {
+      "src/dxvk/rtx_render/rtx_ngx_wrapper.cpp": "54a79a61dbd7c82315665d143d789c1eeda930afd158e448f038b4f6fd483b53",
+      "src/dxvk/rtx_render/rtx_ngx_wrapper.h": "6766da7524f6aedae26a61b88b8fb04c2ded8499fac303b9f4f5863a966899b0",
+      "src/dxvk/rtx_render/rtx_dlss_neural_rendering.cpp": "b0c5bf937c07602d2e64a101189df7b511e55d27cdea161362b8fc81072d868f",
+      "src/dxvk/rtx_render/rtx_dlss_neural_rendering.h": "9b92b17387e98f29082c10d08105167f706afb9ea07d6b6157ef4a3c603aed1c",
+      "src/dxvk/rtx_render/rtx_resources.cpp": "b9092c48b78706a0a4182d127c15086dc0af53c2ae22b4513c40f6a048c5ecdc",
+      "src/dxvk/rtx_render/rtx_camera.cpp": "fa5e0f557d78ac33d5eaa3bf37b6d8e7e1f4fad617c0f5371af7de2b6c31fa69"
+    },
+    "scope": "Offline parameter names, current jitter, preset/style distinction and texture formats; not NVIDIA numerical equivalence"
+  },
   "knownNetworks": {
     "310.8.0.0": ["ht71"],
     "310.9.16.0": ["ht71", "small31"]

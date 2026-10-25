@@ -157,7 +157,7 @@ def capture_contract(root):
     require(type(controls["styleIndex"]) is int and 0 <= controls["styleIndex"] < 2**32, "invalid style index")
     require(type(controls["autoMask"]) is bool, "autoMask must be boolean")
     require(type(controls["modelSlot"]) is int and controls["modelSlot"] == 0,
-            "A/B/C model-slot mapping is unqualified; only default slot0 is supported")
+            "nondefault modelSlot has no qualified upstream flag; appearance uses styleIndex")
     identity = m["identity"]
     fields(identity, ("runtimeVersion", "runtimeSHA256", "network", "weightsSHA256"))
     digest(identity["runtimeSHA256"]); digest(identity["weightsSHA256"])

@@ -4,9 +4,12 @@ const assert = require("node:assert/strict"),
   path = require("node:path"),
   vm = require("node:vm");
 const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-const start = html.indexOf("function openGame(game)"),
-  end = html.indexOf("function renderLibrary()", start);
-assert(start > 0 && end > start);
+const section = (a, b) => {
+  const start = html.indexOf(a),
+    end = html.indexOf(b, start);
+  assert(start > 0 && end > start);
+  return html.slice(start, end);
+};
 function node(tag, cls, text) {
   return {
     tag,
@@ -24,6 +27,9 @@ function node(tag, cls, text) {
     addEventListener(name, handler) {
       this.handlers[name] = handler;
     },
+    setAttribute(name, value) {
+      this[name] = value;
+    },
     showModal() {
       this.open = true;
     },
@@ -33,24 +39,34 @@ function node(tag, cls, text) {
   };
 }
 const elements = Object.fromEntries(
-  ["dialogTitle", "dialogStore", "dialogBody", "gameDialog"].map((id) => [
-    id,
-    node("div"),
-  ]),
+  [
+    "dialogTitle",
+    "dialogStore",
+    "dialogBody",
+    "gameDialog",
+    "d3dMetalSettings",
+    "installJobButton",
+  ].map((id) => [id, node("div")]),
 );
+const all = (root) => [root, ...root.children.flatMap(all)];
+const button = (root, label) =>
+  all(root).find((n) => n.tag === "button" && n.textContent === label);
 const sent = [];
 const component = {
-  status: "missing",
-  message: "Composant absent",
-  imported: false,
-  abiStatus: "unknown",
-  loadTested: false,
-  gameTested: false,
+  status: "not-prepared",
+  message: "Composant importé",
+  imported: true,
+  version: "3.0",
+  prepared: false,
+  steamInstalled: false,
+  canPrepare: true,
+  canLaunch: false,
   busy: false,
+  cancellable: false,
 };
 const state = {
   games: [],
-  runtimes: [{ id: "wine", platform: "windows", available: true }],
+  runtimes: [],
   windowsRuntime: {
     status: "ready",
     readyEngine: true,
@@ -60,22 +76,38 @@ const state = {
 };
 const context = {
   state,
-  ui: { dialogGameId: null },
+  ui: { dialogGameId: null, pendingRenderProtection: null },
   $: (id) => elements[id],
+  el: node,
   document: {
     getElementById: (id) => elements[id] || null,
-    querySelectorAll: () =>
-      all(elements.dialogBody).filter((n) => n.dataset.pendingD3dImport),
+    querySelectorAll: (selector) =>
+      selector === "[data-pending-d3d-action]"
+        ? Object.values(elements)
+            .flatMap(all)
+            .filter((n) => n.dataset.pendingD3dAction)
+        : [],
   },
-  el: node,
-  send: (action, payload) => sent.push({ action, payload }),
+  window: {
+    webkit: {
+      messageHandlers: {
+        metalmax: { postMessage: (message) => sent.push(message) },
+      },
+    },
+  },
+  notify: () => {},
   platforms: (g) => g.platforms || [],
   platformLabel: () => "Windows",
   storeName: () => "Steam",
+  updateToolbar: () => {},
+  updateJobIndicator: () => {},
+  renderDiagnostics: () => {},
 };
 const api = vm.runInNewContext(
-  html.slice(start, end) +
-    ";({openGame,renderGameDialog,createD3DMetalControls,updateD3DMetalSettings,refreshVisibleDialog,restoreD3DMetalImportControls})",
+  section("const allowedActions =", "function el(") +
+    section("function send(", "function imageSources(") +
+    section("function renderProtectionEnabled()", "function renderLibrary()") +
+    ";({openGame,renderGameDialog,createD3DMetalControls,updateD3DMetalSettings,restoreD3DMetalImportControls,createRenderProtectionControl,renderProtectionEnabled,send})",
   context,
 );
 const game = {
@@ -85,88 +117,267 @@ const game = {
   platforms: ["windows"],
   requiredRenderer: "d3dmetal",
   requiredGraphicsAPI: "DirectX12",
-  canLaunch: true,
-  canInstall: true,
-  canInstallAndPlay: true,
+  runtimeId: "playmelt-d3dmetal",
+  canLaunch: false,
+  canInstall: false,
+  canInstallAndPlay: false,
 };
-function all(root) {
-  return [root, ...root.children.flatMap(all)];
-}
-function button(root, label) {
-  return all(root).find((n) => n.tag === "button" && n.textContent === label);
-}
+const body = elements.dialogBody;
 api.openGame(game);
+assert.equal(sent.length, 0, "Opening a DX12 sheet dispatches nothing");
+assert.equal(
+  api.renderProtectionEnabled(),
+  true,
+  "Absent protection field defaults to enabled",
+);
+assert(button(body, "Préparer DirectX 12").disabled);
+assert(
+  !button(body, "Importer le composant Apple").disabled,
+  "Import is allowed during renders",
+);
+button(body, "Importer le composant Apple").handlers.click();
+assert.equal(sent.pop().action, "importD3DMetal");
+api.restoreD3DMetalImportControls();
+assert(
+  !button(body, "Importer le composant Apple").disabled,
+  "Rejected import is retryable",
+);
+button(body, "Obtenir auprès d’Apple").handlers.click();
+assert.equal(sent.pop().action, "openD3DMetalDownload");
+for (const action of [
+  "launchGame",
+  "installGame",
+  "installAndPlay",
+  "openSteam",
+  "openEpic",
+  "setupWindowsRuntime",
+  "installSteamWindows",
+  "openWindowsSteam",
+  "setupD3DMetalRuntime",
+  "installSteamD3DMetal",
+  "openD3DMetalSteam",
+]) {
+  assert.equal(
+    api.send(action, { gameId: game.id }),
+    false,
+    action + " is blocked at dispatch even if an old handler survives",
+  );
+}
+assert.equal(sent.length, 0);
+for (const action of [
+  "refresh",
+  "syncLibrary",
+  "syncEpic",
+  "openSteamLogin",
+  "cancelWindowsRuntime",
+  "cancelInstallAndPlay",
+  "cancelD3DMetalRuntime",
+]) {
+  api.send(action);
+  assert.equal(sent.pop().action, action, "Read/auth/cancel remains available");
+}
+context.state.renderProtectionEnabled = false;
+api.renderGameDialog(game);
+const prepare = button(body, "Préparer DirectX 12");
+assert(!prepare.disabled);
+prepare.handlers.click();
+prepare.handlers.click();
+assert.equal(sent.length, 1, "Pending preparation cannot dispatch twice");
+assert.equal(sent.pop().action, "setupD3DMetalRuntime");
+for (const status of ["checking", "initializing", "stopping"]) {
+  Object.assign(component, { status, busy: true, cancellable: true });
+  api.renderGameDialog(game);
+  assert(button(body, "Annuler") && !button(body, "Annuler").disabled);
+  assert(button(body, "Importer le composant Apple").disabled);
+  assert(!button(body, "Préparer DirectX 12"));
+  assert(
+    !all(body).some((n) => n.tag === "progress"),
+    "No fabricated percent during DX12 setup",
+  );
+}
+button(body, "Annuler").handlers.click();
+assert.equal(sent.pop().action, "cancelD3DMetalRuntime");
+Object.assign(component, {
+  status: "ready",
+  busy: false,
+  cancellable: false,
+  prepared: true,
+  steamInstalled: false,
+});
+api.renderGameDialog(game);
+assert.equal(sent.length, 0);
+button(body, "Installer Steam pour DirectX 12").handlers.click();
+assert.equal(sent.pop().action, "installSteamD3DMetal");
+Object.assign(component, {
+  steamBusy: true,
+  steamPhase: "downloading",
+  steamMessage: "Téléchargement de l’installateur officiel Steam…",
+});
+api.renderGameDialog(game);
+const steamDownload = button(body, "Installer Steam pour DirectX 12");
+assert(
+  steamDownload.disabled,
+  "DX12 Steam bootstrap blocks another install even when component.busy=false",
+);
+assert(button(body, "Importer le composant Apple").disabled);
+steamDownload.handlers.click();
 assert.equal(
   sent.length,
   0,
-  "Opening DX12 configuration never starts a game, runtime or import",
+  "A disabled DX12 Steam install cannot dispatch twice",
 );
-assert(all(elements.dialogBody).some((n) => n.textContent === "DirectX 12"));
-const importer = button(elements.dialogBody, "Importer le composant Apple");
-assert(importer && !importer.disabled);
-assert(
-  !button(elements.dialogBody, "Jouer") &&
-    !button(elements.dialogBody, "Configurer le moteur") &&
-    !button(elements.dialogBody, "Installer et jouer"),
-  "DX12 takes precedence even if another engine reports launch/install capabilities",
-);
-const download = button(elements.dialogBody, "Obtenir auprès d’Apple");
-download.handlers.click();
-assert.equal(sent[0].action, "openD3DMetalDownload");
-importer.handlers.click();
-assert.equal(sent[1].action, "importD3DMetal");
-assert.equal(importer.disabled, true);
-api.restoreD3DMetalImportControls();
-assert.equal(
-  importer.disabled,
-  false,
-  "Rejected native import can be retried without reopening the app",
-);
-component.busy = true;
+assert(all(body).some((n) => n.textContent === "Téléchargement de Steam…"));
+assert(all(body).some((n) => n.title === component.steamMessage));
+const downloadingControls = body.children[0];
+component.steamPhase = "installer";
+component.steamMessage =
+  "Terminez l’installation dans la fenêtre officielle Steam.";
 api.renderGameDialog(game);
-assert(button(elements.dialogBody, "Importer le composant Apple").disabled);
-assert(button(elements.dialogBody, "Obtenir auprès d’Apple").disabled);
-component.busy = false;
-component.imported = true;
-component.abiStatus = "pending";
+assert.notEqual(
+  body.children[0],
+  downloadingControls,
+  "A changed native Steam phase updates the compact status",
+);
+assert(all(body).some((n) => n.textContent === "Installation de Steam…"));
+assert(all(body).some((n) => n.title === component.steamMessage));
+assert(button(body, "Installer Steam pour DirectX 12").disabled);
+assert(
+  !button(body, "Annuler"),
+  "Steam bootstrap does not advertise a runtime-only cancellation command",
+);
+component.steamBusy = false;
+component.steamPhase = "failed";
+component.steamMessage = "Installation Steam non terminée.";
+api.renderGameDialog(game);
+assert(all(body).some((n) => n.textContent === "Installation Steam échouée"));
+assert(
+  !button(body, "Installer Steam pour DirectX 12").disabled,
+  "Failed Steam bootstrap can be retried explicitly",
+);
+component.steamPhase = "ready";
+component.steamMessage = "Steam Windows est installé.";
+component.steamInstalled = true;
+game.canInstall = true;
+api.renderGameDialog(game);
+button(body, "Ouvrir Steam DirectX 12").handlers.click();
+assert.equal(sent.pop().action, "openD3DMetalSteam");
+button(body, "Installer").handlers.click();
+const installation = sent.pop();
+assert.equal(installation.action, "installGame");
+assert.equal(installation.runtimeId, "playmelt-d3dmetal");
+assert.equal(installation.gameId, game.id);
+assert(
+  !button(body, "Jouer") && !button(body, "Installer et jouer"),
+  "Installed Steam does not prove the game can run",
+);
+context.state.renderProtectionEnabled = true;
 api.renderGameDialog(game);
 assert(
-  all(elements.dialogBody).some(
-    (n) => n.textContent === "Importé — validation restante",
-  ),
+  button(body, "Installer").disabled &&
+    button(body, "Ouvrir Steam DirectX 12").disabled,
 );
-assert(
-  !all(elements.dialogBody).some(
-    (n) => n.textContent === "Prêt" || n.textContent === "Jouer",
-  ),
-);
-const holder = node("div");
+const holder = elements.d3dMetalSettings;
 api.updateD3DMetalSettings(holder);
+assert(button(holder, "Ouvrir Steam DirectX 12"));
 assert(
-  button(holder, "Importer le composant Apple") &&
-    !button(holder, "Importer le composant Apple").disabled,
-  "Settings configuration does not require owning a game",
+  !button(holder, "Installer"),
+  "Settings never installs an arbitrary game",
 );
 const original = holder.children[0];
 api.updateD3DMetalSettings(holder);
-assert.equal(
-  holder.children[0],
-  original,
-  "Unchanged settings retain their controls",
-);
-state.windowsRuntime.status = "downloading";
-api.updateD3DMetalSettings(holder);
+assert.equal(holder.children[0], original, "Unchanged state retains controls");
+for (const status of ["blocked", "failed", "cancelled"]) {
+  Object.assign(component, {
+    status,
+    prepared: false,
+    canPrepare: status === "cancelled",
+  });
+  api.renderGameDialog(game);
+  assert.equal(
+    button(body, "Préparer DirectX 12").disabled,
+    true,
+    "Protection blocks retries too",
+  );
+}
+context.state.renderProtectionEnabled = false;
+component.canPrepare = false;
+api.renderGameDialog(game);
 assert(
-  button(holder, "Importer le composant Apple").disabled,
-  "Import is unavailable during engine setup",
+  button(body, "Préparer DirectX 12").disabled,
+  "Native canPrepare=false is authoritative",
 );
-state.windowsRuntime.status = "ready";
 delete state.windowsRuntime.d3dMetal;
 api.updateD3DMetalSettings(holder);
 assert(
   button(holder, "Importer le composant Apple").disabled,
-  "No native capability means no enabled fake import",
+  "No native feature means no fake import",
+);
+state.windowsRuntime.d3dMetal = component;
+state.renderProtectionEnabled = true;
+const control = api.createRenderProtectionControl(),
+  checkbox = control.children[0];
+assert.equal(checkbox.checked, true);
+checkbox.checked = false;
+checkbox.handlers.change();
+assert.equal(sent.at(-1).action, "setRenderProtection");
+assert.equal(sent.at(-1).enabled, false);
+assert(checkbox.disabled);
+assert.equal(
+  api.renderProtectionEnabled(),
+  true,
+  "Unchecking cannot release work before native acknowledgement",
+);
+context.ui.pendingRenderProtection = null;
+state.renderProtectionEnabled = false;
+const enabledControl = api.createRenderProtectionControl().children[0];
+enabledControl.checked = true;
+enabledControl.handlers.change();
+assert.equal(
+  api.renderProtectionEnabled(),
+  true,
+  "Enabling protection locks immediately while acknowledgement is pending",
+);
+
+// Native acknowledgements alone release protected actions; unrelated progress never does.
+context.ui.view = "library";
+context.ui.pendingRenderProtection = false;
+context.state.renderProtectionEnabled = true;
+context.received = true;
+context.lastGamesSignature = JSON.stringify(context.state.games);
+context.normalizedGame = (g) => g;
+context.updateSidebar = () => {};
+context.renderLibrary = () => {
+  throw Error("Protection changes must not rebuild covers");
+};
+vm.runInNewContext(
+  section("window.onNativeState =", "window.onNativeRuntime ="),
+  context,
+);
+context.window.onNativeState({ renderProtectionEnabled: false });
+assert.equal(context.ui.pendingRenderProtection, null);
+assert.equal(api.renderProtectionEnabled(), false);
+assert.equal(api.createRenderProtectionControl().children[0].checked, false);
+context.state.renderProtectionEnabled = true;
+context.ui.pendingRenderProtection = false;
+vm.runInNewContext(
+  section(
+    "window.onNativeResult =",
+    'document.querySelectorAll("[data-view]")',
+  ),
+  context,
+);
+context.window.onNativeResult({ ok: false, message: "Refusé" });
+assert.equal(
+  context.ui.pendingRenderProtection,
+  null,
+  "Rejected change restores a usable checkbox",
+);
+assert.equal(api.createRenderProtectionControl().children[0].checked, true);
+assert.equal(
+  api.renderProtectionEnabled(),
+  true,
+  "Rejected disable never releases actions",
 );
 console.log(
-  "DX12 UI passed: configuration only, explicit Apple actions, busy guards, imported is not ready, settings independent of ownership",
+  "DX12/protection UI passed: explicit setup/cancel/Steam/install, no Play, guarded dispatch, safe default and acknowledgement gate",
 );

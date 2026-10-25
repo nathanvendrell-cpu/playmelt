@@ -7,6 +7,7 @@ Contrat technique de l’import Apple facultatif et de la future sonde DirectX 1
 | Import, transaction, chemins et plan isolé | 75 contrôles sur fichiers synthétiques : PASS |
 | Compilation Swift de cette suite | PASS |
 | Import d’un véritable téléchargement Apple | 4.0 bêta 3 importée via l’application ; 17 fichiers et 7 liens vérifiés |
+| Préparation du préfixe et Steam DirectX 12 | Parcours implémenté, 148 contrôles de préparation PASS avec exécuteur Wine simulé ; pas exécutée sur le Wine réel |
 | `d3dmetal-probe.cpp` | Source uniquement ; ni compilée ni exécutée |
 | ABI entre le Wine retenu et D3DMetal | Non qualifiée |
 | Chargement, création de périphérique GPU, jeu et performances | Non testés |
@@ -44,6 +45,27 @@ L’import reste unique : même contenu = opération idempotente ; contenu diff�
 `D3DMetalStore.launchPlan` prépare un préfixe `Runtime/D3DMetal/prefix` distinct du préfixe DXMT. Son environnement utilise uniquement l’overlay Apple dans `WINEDLLPATH_PREPEND`, le répertoire `external` dans les chemins de recherche natifs et la variable amont `CX_D3DMETALPATH`. Ce nom de variable appartient au contrat du pont ; il n’implique aucun accès à une installation CrossOver.
 
 Le plan n’ajoute aucun fallback DXMT, y compris en 32 bits : le chemin graphique 32 bits et le client Steam de ce préfixe restent à qualifier. Les dépendances natives non résolues bloquent le plan. La présence des fichiers ne valide pas leur ABI avec Wine 10. `canExecute` reste faux ; aucun import ne rend un jeu lançable. Les profils centraux réservent DirectX 12/D3DMetal à Mortal Shell II (`2584270`) et DirectX 11/DXMT à Satisfactory (`526870`). Cela exprime un besoin de moteur, pas une compatibilité démontrée.
+
+## Préparation du préfixe et protection des rendus
+
+« Rendus en cours » est activé par défaut et enregistré dans les préférences. Le bridge natif refuse préparation Wine, installation Steam, installation et lancement de jeux tant qu’il reste actif. Le changement doit être confirmé par le natif avant que l’interface débloque les actions. Réactiver la protection annule les opérations de préparation et le lancement automatique en attente, sans arrêter un jeu, un client déjà ouvert ou un rendu externe.
+
+Après désactivation explicite, le parcours proposé est : **Préparer DirectX 12 → Installer Steam → Installer le jeu**. `SteamWindowsBootstrap` lie le téléchargement officiel au descripteur et au préfixe sélectionnés ; une modification du moteur pendant le téléchargement fait échouer la demande. L’installateur Steam et sa connexion restent des étapes officielles interactives.
+
+`D3DMetalRuntime` vérifie les empreintes de l’import, les dépendances, l’export `_macdrv_functions` et le chargement d’overlay `WINEDLLPATH_PREPEND` avant une éventuelle initialisation. Ces deux prérequis ont été trouvés par inspection statique du Wine installé ; ils ne prouvent pas la compatibilité de structure du contrat ABI. Un verrou exclusif, un contrôle de disque et la propriété du préfixe empêchent de réinitialiser des données existantes inconnues.
+
+La préparation utilise `wineboot -u`, puis `wineserver -k` et `-w` avec le seul `WINEPREFIX` isolé. Durées et sorties sont bornées ; les deux étapes de fermeture sont tentées même après échec ou annulation. Le reçu de préparation n’est créé qu’après fermeture confirmée, validation des fichiers Windows et stabilité des identités. Les données partielles et caches sont conservés. Les notifications et relances de l’application ne réexécutent ni Wine ni un hachage intégral du paquet.
+
+Le descripteur préparé permet de configurer Steam dans ce préfixe, mais ne qualifie aucun lancement graphique : tous les jeux sur cette route restent bloqués tant que `graphicsValidated` est faux. Mortal Shell II ne peut pas être envoyé au moteur DXMT, même en installation. Aucun de ces appels Wine ou Steam n’a été exécuté pendant les rendus.
+
+Suite CPU de préparation, avec tous les appels Wine simulés :
+
+```sh
+swiftc RuntimeSetup.swift D3DMetalStore.swift D3DMetalRuntime.swift tests/D3DMetalRuntimeTests.swift -o Products.noindex/d3dmetal-runtime-tests
+Products.noindex/d3dmetal-runtime-tests
+```
+
+Cette suite inclut un petit processus shell réel à sortie continue pour vérifier délai, arrêt et récupération du processus enfant. Elle ne crée aucun périphérique graphique.
 
 ## Future sonde : preuves requises
 

@@ -41,6 +41,13 @@ func runSelfTests() {
     check("metadata exact CDN path retained", SteamAppInfo.artworkURL(appID: "4731620", path: artworkHash + "/library_capsule.jpg") == "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/4731620/" + artworkHash + "/library_capsule.jpg")
     let preferenceSuite = "com.robtech.metalmax.selftest.\(UUID().uuidString)"
     let prefs = UserDefaults(suiteName: preferenceSuite)!
+    check("render protection defaults to on", RenderProtection.enabled(in: prefs))
+    prefs.set(false, forKey: RenderProtection.preferenceKey)
+    check("render protection changes only after explicit setting", !RenderProtection.enabled(in: prefs))
+    prefs.removeObject(forKey: RenderProtection.preferenceKey)
+    check("all execution routes are protected", ["launchGame", "installGame", "installAndPlay", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam", "setupWindowsRuntime", "installSteamWindows", "openWindowsSteam"].allSatisfy { RenderProtection.blocks($0, enabled: true) })
+    check("read and cancel routes remain available during renders", ["refresh", "importD3DMetal", "openSteamLogin", "cancelD3DMetalRuntime", "cancelInstallAndPlay"].allSatisfy { !RenderProtection.blocks($0, enabled: true) })
+    check("explicit render protection off releases action gate only", !RenderProtection.blocks("launchGame", enabled: false))
     let model = LibraryModel(home: URL(fileURLWithPath: "/nonexistent-metalmax-fixture"), preferences: prefs)
     check("discovery exposes only native Steam without independent engine", model.discoverRuntimes().allSatisfy { $0.id == "steam-mac" && $0.platform == "mac" })
     check("recent Steam account preferred over autologin", activeSteamAccount(["76561198000000000": ["AutoLogin": "1"], "76561198000000001": ["MostRecent": "1"]]) == "76561198000000001")
@@ -70,6 +77,28 @@ func runSelfTests() {
     check("shutdown refuses every new dispatch", gate.acquire("other") == nil)
     check("Satisfactory launch profile explicitly selects DX11", ScriptHandler.windowsLaunchArguments(appID: "526870") == ["-applaunch", "526870", "-dx11"])
     check("known DX12-only game has no DX11 launch profile", ScriptHandler.windowsLaunchArguments(appID: "2584270") == nil)
+    let fixtureRoot = URL(fileURLWithPath: "/nonexistent-playmelt-runtime")
+    let dxmtRoute = Runtime(id: "dxmt-fixture", name: "DXMT", platform: "windows", steamRoot: fixtureRoot, appURL: nil)
+    var metalRoute = dxmtRoute; metalRoute.renderer = "d3dmetal"
+    check("Mortal Shell cannot install into DXMT", !SteamGameLaunchProfile.supportsInstallation(appID: "2584270", runtime: dxmtRoute))
+    check("Mortal Shell installs only into its DX12 route", SteamGameLaunchProfile.supportsInstallation(appID: "2584270", runtime: metalRoute))
+    check("Satisfactory keeps its DX11 route", !SteamGameLaunchProfile.supportsInstallation(appID: "526870", runtime: metalRoute))
+    check("prepared DX12 is not qualified to launch", SteamGameLaunchProfile.windowsArguments(appID: "2584270", renderer: "d3dmetal") == nil)
+    check("unqualified DX12 also blocks unprofiled games", SteamGameLaunchProfile.windowsArguments(appID: "12345", renderer: "d3dmetal") == nil)
+    check("future qualified DX12 route uses game default API", SteamGameLaunchProfile.windowsArguments(appID: "2584270", renderer: "d3dmetal", graphicsValidated: true) == ["-applaunch", "2584270"])
+    check("a qualification flag cannot turn DXMT into DX12", SteamGameLaunchProfile.windowsArguments(appID: "2584270", renderer: "dxmt", graphicsValidated: true) == nil)
+    let originalRuntime = PlaymeltRuntimeDescriptor(engineID: "fixture", wineURL: fixtureRoot.appendingPathComponent("wine"), wineserverURL: fixtureRoot.appendingPathComponent("wineserver"), prefixURL: fixtureRoot.appendingPathComponent("dxmt-prefix"), steamRoot: fixtureRoot.appendingPathComponent("Steam"), environment: ["WINEPREFIX": "dxmt-prefix"], readyEngine: true, steamInstalled: false)
+    let otherPrefix = PlaymeltRuntimeDescriptor(engineID: originalRuntime.engineID, wineURL: originalRuntime.wineURL, wineserverURL: originalRuntime.wineserverURL, prefixURL: fixtureRoot.appendingPathComponent("d3dmetal-prefix"), steamRoot: originalRuntime.steamRoot, environment: originalRuntime.environment, readyEngine: true, steamInstalled: false)
+    let otherOverlay = PlaymeltRuntimeDescriptor(engineID: originalRuntime.engineID, wineURL: originalRuntime.wineURL, wineserverURL: originalRuntime.wineserverURL, prefixURL: originalRuntime.prefixURL, steamRoot: originalRuntime.steamRoot, environment: ["WINEDLLPATH_PREPEND": "other"], readyEngine: true, steamInstalled: false)
+    check("installer remains bound to the selected runtime", SteamWindowsBootstrap.sameRuntime(originalRuntime, originalRuntime))
+    check("installer refuses prefix change during download", !SteamWindowsBootstrap.sameRuntime(originalRuntime, otherPrefix))
+    check("installer refuses overlay change during download", !SteamWindowsBootstrap.sameRuntime(originalRuntime, otherOverlay))
+    let unavailableBootstrap = SteamWindowsBootstrap(downloadsRoot: fixtureRoot.appendingPathComponent("downloads"), descriptor: { nil })
+    unavailableBootstrap.start()
+    check("missing DX12 descriptor cannot fall back to another Steam", !unavailableBootstrap.busy && unavailableBootstrap.snapshot["steamPhase"] as? String == "failed")
+    var bootstrapStopped = false
+    unavailableBootstrap.shutdown { bootstrapStopped = true }
+    check("unused Steam bootstrap shutdown completes without a process", bootstrapStopped && !unavailableBootstrap.busy)
     check("injected game launch args rejected", ScriptHandler.windowsLaunchArguments(appID: "526870 -exec anything") == nil)
     model.selectedAccountID = "76561198000000000"
     check("account mismatch rejected", !model.acceptAuthenticatedLibrary(accountID: "76561198000000001", list: [["appid": "427520", "name": "Factorio"]]))

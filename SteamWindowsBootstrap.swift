@@ -4,7 +4,10 @@ import Darwin
 /// Downloads only Valve's official interactive installer. No silent install,
 /// saved login, EULA acceptance, game download or game launch is performed here.
 final class SteamWindowsBootstrap: NSObject, URLSessionDownloadDelegate {
-    private let runtime: RuntimeSetup
+    private let descriptorProvider: () -> PlaymeltRuntimeDescriptor?
+    private let downloadsRoot: URL
+    private var operationDescriptor: PlaymeltRuntimeDescriptor?
+    private var attemptID: UUID?
     private var session: URLSession?
     private var task: URLSessionDownloadTask?
     private var installer: Process?
@@ -16,7 +19,16 @@ final class SteamWindowsBootstrap: NSObject, URLSessionDownloadDelegate {
     private var lastProgressNotification: TimeInterval = 0
     var onChange: (() -> Void)?
     var onInstalled: (() -> Void)?
-    init(runtime: RuntimeSetup) { self.runtime = runtime }
+    convenience init(runtime: RuntimeSetup) {
+        self.init(downloadsRoot: runtime.root.appendingPathComponent("downloads"), descriptor: { runtime.descriptor() })
+    }
+    init(downloadsRoot: URL, descriptor: @escaping () -> PlaymeltRuntimeDescriptor?) {
+        self.downloadsRoot = downloadsRoot; self.descriptorProvider = descriptor
+    }
+    static func sameRuntime(_ first: PlaymeltRuntimeDescriptor, _ second: PlaymeltRuntimeDescriptor) -> Bool {
+        first.engineID == second.engineID && first.wineURL == second.wineURL && first.wineserverURL == second.wineserverURL &&
+        first.prefixURL == second.prefixURL && first.steamRoot == second.steamRoot && first.environment == second.environment
+    }
     var snapshot: [String: Any] {
         ["steamBusy": busy, "steamPhase": phase, "steamMessage": message,
          "steamBytesDownloaded": received, "steamBytesTotal": expected]
@@ -29,10 +41,11 @@ final class SteamWindowsBootstrap: NSObject, URLSessionDownloadDelegate {
     }
     func start() {
         guard !busy else { return }
-        let descriptor = runtime.descriptor()
-        guard descriptor.readyEngine else { update("failed", "Préparez d’abord le moteur Windows.", busy: false); return }
+        guard let descriptor = descriptorProvider(), descriptor.readyEngine else { update("failed", "Préparez d’abord le moteur Windows sélectionné.", busy: false); return }
         if descriptor.steamInstalled { onInstalled?(); return }
         busy = true; stopped = false; received = 0; expected = 0; lastProgressNotification = 0
+        operationDescriptor = descriptor
+        attemptID = UUID()
         update("downloading", "Téléchargement de l’installateur officiel Steam…", busy: true)
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 300
@@ -80,21 +93,21 @@ final class SteamWindowsBootstrap: NSObject, URLSessionDownloadDelegate {
                   let size = try location.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 1000, size < 64_000_000 else { throw RuntimeSetupError.failed("Le téléchargement Steam n’a pas fourni l’installateur attendu.") }
             let handle = try FileHandle(forReadingFrom: location); let header = try handle.read(upToCount: 2); try handle.close()
             guard header == Data([0x4d, 0x5a]) else { throw RuntimeSetupError.failed("Le fichier reçu n’est pas un programme d’installation Windows.") }
-            let downloads = runtime.root.appendingPathComponent("downloads")
+            let downloads = downloadsRoot
             try RuntimeSetup.rejectSymlinkAncestors(downloads)
             try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
             let target = downloads.appendingPathComponent("SteamSetup-\(UUID().uuidString).exe")
             installerFile = target
             try FileManager.default.copyItem(at: location, to: target)
-            let descriptor = runtime.descriptor()
-            guard descriptor.readyEngine else { throw RuntimeSetupError.failed("Le moteur Windows n’est plus disponible.") }
+            guard let descriptor = descriptorProvider(), let original = operationDescriptor, let attempt = attemptID,
+                  descriptor.readyEngine, Self.sameRuntime(original, descriptor) else { throw RuntimeSetupError.failed("Le moteur Windows sélectionné a changé. Réessayez après actualisation.") }
             let process = Process(); process.executableURL = descriptor.wineURL; process.arguments = [target.path]
             process.environment = descriptor.environment; process.currentDirectoryURL = descriptor.prefixURL
             process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
             process.terminationHandler = { [weak self] child in DispatchQueue.main.async {
-                guard let self else { return }; self.installer = nil; self.removeInstallerFile()
+                guard let self, self.attemptID == attempt else { return }; self.installer = nil; self.removeInstallerFile()
                 if self.stopped { return }
-                if self.runtime.descriptor().steamInstalled {
+                if let current = self.descriptorProvider(), Self.sameRuntime(original, current), current.steamInstalled {
                     self.update("ready", "Steam Windows est installé. Connectez votre compte Steam.", busy: false); self.onInstalled?()
                 } else { self.update("failed", child.terminationStatus == 0 ? "Installation Steam non terminée. Vous pouvez relancer l’installateur." : "L’installateur Steam s’est arrêté. Réessayez après vérification.", busy: false) }
             } }
@@ -119,15 +132,22 @@ final class SteamWindowsBootstrap: NSObject, URLSessionDownloadDelegate {
     }
     /// Stops only this exact installer process. Never kills Steam or a wineserver.
     func shutdown(completion: @escaping () -> Void) {
-        stopped = true; task?.cancel(); session?.invalidateAndCancel(); task = nil; session = nil
-        guard let process = installer, process.isRunning else { removeInstallerFile(); completion(); return }
+        let wasBusy = busy
+        stopped = true; attemptID = nil; operationDescriptor = nil
+        task?.cancel(); session?.invalidateAndCancel(); task = nil; session = nil
+        let finish = { [self] in
+            installer = nil; removeInstallerFile()
+            if wasBusy { update("cancelled", "Installation Steam annulée.", busy: false) }
+            completion()
+        }
+        guard let process = installer, process.isRunning else { finish(); return }
         process.terminate()
         DispatchQueue.global(qos: .utility).async {
             let deadline = Date().addingTimeInterval(5)
             while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
             if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
             process.waitUntilExit()
-            DispatchQueue.main.async { self.removeInstallerFile(); completion() }
+            DispatchQueue.main.async(execute: finish)
         }
     }
 }

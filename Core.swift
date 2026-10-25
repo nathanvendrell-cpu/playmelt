@@ -174,11 +174,13 @@ struct Runtime {
     var prefixURL: URL? = nil
     var environment: [String: String] = [:]
     var verifiedIndependentEngine = false
+    var renderer = "dxmt"
+    var graphicsValidated = false
     var available: Bool {
         if let appURL { return FileManager.default.fileExists(atPath: appURL.path) }
         return platform == "windows" && verifiedIndependentEngine && wineURL.map { FileManager.default.isExecutableFile(atPath: $0.path) } == true && FileManager.default.fileExists(atPath: steamRoot.appendingPathComponent("steam.exe").path)
     }
-    var json: [String: Any] { ["id": id, "name": name, "platform": platform, "available": available] }
+    var json: [String: Any] { ["id": id, "name": name, "platform": platform, "available": available, "renderer": renderer, "graphicsValidated": graphicsValidated] }
 }
 struct Account {
     let id: String, name: String, source: String, recent: Bool
@@ -191,8 +193,10 @@ struct Game {
     var customImageURL = ""
     var customPortraitURL = ""
     func json(runtimes: [Runtime]) -> [String: Any] {
-        let available = runtimes.contains { $0.id == runtimeId && $0.available }
-        let launchSupported = store != "steam" || SteamGameLaunchProfile.blockReason(appID: appId, platform: platform) == nil
+        let runtime = runtimes.first { $0.id == runtimeId && $0.available }
+        let available = runtime != nil
+        let routeMatches = runtime.map { SteamGameLaunchProfile.supportsInstallation(appID: appId, runtime: $0) } ?? false
+        let launchSupported = store != "steam" || (routeMatches && SteamGameLaunchProfile.blockReason(appID: appId, platform: platform, renderer: runtime?.renderer ?? "", graphicsValidated: runtime?.graphicsValidated ?? false) == nil)
         return ["id": id, "appId": appId, "title": title, "store": store, "installed": installed,
                 "platform": platform, "runtimeId": runtimeId, "runtimeName": runtimeName, "ownership": ownership,
                 "platforms": supportedPlatforms.isEmpty ? (platform == "unknown" ? [] : [platform]) : supportedPlatforms,
@@ -203,7 +207,7 @@ struct Game {
                 "portraitImageURL": !customPortraitURL.isEmpty ? customPortraitURL : store == "steam" ? "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appId)/library_600x900.jpg" : "",
                 "localPortraitURL": store == "steam" ? "metalmaxart://steam/\(appId)/portrait" : "",
                 "canLaunch": installed && complete && launchSupported && (store == "epic" ? FileManager.default.fileExists(atPath: "/Applications/Epic Games Launcher.app") : available),
-                "canInstall": store == "steam" && !complete && platform != "unknown" && available,
+                "canInstall": store == "steam" && !complete && platform != "unknown" && available && routeMatches,
                 "canInstallAndPlay": store == "steam" && !complete && platform != "unknown" && available && launchSupported,
                 "installComplete": complete]
     }
@@ -212,15 +216,27 @@ struct Game {
 enum SteamGameLaunchProfile {
     static func requiredRenderer(appID: String) -> String { appID == "2584270" ? "d3dmetal" : appID == "526870" ? "dxmt" : "auto" }
     static func requiredGraphicsAPI(appID: String) -> String { appID == "2584270" ? "DirectX12" : appID == "526870" ? "DirectX11" : "unknown" }
-    static func blockReason(appID: String, platform: String) -> String? {
-        // Mortal Shell II's official Steam requirements specify DirectX 12.
-        // The current Playmelt renderer is DXMT (DirectX 10/11), not a DX12 backend.
-        platform == "windows" && appID == "2584270" ? "Ce jeu nécessite DirectX 12. Le moteur actuel prend en charge DirectX 10 et 11." : nil
+    static func supportsInstallation(appID: String, runtime: Runtime) -> Bool {
+        guard runtime.platform == "windows" else { return true }
+        let required = requiredRenderer(appID: appID)
+        return required == "auto" || runtime.renderer == required
     }
-    static func windowsArguments(appID: String) -> [String]? {
-        guard LibraryModel.validAppID(appID), blockReason(appID: appID, platform: "windows") == nil else { return nil }
+    static func blockReason(appID: String, platform: String, renderer: String = "dxmt", graphicsValidated: Bool = false) -> String? {
+        guard platform == "windows" else { return nil }
+        if requiredRenderer(appID: appID) == "d3dmetal", renderer != "d3dmetal" { return "Ce jeu nécessite le moteur DirectX 12 de Playmelt." }
+        return renderer == "d3dmetal" && !graphicsValidated ? "DirectX 12 doit encore être validé avant le lancement de ce jeu." : nil
+    }
+    static func windowsArguments(appID: String, renderer: String = "dxmt", graphicsValidated: Bool = false) -> [String]? {
+        guard LibraryModel.validAppID(appID), blockReason(appID: appID, platform: "windows", renderer: renderer, graphicsValidated: graphicsValidated) == nil else { return nil }
         return ["-applaunch", appID] + (appID == "526870" ? ["-dx11"] : [])
     }
+}
+
+enum RenderProtection {
+    static let preferenceKey = "renderProtectionEnabled"
+    static let executionActions: Set<String> = ["launchGame", "installGame", "installAndPlay", "setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam", "openSteam", "openEpic"]
+    static func enabled(in preferences: UserDefaults) -> Bool { preferences.object(forKey: preferenceKey) as? Bool ?? true }
+    static func blocks(_ action: String, enabled: Bool) -> Bool { enabled && executionActions.contains(action) }
 }
 
 /// Coalesces duplicate UI clicks without a polling timer. A pending request stays
@@ -289,6 +305,7 @@ final class LibraryModel {
     var epicSnapshotFresh = false
     var epicAvailability: [String: Any] = [:]
     var windowsDescriptor: PlaymeltRuntimeDescriptor?
+    var d3dMetalDescriptor: PlaymeltRuntimeDescriptor?
     let preferences: UserDefaults
     init(home: URL = FileManager.default.homeDirectoryForCurrentUser, preferences: UserDefaults = .standard) {
         self.home = home; self.preferences = preferences
@@ -304,6 +321,11 @@ final class LibraryModel {
         if let engine = windowsDescriptor, engine.readyEngine && engine.steamInstalled {
             runtimes.append(Runtime(id: "playmelt-windows", name: "Playmelt · Windows", platform: "windows", steamRoot: engine.steamRoot, appURL: nil,
                                     wineURL: engine.wineURL, prefixURL: engine.prefixURL, environment: engine.environment, verifiedIndependentEngine: true))
+        }
+        if let engine = d3dMetalDescriptor, engine.readyEngine && engine.steamInstalled {
+            runtimes.append(Runtime(id: "playmelt-d3dmetal", name: "Playmelt · DirectX 12", platform: "windows", steamRoot: engine.steamRoot, appURL: nil,
+                                    wineURL: engine.wineURL, prefixURL: engine.prefixURL, environment: engine.environment, verifiedIndependentEngine: true,
+                                    renderer: "d3dmetal", graphicsValidated: false))
         }
         return runtimes
     }
@@ -392,7 +414,7 @@ final class LibraryModel {
     func makeGame(_ id: String, ownership: String) -> Game {
         let info = metadata[id]
         let platform = info?.platforms.contains("macos") == true ? "mac" : info?.platforms.contains("windows") == true ? "windows" : "unknown"
-        let runtime = runtimes.first { $0.platform == platform && $0.available }
+        let runtime = runtimes.first { $0.platform == platform && $0.available && SteamGameLaunchProfile.supportsInstallation(appID: id, runtime: $0) }
         var game = Game(id: "steam:\(id)", appId: id, title: info?.name ?? "Steam \(id)", store: "steam", installed: false, platform: platform, runtimeId: runtime?.id ?? "", runtimeName: runtime?.name ?? (platform == "windows" ? "Moteur Windows non configuré" : "Aucune route vérifiée"), ownership: ownership)
         game.supportedPlatforms = ["macos", "windows"].filter { info?.platforms.contains($0) == true }.map { $0 == "macos" ? "mac" : "windows" }
         if let path = info?.portraitAssets.first { game.customPortraitURL = SteamAppInfo.artworkURL(appID: id, path: path) ?? "" }

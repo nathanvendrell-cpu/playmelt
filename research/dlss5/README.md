@@ -58,9 +58,12 @@ Required top-level fields:
 | `frames` | Ordered non-empty sequence described below |
 
 Controls contain finite values; `styleIndex` is UInt32, `autoMask` is boolean and
-`modelSlot` must be `0`. The port's style control is not an A/B/C model selector.
-Nondefault model slots, control masks, subrects and variable resolution are refused
-until their exact capture and upstream contracts are qualified.
+`modelSlot` must be `0`: this reserved contract field has no qualified upstream flag.
+The reviewed RTX Remix wrapper maps its appearance models A/B/C to `InStyle` values
+0/1/2; the importer passes that value as `styleIndex`. Its render preset B selects
+the lightweight network separately. Mapping the same value does not establish
+equivalent numerical behavior. Nondefault model slots, control masks, subrects and
+variable resolution remain refused.
 
 Reviewed identity pairs are `310.8.0.0` + `ht71`, or `310.9.16.0` + `ht71`/`small31`.
 This is a version/shape allowlist, **not authentication of the model**. Digest strings
@@ -98,6 +101,85 @@ RG and depth R. No planar, half-float, compressed, big-endian or integer interpr
 is guessed. `rowBytes` includes row padding; a file is exactly `rowBytes * height`.
 Color/reference RGB must be finite `[0,1]`. All other used components must be finite.
 File hashes include padding. Filenames are flat, and symlinks are refused.
+
+## Offline NGX trace importer
+
+`import_ngx.py` bridges an actual mismatch between the APIs: NGX receives the
+**current** camera jitter, while the pinned MLX motion preprocessor expects
+**previous minus current**. It also converts the RGBA16F textures used by RTX Remix
+to the interleaved RGB32F capture format. It performs real buffer conversion on CPU;
+it does not call NGX, intercept a game, acquire a GPU texture or load a neural model.
+
+```sh
+python3 -B research/dlss5/import_ngx.py OFFLINE_TRACE_DIR NEW_CAPTURE_DIR
+python3 -B research/dlss5/qualify.py prepare NEW_CAPTURE_DIR NEW_BUNDLE_DIR ../MLX-DLSS MODEL_PACKAGE FUTURE_CANDIDATE_DIR
+```
+
+The input is an **exporter contract defined here**, not a JSON format supplied by
+the NGX SDK. A separately authorized capture system must supply the textures and
+the parameter snapshot from each successful evaluation. `ngx-trace.json` has these
+required fields; unknown fields are rejected:
+
+| Field | Meaning |
+|---|---|
+| `schemaVersion`, `api` | `1`, `NVSDK_NGX_VK_DLSSNR_Eval_Params` |
+| `sourceCommit` | RTX Remix `bbd74a1287c2fa887f4a2b0e46a1530177890b64` |
+| `creation` | `Width`, `Height`, `NVSDK_NGX_Parameter_DLSSNR_Hint_Render_Preset`; only the literal `NVSDK_NGX_DLSSNR_Hint_Render_Preset_B` is reviewed |
+| `colorEncoding` | Explicit `display-srgb-unit`; this is not inferred from RGBA16F |
+| `motionConvention`, `motionJitterIncluded` | `pixel-current-to-previous` and an explicit boolean describing the captured engine vectors |
+| `noiseCounterEvidence` | Nonempty account of how the per-frame counter is known; NGX parameters shown here do not expose it |
+| `identity`, `provenance` | Existing capture fields; this importer accepts only the reviewed `310.9.16.0` + `small31` pairing |
+| `frames` | Contiguous `index`, increasing `timestampNanoseconds`, `evaluationSucceeded: true`, explicit `noiseFrameIndex`, `parameters`, `buffers` |
+
+Each frame's `parameters` uses the API spelling: `InReset`, `InDepthInverted`,
+`InEnabled`, `InIntensity`, `InLocalToneStrength`, `InLocalStructureStrength`,
+`InMaskBlendMode`, `InStyle`, `InUseAutoMask`, `InSkinStructureStrength`,
+`InMVecScaleX/Y`, and `NVSDK_NGX_Parameter_Jitter_Offset_X/Y`. It also requires
+`In{Color,Output,MVec,Depth}SubrectBase: [0,0]` and matching full `SubrectSize`.
+NGX flags are integer 0/1. For this supported subset `InEnabled` is 1,
+`InUseAutoMask` is 0 and `InMaskBlendMode` is the literal
+`NVSDK_NGX_DLSSNR_Mask_Blend_Mode_None`.
+
+`buffers` contains `pInColor`, `pInOutput`, `pInMVec`, `pInDepth`, plus
+`pInControlMask: null`. Each texture record contains `file`, `sha256`, `format`,
+`rowBytes`, `width`, `height`. It describes a little-endian, row-major **CPU readback**,
+not opaque Vulkan image memory. Supported formats are RGBA16F/RGBA32F for color
+and output, RG16F/RG32F for motion, and R32F for depth, using the full Vulkan enum
+names present in `FORMATS`. Row padding is allowed and included in source hashes.
+
+The importer rounds each current jitter component to Float32, computes
+`Float32(previous-current)`, then lets `qualify.py` apply the signed engine scale
+and divide by the declared equal extents. A real reset clears the previous segment
+and supplies zero delta because there is no carried history. When vectors already
+include jitter, their delta is zero for every frame. No cut/reset is invented.
+Controls, scales or depth mode changing within the submitted trace are rejected,
+including at a reset; split such input only at an already recorded reset. A failed
+evaluation, dropped index or unmatched noise counter is refused because its
+temporal state cannot be reconstructed honestly.
+
+RGBA16F is a storage format, **not evidence of an SDR transfer function**. The
+caller must declare the compatible encoding and all RGB samples must be finite
+and within `[0,1]`. There is no gamma conversion or tonemapping. Consequently an
+HDR UE5 capture, a render-resolution guide paired with display-resolution color,
+a nonzero subrect, an automatic/material mask or an unknown motion convention
+cannot yet be imported. These limits also prevent importing the default masked
+RTX Remix path unchanged. They are explicit porting gaps, not silently approximated.
+
+Raw plus converted data is limited to256MiB and read row by row. Outputs are a new
+capture directory and `import-receipt.json` preserving the original parameter
+trace, identity assertions and source-buffer hashes. The receipt always records
+`capturePerformed`, `inferenceExecuted`, `modelBytesRead`,
+`noiseCounterAuthenticated` and `vendor_runtime_parity_verified` as false.
+The CPU tests include literal half-float bytes, motion/jitter/reset expectations,
+rejected histories and a round trip through the actual pinned upstream golden
+validator. Synthetic reference values are never a DLSS 5 quality or parity result.
+
+Pinned NVIDIA source evidence:
+
+- [NGX evaluation and creation](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_ngx_wrapper.cpp#L1077-L1178): preset B, separate `InStyle`, controls, extents and current jitter parameters.
+- [Camera jitter](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_camera.cpp#L802-L849) and [caller](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_dlss_neural_rendering.cpp#L106-L189): current pixel jitter and render-pixel motion scale.
+- [Input/output texture allocations](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_resources.cpp#L1587-L1609): `VK_FORMAT_R16G16B16A16_SFLOAT`.
+- [Appearance model control](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_dlss_neural_rendering.h#L62-L76): A/B/C selection. Source hashes are recorded in `upstream-lock.json`; the importer makes no network request.
 
 ## Commands
 

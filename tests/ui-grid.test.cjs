@@ -78,7 +78,7 @@ const context = {
   platforms: (g) => g.platforms,
   platformLabel: () => "Mac",
   storeName: () => "Steam",
-  state: { games },
+  state: { games, renderProtectionEnabled: false },
   ui: { limit: 2, install: "all", platform: "all", view: "library" },
   received: true,
   filteredGames: () => filtered,
@@ -91,7 +91,12 @@ const context = {
   },
 };
 const render = vm.runInNewContext(
-  html.slice(start, end) + "; renderLibrary",
+  html.slice(
+    html.indexOf("function renderProtectionEnabled()"),
+    html.indexOf("function createRenderProtectionControl()"),
+  ) +
+    html.slice(start, end) +
+    "; renderLibrary",
   context,
 );
 render();
@@ -176,6 +181,18 @@ assert.equal(
   opened,
   games[1].id,
   "DX12 quick action opens configuration instead of dispatching launch",
+);
+delete games[1].requiredRenderer;
+context.state.renderProtectionEnabled = true;
+render();
+opened = null;
+walk(elements.gameGrid.children[0])
+  .find((n) => n.className === "game-action")
+  .handlers.click();
+assert.equal(
+  opened,
+  games[1].id,
+  "Protected quick actions open the sheet, never launch a game",
 );
 console.log(
   "Grid reuse passed; artwork disposal preserved; DX12 card routes only to configuration",

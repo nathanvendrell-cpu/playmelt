@@ -140,9 +140,14 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     let epicConnector = EpicConnector()
     let runtimeSetup = RuntimeSetup()
     let d3dMetalStore = D3DMetalStore()
+    lazy var d3dMetalRuntime = D3DMetalRuntime(store: d3dMetalStore)
     private let rendererImportQueue = DispatchQueue(label: "fr.playmelt.renderer-import", qos: .utility)
     private var rendererImportBusy = false
     lazy var steamBootstrap = SteamWindowsBootstrap(runtime: runtimeSetup)
+    lazy var d3dMetalSteamBootstrap = SteamWindowsBootstrap(downloadsRoot: runtimeSetup.root.appendingPathComponent("D3DMetal/downloads"), descriptor: { [weak self] in
+        guard let self else { return nil }
+        return try? self.d3dMetalRuntime.descriptor(base: self.runtimeSetup.descriptor())
+    })
     let installCoordinator = SteamInstallCoordinator()
     let requestGate = SteamRequestGate()
     var clientLaunchers: [UUID: Process] = [:]
@@ -155,6 +160,8 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         installCoordinator.onChange = { [weak self] in self?.notifyInstallJob() }
         steamBootstrap.onChange = { [weak self] in self?.notifyRuntime() }
         steamBootstrap.onInstalled = { [weak self] in self?.refresh() }
+        d3dMetalSteamBootstrap.onChange = { [weak self] in self?.notifyRuntime() }
+        d3dMetalSteamBootstrap.onInstalled = { [weak self] in self?.refresh() }
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard !closing, message.frameInfo.isMainFrame, message.frameInfo.request.url?.standardizedFileURL == resourceURL.standardizedFileURL,
@@ -162,27 +169,53 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
               let dict = message.body as? [String: Any], let action = dict["action"] as? String else { return }
         print("Playmelt action: \(action)"); fflush(stdout)
         guard !loading || action == "refresh" else { result(false, "Lecture locale en cours. Réessayez dans un instant."); return }
+        guard !RenderProtection.blocks(action, enabled: renderProtectionEnabled) else { result(false, "Rendus en cours : cette action est suspendue."); return }
         switch action {
+        case "setRenderProtection":
+            guard let enabled = dict["enabled"] as? Bool else { return }
+            model.preferences.set(enabled, forKey: RenderProtection.preferenceKey)
+            if enabled {
+                installCoordinator.cancel(message: "Rendus en cours : lancement automatique annulé.")
+                runtimeSetup.cancel(); d3dMetalRuntime.cancel()
+                steamBootstrap.shutdown { [weak self] in self?.notifyRuntime() }
+                d3dMetalSteamBootstrap.shutdown { [weak self] in self?.notifyRuntime() }
+            }
+            sendState()
         case "refresh": refresh()
         case "selectAccount":
             guard let id = dict["accountId"] as? String, model.accounts.contains(where: { $0.id == id }) else { result(false, "Compte non reconnu."); return }
             installCoordinator.cancel(message: "Compte changé : lancement automatique annulé.")
             model.selectedAccountID = id; model.preferences.set(id, forKey: "selectedSteamAccount"); model.libraryStatus = "local"; refresh()
         case "setupWindowsRuntime":
-            guard !CommandLine.arguments.contains("--audit-read-only"), !steamBootstrap.busy, !installCoordinator.isActive else { result(false, "Préparation indisponible pendant cette opération."); return }
+            guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Préparation indisponible pendant cette opération."); return }
             runtimeSetup.start(progress: { [weak self] _ in self?.notifyRuntime() }) { [weak self] outcome in
                 self?.refresh()
                 if case .failure(let error) = outcome { self?.result(false, error.localizedDescription) }
             }
         case "cancelWindowsRuntime": runtimeSetup.cancel()
+        case "setupD3DMetalRuntime":
+            guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Préparation indisponible pendant cette opération."); return }
+            d3dMetalRuntime.start(base: runtimeSetup.descriptor(), progress: { [weak self] _ in self?.notifyRuntime() }) { [weak self] outcome in
+                self?.refresh()
+                if case .failure(let error) = outcome { self?.result(false, error.localizedDescription) }
+            }
+        case "cancelD3DMetalRuntime": d3dMetalRuntime.cancel()
+        case "installSteamD3DMetal":
+            guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Installation Steam indisponible pendant cette opération."); return }
+            d3dMetalSteamBootstrap.start()
+        case "openD3DMetalSteam":
+            guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Steam DirectX 12 est indisponible pendant cette opération."); return }
+            refresh()
+            guard let runtime = model.runtimes.first(where: { $0.id == "playmelt-d3dmetal" && $0.available }) else { result(false, "Préparez DirectX 12 puis installez Steam dans cet environnement."); return }
+            runWindowsClient(runtime, arguments: ["steam://open/games"], onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, message) }
         case "importD3DMetal": importD3DMetal()
         case "openD3DMetalDownload":
             NSWorkspace.shared.open(URL(string: "https://developer.apple.com/games/game-porting-toolkit/")!)
         case "installSteamWindows":
-            guard !CommandLine.arguments.contains("--audit-read-only"), !runtimeIsBusy, !installCoordinator.isActive else { result(false, "Installation Steam indisponible pendant cette opération."); return }
+            guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Installation Steam indisponible pendant cette opération."); return }
             steamBootstrap.start()
         case "openWindowsSteam":
-            guard !CommandLine.arguments.contains("--audit-read-only"), !runtimeIsBusy, !steamBootstrap.busy else { result(false, "Steam Windows est indisponible pendant cette opération."); return }
+            guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Steam Windows est indisponible pendant cette opération."); return }
             refresh()
             guard let runtime = model.runtimes.first(where: { $0.id == "playmelt-windows" && $0.available }) else { result(false, "Installez d’abord Steam Windows dans Playmelt."); return }
             runWindowsClient(runtime, arguments: ["steam://open/games"], onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, ok ? "Ouverture de Steam Windows…" : message) }
@@ -220,18 +253,25 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         // The bounded local scan takes about 150ms on the audited machine.
         // Keep all model access on the main queue to avoid racing an auth return.
         model.windowsDescriptor = runtimeSetup.descriptor()
+        model.d3dMetalDescriptor = try? d3dMetalRuntime.descriptor(base: runtimeSetup.descriptor())
         model.refresh(); loading = false; sendState()
     }
     var runtimeIsBusy: Bool { ["downloading", "verifying", "extracting", "initializing"].contains(runtimeSetup.snapshot()["status"] as? String ?? "") }
+    var renderProtectionEnabled: Bool { RenderProtection.enabled(in: model.preferences) }
+    var d3dMetalIsBusy: Bool { d3dMetalRuntime.snapshot(base: runtimeSetup.descriptor())["busy"] as? Bool == true }
+    var anyRuntimeOperation: Bool { runtimeIsBusy || d3dMetalIsBusy || rendererImportBusy || steamBootstrap.busy || d3dMetalSteamBootstrap.busy || installCoordinator.isActive }
     func runtimePayload() -> [String: Any] {
         var state = runtimeSetup.snapshot(); state.merge(steamBootstrap.snapshot) { _, latest in latest }
-        var directX12 = d3dMetalStore.snapshot(); directX12["busy"] = rendererImportBusy
+        var directX12 = d3dMetalStore.snapshot()
+        directX12.merge(d3dMetalRuntime.snapshot(base: runtimeSetup.descriptor())) { _, latest in latest }
+        directX12.merge(d3dMetalSteamBootstrap.snapshot) { _, latest in latest }
+        directX12["busy"] = rendererImportBusy || d3dMetalIsBusy
         state["d3dMetal"] = directX12
+        state["renderProtectionEnabled"] = renderProtectionEnabled
         return state
     }
     func importD3DMetal() {
-        guard !closing, !rendererImportBusy, !runtimeIsBusy, !steamBootstrap.busy,
-              !installCoordinator.isActive, !CommandLine.arguments.contains("--audit-read-only"),
+        guard !closing, !anyRuntimeOperation, !CommandLine.arguments.contains("--audit-read-only"),
               let window = webView?.window else { result(false, "Import indisponible pendant cette opération."); return }
         let picker = NSOpenPanel()
         picker.title = "Importer DirectX 12"
@@ -267,6 +307,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     func sendState() {
         model.epicAvailability = epicConnector.availability()
         var state = model.state(); state["windowsRuntime"] = runtimePayload(); state["installJob"] = installCoordinator.snapshot ?? NSNull()
+        state["renderProtectionEnabled"] = renderProtectionEnabled
         notify("onNativeState", state)
     }
     func notifyRuntime() { notify("onNativeRuntime", runtimePayload()) }
@@ -314,12 +355,12 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         }
     }
     func installAndPlay(_ game: Game, runtimeID: String?) {
-        guard !closing else { return }
+        guard !closing, !renderProtectionEnabled else { result(false, "Rendus en cours : lancement suspendu."); return }
         guard !CommandLine.arguments.contains("--audit-read-only") else { result(false, "Mode de vérification : installation et lancement désactivés."); return }
         guard !installCoordinator.isActive, !runtimeIsBusy, !steamBootstrap.busy else { result(false, "Une opération est déjà en cours."); return }
         guard game.store == "steam", !model.selectedAccountID.isEmpty,
               let runtime = validatedSteamRuntime(game, installing: true, requestedRuntime: runtimeID) else { return }
-        if let reason = SteamGameLaunchProfile.blockReason(appID: game.appId, platform: runtime.platform) { result(false, reason); return }
+        if let reason = SteamGameLaunchProfile.blockReason(appID: game.appId, platform: runtime.platform, renderer: runtime.renderer, graphicsValidated: runtime.graphicsValidated) { result(false, reason); return }
         let account = model.selectedAccountID
         guard let id = installCoordinator.begin(gameID: game.id, appID: game.appId, title: game.title, runtime: runtime, accountID: account, onReady: { [weak self] id in
             guard let self, !self.closing else { return }
@@ -338,9 +379,11 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         }
     }
     func validatedSteamRuntime(_ game: Game, installing: Bool, requestedRuntime: String?) -> Runtime? {
+        guard !renderProtectionEnabled else { result(false, "Rendus en cours : installation et lancement suspendus."); return nil }
         guard LibraryModel.validAppID(game.appId), let runtime = model.runtimes.first(where: { $0.id == (installing ? requestedRuntime ?? game.runtimeId : game.runtimeId) && $0.available }) else { result(false, "Aucun client Steam utilisable pour cette route."); return nil }
-        if !installing, let reason = SteamGameLaunchProfile.blockReason(appID: game.appId, platform: runtime.platform) { result(false, reason); return nil }
-        if runtime.platform == "windows" && (runtimeIsBusy || steamBootstrap.busy) { result(false, "La préparation Windows est encore en cours."); return nil }
+        guard SteamGameLaunchProfile.supportsInstallation(appID: game.appId, runtime: runtime) else { result(false, "Ce jeu nécessite un autre moteur graphique."); return nil }
+        if !installing, let reason = SteamGameLaunchProfile.blockReason(appID: game.appId, platform: runtime.platform, renderer: runtime.renderer, graphicsValidated: runtime.graphicsValidated) { result(false, reason); return nil }
+        if runtime.platform == "windows" && (runtimeIsBusy || d3dMetalIsBusy || steamBootstrap.busy || d3dMetalSteamBootstrap.busy) { result(false, "La préparation Windows est encore en cours."); return nil }
         if installing {
             guard !game.complete, let info = model.metadata[game.appId], info.platforms.contains(runtime.platform == "mac" ? "macos" : "windows") else { result(false, "Cette édition ne peut pas être installée avec le client choisi."); return nil }
         } else if !game.installed || !game.complete || game.json(runtimes: model.runtimes)["canLaunch"] as? Bool != true { result(false, "Installation absente ou incomplète. Vérifiez-la dans Steam."); return nil }
@@ -353,6 +396,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     }
     func dispatchSteam(_ game: Game, runtime: Runtime, installing: Bool, onFailure: @escaping (String) -> Void,
                        completion: @escaping (Bool, String) -> Void) {
+        guard !renderProtectionEnabled else { completion(false, "Rendus en cours : installation et lancement suspendus."); return }
         let key = "game:\(runtime.id):\(game.appId)"
         guard !closing, let token = requestGate.acquire(key) else { completion(false, "Demande déjà envoyée à Steam."); return }
         let finish: (Bool, String) -> Void = { [weak self] ok, message in
@@ -363,7 +407,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         if let app = runtime.appURL, let url = URL(string: uri) {
             NSWorkspace.shared.open([url], withApplicationAt: app, configuration: .init()) { _, error in DispatchQueue.main.async { finish(error == nil, error == nil ? message : "Steam n’a pas accepté la demande.") } }
         } else if runtime.platform == "windows" {
-            let args = installing ? [uri] : Self.windowsLaunchArguments(appID: game.appId) ?? []
+            guard let args = installing ? [uri] : SteamGameLaunchProfile.windowsArguments(appID: game.appId, renderer: runtime.renderer, graphicsValidated: runtime.graphicsValidated) else { finish(false, "Le moteur graphique de ce jeu reste à valider."); return }
             runWindowsClient(runtime, arguments: args, onFailure: onFailure) { ok, error in finish(ok, ok ? message : error) }
         } else { finish(false, "Client Steam indisponible.") }
     }
@@ -372,7 +416,9 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         let key = "windows-client:" + arguments.joined(separator: "\u{1f}")
         guard !closing, let token = requestGate.acquire(key) else { completion(false, "Demande déjà envoyée à Steam Windows."); return }
         defer { requestGate.finish(key, token: token) }
-        let descriptor = runtimeSetup.descriptor()
+        guard !renderProtectionEnabled else { completion(false, "Rendus en cours : Steam Windows est suspendu."); return }
+        let candidate = runtime.id == "playmelt-d3dmetal" ? try? d3dMetalRuntime.descriptor(base: runtimeSetup.descriptor()) : runtimeSetup.descriptor()
+        guard let descriptor = candidate else { completion(false, "Le moteur DirectX 12 n’est pas préparé."); return }
         guard runtime.verifiedIndependentEngine, descriptor.readyEngine, descriptor.steamInstalled,
               runtime.prefixURL == descriptor.prefixURL, runtime.wineURL == descriptor.wineURL else { completion(false, "Le moteur Windows ou Steam Windows n’est pas prêt."); return }
         let process = Process(); let id = UUID(); process.executableURL = descriptor.wineURL
@@ -387,7 +433,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         catch { completion(false, "Impossible d’ouvrir Steam Windows.") }
     }
     func route(_ game: Game, installing: Bool, requestedRuntime: String?) {
-        guard !closing else { return }
+        guard !closing, !renderProtectionEnabled else { result(false, "Rendus en cours : installation et lancement suspendus."); return }
         guard !CommandLine.arguments.contains("--audit-read-only") else { result(false, "Mode de vérification : installations et lancements désactivés."); return }
         guard !installCoordinator.isActive else { result(false, "Un suivi d’installation est déjà en cours. Arrêtez le suivi avant une autre demande."); return }
         if game.store == "epic" {
@@ -443,8 +489,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         guard handler != nil else { return .terminateNow }
         handler?.beginShutdown()
         handler?.steamBootstrap.shutdown { [weak self] in
-            self?.handler?.runtimeSetup.shutdown { [weak self] in
-                self?.handler?.finishRendererImport { NSApp.reply(toApplicationShouldTerminate: true) }
+            self?.handler?.d3dMetalSteamBootstrap.shutdown { [weak self] in
+                self?.handler?.d3dMetalRuntime.shutdown { [weak self] in
+                    self?.handler?.runtimeSetup.shutdown { [weak self] in
+                        self?.handler?.finishRendererImport { NSApp.reply(toApplicationShouldTerminate: true) }
+                    }
+                }
             }
         }
         return .terminateLater
@@ -453,9 +503,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 if CommandLine.arguments.contains("--self-test") {
     runSelfTests()
 } else if CommandLine.arguments.contains("--diagnose-json") {
-    let model = LibraryModel(); let runtime = RuntimeSetup(); model.windowsDescriptor = runtime.descriptor(); model.refresh(); model.epicAvailability = EpicConnector().availability()
-    var state = model.state(); var runtimeState = runtime.snapshot(); runtimeState["d3dMetal"] = D3DMetalStore().snapshot()
+    let model = LibraryModel(); let runtime = RuntimeSetup(); let metalStore = D3DMetalStore(); let metalRuntime = D3DMetalRuntime(store: metalStore)
+    model.windowsDescriptor = runtime.descriptor(); model.d3dMetalDescriptor = try? metalRuntime.descriptor(base: runtime.descriptor()); model.refresh(); model.epicAvailability = EpicConnector().availability()
+    var state = model.state(); var runtimeState = runtime.snapshot(); var metalState = metalStore.snapshot()
+    metalState.merge(metalRuntime.snapshot(base: runtime.descriptor())) { _, latest in latest }; runtimeState["d3dMetal"] = metalState
     state["windowsRuntime"] = runtimeState; state["installJob"] = NSNull()
+    state["renderProtectionEnabled"] = RenderProtection.enabled(in: model.preferences)
     if let data = try? JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys]) { FileHandle.standardOutput.write(data); print("") }
 } else {
     let app = NSApplication.shared; app.setActivationPolicy(.regular)

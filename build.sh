@@ -13,7 +13,7 @@ for argument in "$@"; do
 done
 PRODUCT="$TASK_ROOT/Products.noindex/$APP_NAME.app"
 mkdir -p "$PRODUCT/Contents/MacOS" "$PRODUCT/Contents/Resources"
-swiftc -O -module-name MetalMax "$TASK_ROOT/EpicConnector.swift" "$TASK_ROOT/RuntimeSetup.swift" "$TASK_ROOT/D3DMetalStore.swift" "$TASK_ROOT/Core.swift" "$TASK_ROOT/SteamInstallCoordinator.swift" "$TASK_ROOT/SteamWindowsBootstrap.swift" "$TASK_ROOT/SelfTests.swift" "$TASK_ROOT/main.swift" -o "$PRODUCT/Contents/MacOS/MetalMax" -framework AppKit -framework WebKit -framework Metal
+swiftc -O -module-name MetalMax "$TASK_ROOT/EpicConnector.swift" "$TASK_ROOT/RuntimeSetup.swift" "$TASK_ROOT/D3DMetalStore.swift" "$TASK_ROOT/D3DMetalRuntime.swift" "$TASK_ROOT/Core.swift" "$TASK_ROOT/SteamInstallCoordinator.swift" "$TASK_ROOT/SteamWindowsBootstrap.swift" "$TASK_ROOT/SelfTests.swift" "$TASK_ROOT/main.swift" -o "$PRODUCT/Contents/MacOS/MetalMax" -framework AppKit -framework WebKit -framework Metal
 cp "$TASK_ROOT/index.html" "$PRODUCT/Contents/Resources/index.html"
 cp "$TASK_ROOT/scripts/epic-worker.py" "$PRODUCT/Contents/Resources/epic-worker.py"
 cp "$TASK_ROOT/Resources/SteamLibraryReader.js" "$PRODUCT/Contents/Resources/SteamLibraryReader.js"

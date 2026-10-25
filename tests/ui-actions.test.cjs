@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-const start = html.indexOf("function openGame(game)");
+const start = html.indexOf("function renderProtectionEnabled()");
 const end = html.indexOf("function renderLibrary()", start);
 assert(start > 0 && end > start);
 function node(tag, cls, text) {
@@ -71,6 +71,7 @@ const context = {
   platformLabel: () => "Mac",
   storeName: () => "Steam",
   state: {
+    renderProtectionEnabled: false,
     runtimes: [
       {
         id: "steam-mac",
@@ -410,6 +411,54 @@ assert.equal(
   "Game cancellation control stays stable",
 );
 assert.equal(jobProgress.value, 0.75);
+context.state.renderProtectionEnabled = true;
+context.state.installJob = null;
+openGame({
+  id: "steam:mac",
+  title: "Installed",
+  store: "steam",
+  canLaunch: true,
+  installed: true,
+});
+assert(
+  elements.dialogBody.children.find((n) => n.text === "Jouer").disabled,
+  "Protection disables Play in an installed-game sheet",
+);
+openGame(nativeGame);
+assert(
+  elements.dialogBody.children.find((n) => n.text === "Installer et jouer")
+    .disabled,
+  "Protection disables tracked installs",
+);
+context.state.windowsRuntime = {
+  status: "missing",
+  readyEngine: false,
+  steamInstalled: false,
+};
+openGame(windowsGame);
+assert(
+  elements.dialogBody.children.find((n) => n.text === "Configurer le moteur")
+    .disabled,
+  "Protection disables DXMT configuration",
+);
+context.state.windowsRuntime = {
+  status: "ready",
+  readyEngine: true,
+  steamInstalled: false,
+};
+openGame(windowsGame);
+assert(
+  elements.dialogBody.children.find((n) => n.text === "Installer Steam Windows")
+    .disabled,
+  "Protection disables Steam bootstrap",
+);
+context.state.windowsRuntime.steamInstalled = true;
+openGame(windowsGame);
+assert(
+  elements.dialogBody.children.find((n) => n.text === "Ouvrir Steam Windows")
+    .disabled,
+  "Protection disables Steam launches",
+);
 console.log(
   "UI actions passed: explicit actions only; stable progress/cancel DOM and truthful measurements",
 );

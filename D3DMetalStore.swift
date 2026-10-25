@@ -10,6 +10,7 @@ struct D3DMetalLaunchPlan {
     let rendererHash: String
     let engineID: String
     let engineFingerprint: String
+    let preparationBlockers: [String]
     let blockedReasons: [String]
     var canExecute: Bool { blockedReasons.isEmpty }
     var json: [String: Any] {
@@ -44,7 +45,7 @@ final class D3DMetalStore {
     private var pendingProbes: [String: D3DMetalProbeRequest] = [:]
     private var payload: URL { root.appendingPathComponent("payload", isDirectory: true) }
     private var receipt: URL { payload.appendingPathComponent("receipt.json") }
-    private var isolatedRoot: URL { root.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Runtime/D3DMetal", isDirectory: true) }
+    var isolatedRoot: URL { root.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Runtime/D3DMetal", isDirectory: true) }
     init(root: URL? = nil, writeReceipt: @escaping (Data, URL) throws -> Void = { data, url in try data.write(to: url, options: .withoutOverwriting) }) {
         self.root = root ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/Renderers/D3DMetal", isDirectory: true)
         self.writeReceipt = writeReceipt
@@ -114,6 +115,44 @@ final class D3DMetalStore {
     func launchPlan(base: PlaymeltRuntimeDescriptor) throws -> D3DMetalLaunchPlan {
         stateLock.lock(); let report = cached; stateLock.unlock()
         guard let report, let hash = report["contentHash"] as? String, try verifyPayload(report) else { throw Self.failure("Import D3DMetal absent ou modifié.") }
+        let configuration = try candidateConfiguration(base: base)
+        let prefix = configuration.prefix, env = configuration.environment
+        let baseLibraries = base.environment["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
+        let baseFrameworks = base.environment["DYLD_FALLBACK_FRAMEWORK_PATH"] ?? ""
+        var reasons = ["Le contrat ABI entre cet import Apple et ce Wine doit encore être validé."]
+        reasons.append("Les composants graphiques 32 bits de ce préfixe restent à qualifier ; aucun overlay DXMT n’y est ajouté.")
+        var preparationBlockers: [String] = []
+        let engine = base.wineURL.deletingLastPathComponent().deletingLastPathComponent()
+        let searchRoots = [payload.appendingPathComponent("external"), engine.appendingPathComponent("lib/wine/x86_64-unix"), engine.appendingPathComponent("lib")] +
+            (baseLibraries + ":" + baseFrameworks).split(separator: ":").map { URL(fileURLWithPath: String($0)) }
+        var unresolved = Set<String>()
+        for image in report["machO"] as? [[String: Any]] ?? [] {
+            guard let path = (image["resolvedPath"] ?? image["path"]) as? String, Self.safeRelative(path) else { continue }
+            for name in image["dependencies"] as? [String] ?? [] {
+                if name.hasPrefix("/System/Library/") || name.hasPrefix("/usr/lib/") { continue }
+                let candidates: [URL]
+                if name.hasPrefix("@rpath/") { candidates = searchRoots.map { $0.appendingPathComponent(String(name.dropFirst(7))) } }
+                else if name.hasPrefix("@loader_path/") { candidates = [payload.appendingPathComponent(path).deletingLastPathComponent().appendingPathComponent(String(name.dropFirst(13)))] }
+                else if name.hasPrefix("@executable_path/") { candidates = [base.wineURL.deletingLastPathComponent().appendingPathComponent(String(name.dropFirst(17)))] }
+                else { candidates = [] }
+                if !candidates.contains(where: { FileManager.default.fileExists(atPath: $0.standardizedFileURL.path) }) { unresolved.insert(name) }
+            }
+        }
+        if !unresolved.isEmpty { preparationBlockers.append("Dépendances natives non résolues : " + unresolved.sorted().joined(separator: ", ")) }
+        if !base.readyEngine { preparationBlockers.append("Le moteur Wine de base n’est pas prêt.") }
+        if report["hostOSCompatible"] as? Bool != true { preparationBlockers.append("La version minimale de macOS des fichiers importés n’est pas satisfaite.") }
+        reasons += preparationBlockers
+        if (try? RuntimeSetup.validatePrefix(prefix)) == nil { reasons.append("Le préfixe DirectX 12 indépendant n’est pas initialisé.") }
+        return .init(wineURL: base.wineURL, prefixURL: prefix, steamRoot: prefix.appendingPathComponent("drive_c/Program Files (x86)/Steam"),
+                     environment: env, rendererHash: hash, engineID: base.engineID,
+                     engineFingerprint: try Self.engineFingerprint(base.wineURL), preparationBlockers: preparationBlockers, blockedReasons: reasons)
+    }
+
+    /// Configuration only, with no hash scan and no qualification grant. A caller
+    /// must bind it to a successfully prepared receipt before using its prefix.
+    func candidateConfiguration(base: PlaymeltRuntimeDescriptor) throws -> (prefix: URL, environment: [String:String], rendererHash: String) {
+        stateLock.lock(); let report = cached; stateLock.unlock()
+        guard let hash = report?["contentHash"] as? String else { throw Self.failure("Import D3DMetal absent.") }
         let prefix = isolatedRoot.appendingPathComponent("prefix", isDirectory: true)
         guard prefix.standardizedFileURL.resolvingSymlinksInPath() != base.prefixURL.standardizedFileURL.resolvingSymlinksInPath(),
               !Self.forbiddenPath(prefix), !Self.forbiddenPath(base.wineURL) else { throw Self.failure("Le préfixe DirectX 12 doit être indépendant.") }
@@ -134,31 +173,18 @@ final class D3DMetalStore {
             "DYLD_FALLBACK_FRAMEWORK_PATH": ([external, baseFrameworks].filter { !$0.isEmpty }).joined(separator: ":")
         ]
         if let plugins = base.environment["GST_PLUGIN_PATH"], !Self.forbiddenPath(URL(fileURLWithPath: plugins)), !Self.isDXMTOverlay(plugins) { env["GST_PLUGIN_PATH"] = plugins }
-        var reasons = ["Le contrat ABI entre cet import Apple et ce Wine doit encore être validé."]
-        reasons.append("Les composants graphiques 32 bits de ce préfixe restent à qualifier ; aucun overlay DXMT n’y est ajouté.")
-        let engine = base.wineURL.deletingLastPathComponent().deletingLastPathComponent()
-        let searchRoots = [payload.appendingPathComponent("external"), engine.appendingPathComponent("lib/wine/x86_64-unix"), engine.appendingPathComponent("lib")] +
-            (baseLibraries + ":" + baseFrameworks).split(separator: ":").map { URL(fileURLWithPath: String($0)) }
-        var unresolved = Set<String>()
-        for image in report["machO"] as? [[String: Any]] ?? [] {
-            guard let path = (image["resolvedPath"] ?? image["path"]) as? String, Self.safeRelative(path) else { continue }
-            for name in image["dependencies"] as? [String] ?? [] {
-                if name.hasPrefix("/System/Library/") || name.hasPrefix("/usr/lib/") { continue }
-                let candidates: [URL]
-                if name.hasPrefix("@rpath/") { candidates = searchRoots.map { $0.appendingPathComponent(String(name.dropFirst(7))) } }
-                else if name.hasPrefix("@loader_path/") { candidates = [payload.appendingPathComponent(path).deletingLastPathComponent().appendingPathComponent(String(name.dropFirst(13)))] }
-                else if name.hasPrefix("@executable_path/") { candidates = [base.wineURL.deletingLastPathComponent().appendingPathComponent(String(name.dropFirst(17)))] }
-                else { candidates = [] }
-                if !candidates.contains(where: { FileManager.default.fileExists(atPath: $0.standardizedFileURL.path) }) { unresolved.insert(name) }
-            }
-        }
-        if !unresolved.isEmpty { reasons.append("Dépendances natives non résolues : " + unresolved.sorted().joined(separator: ", ")) }
-        if !base.readyEngine { reasons.append("Le moteur Wine de base n’est pas prêt.") }
-        if (try? RuntimeSetup.validatePrefix(prefix)) == nil { reasons.append("Le préfixe DirectX 12 indépendant n’est pas initialisé.") }
-        if report["hostOSCompatible"] as? Bool != true { reasons.append("La version minimale de macOS des fichiers importés n’est pas satisfaite.") }
-        return .init(wineURL: base.wineURL, prefixURL: prefix, steamRoot: prefix.appendingPathComponent("drive_c/Program Files (x86)/Steam"),
-                     environment: env, rendererHash: hash, engineID: base.engineID,
-                     engineFingerprint: try Self.engineFingerprint(base.wineURL), blockedReasons: reasons)
+        return (prefix, env, hash)
+    }
+
+    /// Metadata identities of these exact files invalidate a preparation cache.
+    /// Full content verification remains mandatory before preparing a new prefix.
+    func validationFiles() throws -> [URL] {
+        stateLock.lock(); let report = cached; stateLock.unlock()
+        guard let files = report?["files"] as? [[String:Any]], let links = report?["links"] as? [[String:String]],
+              !files.isEmpty, files.count <= 1024, links.count < 2048 else { throw Self.failure("Reçu D3DMetal invalide.") }
+        let paths = files.compactMap { $0["path"] as? String } + links.compactMap { $0["path"] }
+        guard paths.count == files.count + links.count, paths.allSatisfy(Self.safeRelative) else { throw Self.failure("Chemins de reçu D3DMetal invalides.") }
+        return paths.map { payload.appendingPathComponent($0) } + [receipt]
     }
 
     /// Prepares a request for the supplied *compiled* probe, never executes it.

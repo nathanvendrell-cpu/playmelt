@@ -510,6 +510,18 @@
         width: 100%;
         margin-top: 7px;
       }
+      .render-protection {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin: 0 0 16px;
+        font-size: 12px;
+      }
+      .render-protection input {
+        width: 15px;
+        height: 15px;
+        accent-color: var(--text);
+      }
       .renderer-config {
         display: grid;
         gap: 15px;
@@ -970,8 +982,10 @@
           dismissedJobId: null,
           dialogProgress: null,
           artworkGeneration: 0,
+          pendingRenderProtection: null,
         };
         let state = {
+            renderProtectionEnabled: true,
             accounts: [],
             games: [],
             runtimes: [],
@@ -1005,6 +1019,24 @@
           "cancelInstallAndPlay",
           "importD3DMetal",
           "openD3DMetalDownload",
+          "setupD3DMetalRuntime",
+          "cancelD3DMetalRuntime",
+          "installSteamD3DMetal",
+          "openD3DMetalSteam",
+          "setRenderProtection",
+        ]);
+        const renderProtectedActions = new Set([
+          "launchGame",
+          "installGame",
+          "installAndPlay",
+          "openSteam",
+          "openEpic",
+          "setupWindowsRuntime",
+          "installSteamWindows",
+          "openWindowsSteam",
+          "setupD3DMetalRuntime",
+          "installSteamD3DMetal",
+          "openD3DMetalSteam",
         ]);
         function el(tag, className, text) {
           const node = document.createElement(tag);
@@ -1022,13 +1054,16 @@
           }, 8500);
         }
         function send(action, payload = {}) {
-          if (!allowedActions.has(action)) return;
+          if (!allowedActions.has(action)) return false;
+          if (renderProtectionEnabled() && renderProtectedActions.has(action))
+            return false;
           const bridge = window.webkit?.messageHandlers?.metalmax;
           if (!bridge) {
             notify("Connexion native indisponible.", true);
             return;
           }
           bridge.postMessage({ action, ...payload });
+          return true;
         }
         function imageSources(game) {
           const sources = [];
@@ -1212,6 +1247,7 @@
           $("syncLibrary").hidden =
             ui.view === "diagnostics" || ui.view === "epic";
           $("openEpic").hidden = ui.view !== "epic";
+          $("openEpic").disabled = renderProtectionEnabled();
           $("epicAction").hidden = ui.view !== "epic";
           $("epicAction").disabled =
             !state.epic.available || state.epic.busy === true;
@@ -1230,6 +1266,35 @@
             else button.removeAttribute("aria-current");
           });
         }
+        function renderProtectionEnabled() {
+          return (
+            state.renderProtectionEnabled !== false ||
+            ui.pendingRenderProtection === true
+          );
+        }
+        function createRenderProtectionControl() {
+          const label = el("label", "render-protection");
+          const checkbox = el("input");
+          checkbox.type = "checkbox";
+          checkbox.id = "renderProtection";
+          checkbox.checked =
+            typeof ui.pendingRenderProtection === "boolean"
+              ? ui.pendingRenderProtection
+              : renderProtectionEnabled();
+          checkbox.disabled = typeof ui.pendingRenderProtection === "boolean";
+          checkbox.addEventListener("change", () => {
+            const enabled = checkbox.checked;
+            ui.pendingRenderProtection = enabled;
+            checkbox.disabled = true;
+            updateToolbar();
+            updateJobIndicator();
+            updateD3DMetalSettings();
+            refreshVisibleDialog();
+            send("setRenderProtection", { enabled });
+          });
+          label.append(checkbox, el("span", "", "Rendus en cours"));
+          return label;
+        }
         function openGame(game) {
           ui.dialogGameId = game.id;
           renderGameDialog(game);
@@ -1241,38 +1306,79 @@
           const job = state.installJob;
           const busy =
             component?.busy === true ||
+            component?.steamBusy === true ||
             runtime?.steamBusy === true ||
             ["downloading", "verifying", "extracting", "initializing"].includes(
               runtime?.status,
             ) ||
-            (job &&
+            !!(
+              job &&
               ![
                 "launch-requested",
                 "failed",
                 "cancelled",
                 "timed-out",
-              ].includes(job.status));
-          const status =
-            component?.busy === true
-              ? "Importation…"
-              : component?.imported === true
-                ? "Importé — validation restante"
-                : "À importer";
+              ].includes(job.status)
+            );
+          const protectedRender = renderProtectionEnabled();
+          const phase = {
+            checking: "Vérification…",
+            initializing: "Préparation…",
+            stopping: "Arrêt…",
+            blocked: "Préparation bloquée",
+            failed: "Préparation échouée",
+            cancelled: "Préparation annulée",
+          }[component?.status];
+          const steamPhase = {
+            downloading: "Téléchargement de Steam…",
+            installer: "Installation de Steam…",
+            failed: "Installation Steam échouée",
+            cancelled: "Installation Steam annulée",
+          }[component?.steamPhase];
+          const message = component?.steamMessage || component?.message || "";
+          const status = component?.steamBusy
+            ? steamPhase || "Préparation de Steam…"
+            : component?.busy
+              ? phase || "Opération en cours…"
+              : protectedRender && component?.imported
+                ? "Rendus en cours"
+                : steamPhase ||
+                  phase ||
+                  (component?.prepared
+                    ? component.steamInstalled
+                      ? "Steam installé"
+                      : "Environnement préparé"
+                    : component?.imported
+                      ? "Importé — à préparer"
+                      : "À importer");
           return {
             component,
-            busy: !!busy,
+            busy,
             status,
+            message,
+            protectedRender,
             signature: JSON.stringify([
               !!component,
-              !!busy,
+              busy,
               status,
+              protectedRender,
+              component?.imported,
+              component?.prepared,
+              component?.steamInstalled,
+              component?.steamBusy,
+              component?.steamPhase,
+              component?.steamMessage,
+              component?.canPrepare,
+              component?.cancellable,
+              component?.version,
               component?.message || "",
               component?.abiStatus || "",
             ]),
           };
         }
-        function createD3DMetalControls(asRow = false) {
-          const view = d3dMetalViewState();
+        function createD3DMetalControls(asRow = false, game = null) {
+          const view = d3dMetalViewState(),
+            component = view.component;
           const box = el(
             "div",
             asRow ? "renderer-config renderer-config-row" : "renderer-config",
@@ -1282,29 +1388,83 @@
             el("span", "", "DirectX 12"),
             el("span", "renderer-status", view.status),
           );
-          labels.title = view.component?.message || "";
+          labels.title = view.message;
           const actions = el("div", "renderer-actions");
-          const importButton = el(
-            "button",
-            "button primary",
+          const command = (
+            label,
+            action,
+            unavailable = false,
+            payload = {},
+            className = "button primary",
+          ) => {
+            const button = el("button", className, label);
+            button.dataset.d3dAction = action;
+            button.dataset.unavailable = String(unavailable);
+            button.disabled =
+              unavailable ||
+              (view.protectedRender && renderProtectedActions.has(action));
+            button.addEventListener("click", () => {
+              if (button.disabled) return;
+              button.disabled = true;
+              button.dataset.pendingD3dAction = "true";
+              send(action, payload);
+            });
+            actions.append(button);
+            return button;
+          };
+          if (component?.busy && component.cancellable) {
+            command(
+              "Annuler",
+              "cancelD3DMetalRuntime",
+              false,
+              {},
+              "button secondary",
+            );
+          } else if (component?.imported && !component?.busy) {
+            if (!component.prepared) {
+              command(
+                "Préparer DirectX 12",
+                "setupD3DMetalRuntime",
+                view.busy || component.canPrepare !== true,
+              );
+            } else if (!component.steamInstalled) {
+              command(
+                "Installer Steam pour DirectX 12",
+                "installSteamD3DMetal",
+                view.busy,
+              );
+            } else {
+              command(
+                "Ouvrir Steam DirectX 12",
+                "openD3DMetalSteam",
+                view.busy,
+              );
+              if (
+                game?.canInstall === true &&
+                typeof game.runtimeId === "string" &&
+                game.runtimeId
+              ) {
+                command("Installer", "installGame", view.busy, {
+                  gameId: game.id,
+                  runtimeId: game.runtimeId,
+                });
+              }
+            }
+          }
+          command(
             "Importer le composant Apple",
+            "importD3DMetal",
+            !component || view.busy,
+            {},
+            component?.imported ? "button secondary" : "button primary",
           );
-          importButton.disabled = !view.component || view.busy;
-          importButton.addEventListener("click", () => {
-            importButton.disabled = true;
-            importButton.dataset.pendingD3dImport = "true";
-            send("importD3DMetal");
-          });
-          const download = el(
-            "button",
-            "text-button renderer-download",
+          command(
             "Obtenir auprès d’Apple",
+            "openD3DMetalDownload",
+            !component || view.busy,
+            {},
+            "text-button renderer-download",
           );
-          download.disabled = !view.component || view.busy;
-          download.addEventListener("click", () =>
-            send("openD3DMetalDownload"),
-          );
-          actions.append(importButton, download);
           box.append(labels, actions);
           return box;
         }
@@ -1318,15 +1478,18 @@
           target.dataset.signature = signature;
         }
         function restoreD3DMetalImportControls() {
-          const view = d3dMetalViewState();
           document
-            .querySelectorAll("[data-pending-d3d-import]")
+            .querySelectorAll("[data-pending-d3d-action]")
             .forEach((button) => {
-              delete button.dataset.pendingD3dImport;
-              button.disabled = !view.component || view.busy;
+              delete button.dataset.pendingD3dAction;
+              button.disabled =
+                button.dataset.unavailable === "true" ||
+                (renderProtectionEnabled() &&
+                  renderProtectedActions.has(button.dataset.d3dAction));
             });
         }
         function renderGameDialog(game) {
+          ui.dialogRenderProtection = renderProtectionEnabled();
           $("dialogTitle").textContent = game.title;
           $("dialogStore").textContent = [
             storeName(game.store),
@@ -1339,15 +1502,22 @@
             document.getElementById("runtimeSelect")?.value;
           ui.dialogProgress = null;
           if (game.requiredRenderer === "d3dmetal") {
-            const key = game.id + ":" + d3dMetalViewState().signature;
+            const key = JSON.stringify([
+              game.id,
+              game.canInstall,
+              game.runtimeId,
+              d3dMetalViewState().signature,
+            ]);
             if (body.dataset.rendererKey !== key) {
-              body.replaceChildren(createD3DMetalControls());
+              body.replaceChildren(createD3DMetalControls(false, game));
               body.dataset.rendererKey = key;
             }
             return;
           }
           delete body.dataset.rendererKey;
           body.replaceChildren();
+          if (renderProtectionEnabled())
+            body.append(el("p", "dialog-note", "Rendus en cours."));
           const job = installJobFor(game);
           if (job) {
             renderInstallJob(body, job, game);
@@ -1420,7 +1590,10 @@
                       ? "Configurer le moteur"
                       : "Moteur Windows à configurer",
               );
-              setup.disabled = !runtime || runtime.steamBusy === true;
+              setup.disabled =
+                !runtime ||
+                runtime.steamBusy === true ||
+                renderProtectionEnabled();
               setup.title = runtime?.message || "";
               if (runtime)
                 setup.addEventListener("click", () => {
@@ -1437,6 +1610,7 @@
             }
           } else if (game.canLaunch) {
             const play = el("button", "button primary dialog-action", "Jouer");
+            play.disabled = renderProtectionEnabled();
             play.addEventListener("click", () => {
               send("launchGame", { gameId: game.id });
               $("gameDialog").close();
@@ -1465,6 +1639,7 @@
                 "button primary dialog-action",
                 game.canInstallAndPlay ? "Installer et jouer" : "Installer",
               );
+              install.disabled = renderProtectionEnabled();
               install.addEventListener("click", () => {
                 install.disabled = true;
                 send(
@@ -1483,6 +1658,7 @@
                 "button primary dialog-action",
                 "Ouvrir Steam",
               );
+              open.disabled = renderProtectionEnabled();
               open.addEventListener("click", () => {
                 send("openSteam");
                 $("gameDialog").close();
@@ -1504,6 +1680,7 @@
               "button primary dialog-action",
               game.store === "epic" ? "Ouvrir Epic Games" : "Ouvrir Steam",
             );
+            open.disabled = renderProtectionEnabled();
             open.addEventListener("click", () => {
               send(game.store === "epic" ? "openEpic" : "openSteam");
               $("gameDialog").close();
@@ -1701,7 +1878,10 @@
           if (!$("gameDialog").open) return;
           const game = state.games.find((g) => g.id === ui.dialogGameId);
           if (!game) return;
-          if (game.requiredRenderer === "d3dmetal") {
+          if (
+            game.requiredRenderer === "d3dmetal" ||
+            ui.dialogRenderProtection !== renderProtectionEnabled()
+          ) {
             renderGameDialog(game);
             return;
           }
@@ -1726,8 +1906,17 @@
             .querySelectorAll(".game-action[data-game-id]")
             .forEach((button) => {
               const following = active && button.dataset.gameId === job.gameId;
-              const label = following ? "Suivre" : button.dataset.defaultLabel;
+              const label = following
+                ? "Suivre"
+                : renderProtectionEnabled()
+                  ? "Ouvrir"
+                  : button.dataset.defaultLabel;
               if (button.textContent !== label) button.textContent = label;
+              const game = state.games.find(
+                (g) => g.id === button.dataset.gameId,
+              );
+              if (game)
+                button.setAttribute("aria-label", `${label} · ${game.title}`);
             });
         }
         function createGameCard(game) {
@@ -1774,6 +1963,7 @@
             const current = state.games.find((g) => g.id === game.id);
             if (!current) return;
             if (
+              renderProtectionEnabled() ||
               current.requiredRenderer === "d3dmetal" ||
               installJobFor(current)
             )
@@ -1849,6 +2039,7 @@
           const panel = $("diagnostics");
           panel.replaceChildren();
           const h = state.hardware;
+          panel.append(createRenderProtectionControl());
           const top = el("section", "diagnostic-panel");
           top.append(el("h2", "", "Matériel"));
           const grid = el("dl", "hardware-grid");
@@ -1976,6 +2167,8 @@
             epic: incoming.epic || state.epic,
             libraryStatus: incoming.libraryStatus || state.libraryStatus,
           };
+          if (typeof incoming.renderProtectionEnabled === "boolean")
+            ui.pendingRenderProtection = null;
           received = true;
           updateSidebar();
           updateToolbar();
@@ -1998,6 +2191,16 @@
           refreshVisibleDialog();
         };
         window.onNativeResult = (result) => {
+          if (
+            result?.ok === false &&
+            typeof ui.pendingRenderProtection === "boolean"
+          ) {
+            ui.pendingRenderProtection = null;
+            updateToolbar();
+            updateJobIndicator();
+            if (ui.view === "diagnostics") renderDiagnostics();
+            refreshVisibleDialog();
+          }
           if (result && typeof result === "object")
             restoreD3DMetalImportControls();
           if (result && typeof result === "object")
