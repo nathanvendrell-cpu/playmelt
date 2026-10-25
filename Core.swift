@@ -176,7 +176,7 @@ enum WindowsExecutionPolicy {
     static func permits(platform: String, hasWine: Bool = false) -> Bool { platform == "mac" && !hasWine }
     static var json: [String: Any] {
         ["mode": mode, "windowsExecutionAvailable": false, "wineAllowed": false,
-         "message": message, "missingComponents": ["windows-executable-loader", "win32-api-runtime", "validated-dx12-device", "steam-install-and-launch-integration"],
+         "message": message, "missingComponents": ["game-compatible-pe-loader", "win32-api-runtime", "validated-dx12-device", "steam-install-and-launch-integration"],
          "gameExecutionVerified": false]
     }
 }
@@ -539,7 +539,8 @@ final class LibraryModel {
                 "selectedAccountId": selectedAccountID, "libraryStatus": ["status": libraryStatus, "message": libraryMessage, "updatedAt": lastSync],
                 "games": games.map { $0.json(runtimes: runtimes, availability: availability, completedRuntimeIDs: completedRoutes[$0.appId] ?? []) }, "runtimes": runtimes.map(\.json), "hardware": hardware,
                 "warnings": warnings, "epic": epic, "executionPolicy": WindowsExecutionPolicy.json,
-                "graphicsFeatures": GraphicsFeatureContract.diagnosticsSnapshot()]
+                "graphicsFeatures": GraphicsFeatureContract.diagnosticsSnapshot(),
+                "graphicsFrameAdapters": GraphicsFrameAdapter.diagnosticsSnapshot()]
     }
     func hasCompleteInstallation(appID: String, runtimeID: String) -> Bool {
         games.contains { $0.store == "steam" && $0.appId == appID && $0.runtimeId == runtimeID && $0.installed && $0.complete }
