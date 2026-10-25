@@ -61,7 +61,8 @@ int pm_winapi_modules_destroy(pm_winapi_modules **context);
 /* Win32 subset (entry points declared above):
  * GetModuleHandleA/W: NULL => main mapping; ASCII case-insensitive basename;
  * omitted extension appends .dll. W accepts ASCII encoded as UTF-16 only.
- * Paths, non-ASCII/codepage conversion, extensionless/trailing-dot names and
+ * Paths, non-ASCII/codepage conversion, actual extensionless image names,
+ * trailing-dot names and
  * side-by-side aliases are unsupported and return MOD_NOT_FOUND (126).
  * GetProcAddress: exact printable ASCII name <=255 bytes, or pointer value
  * 1..65535 as ordinal. Ordinal zero/holes fail. Handles must belong to the bound

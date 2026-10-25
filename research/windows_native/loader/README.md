@@ -126,7 +126,83 @@ appels mémoire de macOS. `test_pe_modules.c` couvre le registre avec des catalo
 simulés ; `test_probe_lifecycle.py` vérifie aussi le nettoyage d'un enfant qui
 ignore SIGTERM après la sortie de son parent. Aucun GPU, modèle d'inférence ou shader n'est lancé.
 
+## VirtualProtect dans des allocations détenues
+
+`winapi_memory.h/.c` ajoute un resolver optionnel pour `VirtualProtect`, sans
+modifier le chargeur PE ni les protections des jeux. L'API host crée ses propres
+allocations anonymes RW : huit régions au maximum, 1 Mio par région et 4 Mio par
+contexte. Il n'existe aucune inscription de mémoire empruntée ni implémentation
+de `VirtualAlloc`/`VirtualFree` Windows. Le contexte doit être lié explicitement
+au thread appelant ; allocation, libération et destruction sont interdites tant
+qu'il est lié. La sortie du thread libère la liaison, puis le propriétaire doit
+détruire le contexte. Une erreur de `munmap` conserve le handle pour réessayer.
+
+Chaque demande doit tenir dans une seule allocation d'origine. Les pages
+englobantes sont modifiées par le vrai `mprotect` de macOS. Les modes disponibles
+sont NOACCESS, R, RW et RX ; execute-only, RWX, COW, GUARD et les autres
+modificateurs sont refusés. La sortie `oldProtect` reçoit le mode antérieur de la
+première page. Elle doit désigner quatre octets dans une **autre allocation
+détenue**, dont toutes les pages concernées sont RW. Les piles ordinaires et les
+pointeurs étrangers ne sont pas acceptés. Le paramètre C est un `void*` pour ne
+pas imposer un faux alignement DWORD ; les sorties non alignées sont copiées par
+octets via `memcpy`, avec la même convention d'appel Windows x64.
+
+Un échec OS de `mprotect` peut laisser certaines permissions modifiées. Toute
+l'allocation cible est alors mise en quarantaine : elle ne peut plus servir de
+cible ni de sortie, même sur une page apparemment inchangée. Son ancien suivi
+des protections n'est plus une preuve. La sortie reste intacte ; le propriétaire
+doit délier puis libérer cette allocation. Aucun rollback implicite ni succès
+fondé seulement sur des métadonnées n'est annoncé. Les erreurs Win32 utilisées
+et les limites de ce sous-ensemble sont détaillées dans le header.
+
+La suite CPU compte **415 contrôles PASS** avec ASan/UBSan : protections macOS
+observées, arrondis et franchissements de pages, modes antérieurs différents,
+sorties non alignées, limites, mauvais thread, refus W+X, échecs OS et nettoyage.
+Un double rend réellement une première page inaccessible puis échoue pour
+vérifier la quarantaine sans accès à cette page. Depuis la racine du projet :
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d Products.noindex/virtualprotect-tests.XXXXXX)
+  trap 'rm -rf -- "$scratch"' EXIT
+  nice -n 15 xcrun clang -std=c11 -Wall -Wextra -Werror -Wstrict-prototypes \
+    -O1 -g -arch x86_64 -mmacosx-version-min=15.0 \
+    -fsanitize=address,undefined -fno-omit-frame-pointer \
+    -I research/windows_native/loader \
+    research/windows_native/loader/test_winapi_memory.c \
+    research/windows_native/loader/winapi_subset.c \
+    -o "$scratch/test"
+  UBSAN_OPTIONS=halt_on_error=1 nice -n 15 "$scratch/test"
+)
+python3 -B research/windows_native/loader/run_memory_probe.py
+```
+
+Le second harnais embarque uniquement notre PE synthétique et appelle l'adresse
+réelle de `VirtualProtect` via son IAT. Trois points de contrôle observent les
+permissions macOS après passage RX, retour RW et refus RWX. Les pages détenues
+ainsi protégées ne contiennent aucun code exécuté. Le PE de test utilise Rosetta
+sur Apple Silicon ; aucun jeu, DLL Apple, shader, Steam, Wine ou travail GPU n'est
+lancé. Les logs et hashes des sources compilées sont conservés localement dans
+`work/winapi-memory-tests.log` et `work/winapi-memory-source-hashes.json` ; les
+deux premiers essais négatifs restent dans le log. Cela ne qualifie ni la mémoire
+virtuelle complète de Windows, ni les exceptions, ni DirectX 12.
+
 ## Ce qui manque pour Mortal Shell II
+
+Le lecteur voisin `../pe_unwind.py` décode les tables d'exception AMD64 V1
+sans charger les fichiers ni exécuter leurs gestionnaires :
+
+```sh
+python3 -B research/windows_native/pe_unwind.py /chemin/explicitement-choisi.dll
+python3 -B research/windows_native/test_pe_unwind.py
+```
+
+Il distingue les slots d'opérandes des opérations, borne les chaînes et les
+sorties, et refuse les versions, registres ou opérations hors de son contrat.
+Les données propres aux gestionnaires restent opaques ; les tables dynamiques
+ne sont pas inspectées. Le décodage ne valide ni le code machine correspondant,
+ni la restauration d'un contexte, ni la gestion des exceptions Windows.
 
 Le sous-ensemble est volontairement étroit : fichier de 16 Mio maximum, image de
 64 Mio maximum, 32 sections, 1 024 symboles importés, 4 096 relocalisations.
@@ -134,7 +210,7 @@ Seuls les répertoires export, import, relocalisation et IAT sont acceptés. Le
 registre ne charge que des images déjà préparées. L'initialisation opt-in des
 fixtures ne constitue pas un cycle de vie compatible avec des DLL Windows réelles.
 TLS de l'exécutable, gestion des exceptions/unwind, CRT, ressources, DLL
-chargées à la demande, API sets, mémoire/processus/threads Windows, Win32/NT,
+chargées à la demande, API sets, mémoire virtuelle complète/processus/threads Windows, Win32/NT,
 audio, entrées, Steamworks et D3D12 ne sont pas implémentés. Certains sont refusés
 explicitement dès le chargement. La fixture n'a pas été qualifiée sur Windows.
 
@@ -152,18 +228,28 @@ distincts ; les empreintes et tables complètes sont conservées localement dans
 `work/apple-pe-static-dependencies.json`.
 
 `d3d12.dll` importe notamment `GetModuleHandleA/W`, `GetProcAddress`, `LoadLibraryA`,
-`VirtualProtect`, `RaiseException` et `NtQueryVirtualMemory`. Le registre de modules
-prépare une partie de la résolution de symboles, mais n'implémente pas ces API
-Windows. Les quatre DLL ont un point d'initialisation non nul et un répertoire
+`VirtualProtect`, `RaiseException` et `NtQueryVirtualMemory`. Les wrappers
+`GetModuleHandleA/W` et `GetProcAddress` existent pour le registre fermé, et
+`VirtualProtect` pour les seules allocations détenues décrites ci-dessus.
+Le chargement automatique, `RaiseException`, `NtQueryVirtualMemory` et la mémoire
+virtuelle générale Windows restent absents. Les quatre DLL ont un point d'initialisation non nul et un répertoire
 d'exceptions ; le chargeur actuel les refuse donc volontairement. DXGI dépend aussi
 des fenêtres, écrans, événements, threads, sémaphores et du registre Windows.
 
 La résolution de modules et l'initialisation synthétique ont maintenant des
-preuves CPU distinctes. Il reste notamment les exceptions/unwind, la mémoire,
+preuves CPU distinctes. Il reste notamment les exceptions/unwind, la mémoire virtuelle générale,
 les synchronisations et le pont graphique réellement utilisés par ces composants. Ces
 imports ne décrivent pas les dépendances propres de Mortal Shell II, dont aucun
 binaire n'est disponible dans ce prototype. Une table d'import ne révèle pas non
 plus toutes les fonctions recherchées dynamiquement ou les exigences du pont hôte.
+
+Le décodage statique des mêmes fichiers, aux empreintes inchangées, relève 74
+entrées `RUNTIME_FUNCTION`, toutes en V1 avec flags zéro. Leurs tables déclarent
+54 `ALLOC_SMALL`, 74 `PUSH_NONVOL` et deux `ALLOC_LARGE`, sans gestionnaire ni
+chaîne déclarés. Cela précise les premières opérations à implémenter pour la
+restauration d'un contexte. Cela ne prouve pas l'absence d'exceptions ou de tables
+dynamiques. La preuve détaillée est `work/apple-pe-unwind-metadata.json` ; le
+décodeur est couvert par 32 tests de fichiers synthétiques inertes.
 
 ## Références primaires
 
@@ -176,3 +262,8 @@ plus toutes les fonctions recherchées dynamiquement ou les exigences du pont h�
 - [Microsoft : GetModuleHandleA](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandlea).
 - [Microsoft : GetProcAddress](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 - [Microsoft : DllMain](https://learn.microsoft.com/en-us/windows/win32/dlls/dllmain).
+- [Microsoft : exceptions et unwind x64](https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64).
+- [Microsoft : VirtualProtect](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect).
+- [Microsoft : constantes de protection](https://learn.microsoft.com/en-us/windows/win32/memory/memory-protection-constants).
+- [The Open Group : mprotect, édition consultée](https://pubs.opengroup.org/onlinepubs/7908799/xsh/mprotect.html).
+- [Apple : mprotect](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/mprotect.2.html).
