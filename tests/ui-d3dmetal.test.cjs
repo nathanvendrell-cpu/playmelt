@@ -386,6 +386,15 @@ assert.equal(
   true,
   "Rejected disable never releases actions",
 );
+context.state.executionPolicy = { mode: "no-wine", windowsExecutionAvailable: false };
+context.state.renderProtectionEnabled = false;
+context.ui.pendingRenderProtection = null;
+const beforeNoWine = sent.length;
+for (const action of ["setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam"])
+  assert.equal(api.send(action), false, "No-Wine policy survives render protection being switched off: " + action);
+assert.equal(sent.length, beforeNoWine, "No legacy execution request crossed the bridge");
+assert.equal(api.send("cancelD3DMetalRuntime"), true, "Cancellation remains available");
+assert.equal(sent.pop().action, "cancelD3DMetalRuntime");
 console.log(
   "DX12/protection UI passed: explicit setup/cancel/Steam/install, no Play, guarded dispatch, safe default and acknowledgement gate",
 );

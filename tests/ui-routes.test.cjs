@@ -253,6 +253,14 @@ assert(
   ),
   "Completed import adds no obsolete settings links",
 );
+context.state.executionPolicy = { mode: "no-wine", windowsExecutionAvailable: false };
+context.state.renderProtectionEnabled = false;
+assert.equal(api.installationRoutes(windowsGame).length, 0, "No-Wine policy rejects cached available Windows routes");
+assert.equal(api.installationRoutes(game).length, 1, "Native route remains usable");
+api.openGame({ ...windowsGame, canLaunch: true, requiredRenderer: "d3dmetal" });
+assert(!all(elements.dialogBody).some((n) => n.tag === "button"), "A stale game flag cannot expose Wine or setup from the game sheet");
+api.renderDiagnostics();
+assert(!all(elements.diagnostics).some((n) => n.tag === "button" && /DirectX|Steam pour/.test(n.textContent)), "No Wine setup actions remain in settings");
 console.log(
   "Route UI passed: native/DX11/DX12 capabilities, unknown states, one next action, unique settings rows and protected defaults",
 );

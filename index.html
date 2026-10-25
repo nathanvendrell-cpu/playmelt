@@ -986,6 +986,7 @@
         };
         let state = {
             renderProtectionEnabled: true,
+            executionPolicy: { mode: "no-wine", windowsExecutionAvailable: false },
             accounts: [],
             games: [],
             runtimes: [],
@@ -1055,6 +1056,8 @@
         }
         function send(action, payload = {}) {
           if (!allowedActions.has(action)) return false;
+          if (windowsExecutionUnavailable() && ["setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam"].includes(action))
+            return false;
           if (renderProtectionEnabled() && renderProtectedActions.has(action))
             return false;
           const bridge = window.webkit?.messageHandlers?.metalmax;
@@ -1272,6 +1275,16 @@
             ui.pendingRenderProtection === true
           );
         }
+        function windowsExecutionUnavailable() {
+          return state.executionPolicy?.mode === "no-wine" ||
+            state.windowsRuntime?.executionPolicy?.mode === "no-wine";
+        }
+        function windowsUnavailableControls(asRow = false) {
+          const box = el("div", asRow ? "renderer-config renderer-config-row" : "renderer-config");
+          if (asRow) box.append(el("span", "", "Windows"));
+          box.append(el("span", "renderer-status", "Moteur sans Wine en développement"));
+          return box;
+        }
         function createRenderProtectionControl() {
           const label = el("label", "render-protection");
           const checkbox = el("input");
@@ -1334,6 +1347,8 @@
             if (
               !runtime ||
               runtime.available !== true ||
+              runtime.executionAllowed === false ||
+              (runtime.platform === "windows" && windowsExecutionUnavailable()) ||
               option.canInstall !== true ||
               !platforms(game).includes(runtime.platform) ||
               seen.has(runtime.id)
@@ -1369,6 +1384,10 @@
         }
         function windowsRuntimeViewState() {
           const runtime = state.windowsRuntime;
+          if (windowsExecutionUnavailable()) return {
+            runtime, busy: false, action: null, label: null,
+            status: "Moteur sans Wine en développement", signature: "no-wine",
+          };
           const busy =
             !!runtime &&
             (runtime.steamBusy === true ||
@@ -1452,6 +1471,7 @@
           };
         }
         function createWindowsRuntimeControls() {
+          if (windowsExecutionUnavailable()) return windowsUnavailableControls(true);
           const view = windowsRuntimeViewState();
           const box = el("div", "renderer-config renderer-config-row");
           const labels = el("div", "renderer-labels");
@@ -1571,6 +1591,7 @@
           };
         }
         function createD3DMetalControls(asRow = false, game = null) {
+          if (windowsExecutionUnavailable()) return asRow ? el("div") : windowsUnavailableControls();
           const view = d3dMetalViewState(),
             component = view.component;
           const box = el(
@@ -1690,6 +1711,11 @@
           const previousRuntime =
             document.getElementById("runtimeSelect")?.value;
           ui.dialogProgress = null;
+          if (windowsExecutionUnavailable() && platforms(game).length === 1 && platforms(game)[0] === "windows") {
+            delete body.dataset.rendererKey;
+            body.replaceChildren(windowsUnavailableControls());
+            return;
+          }
           if (game.requiredRenderer === "d3dmetal") {
             const key = JSON.stringify([
               game.id,

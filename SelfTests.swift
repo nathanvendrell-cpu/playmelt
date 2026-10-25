@@ -73,6 +73,11 @@ func runSelfTests() {
     check("all execution routes are protected", ["launchGame", "installGame", "installAndPlay", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam", "setupWindowsRuntime", "installSteamWindows", "openWindowsSteam"].allSatisfy { RenderProtection.blocks($0, enabled: true) })
     check("read and cancel routes remain available during renders", ["refresh", "importD3DMetal", "openSteamLogin", "cancelD3DMetalRuntime", "cancelInstallAndPlay"].allSatisfy { !RenderProtection.blocks($0, enabled: true) })
     check("explicit render protection off releases action gate only", !RenderProtection.blocks("launchGame", enabled: false))
+    check("no-Wine policy preserves Mac execution", WindowsExecutionPolicy.permits(platform: "mac"))
+    check("Windows execution has no native runtime yet", !WindowsExecutionPolicy.permits(platform: "windows"))
+    check("Wine cannot masquerade as a native runtime", !WindowsExecutionPolicy.permits(platform: "mac", hasWine: true))
+    check("every legacy preparation and Steam launch action is closed", ["setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam"].allSatisfy { WindowsExecutionPolicy.legacyActions.contains($0) })
+    check("no-Wine policy preserves read import and cancel actions", ["refresh", "importD3DMetal", "syncLibrary", "cancelWindowsRuntime", "cancelD3DMetalRuntime", "cancelInstallAndPlay"].allSatisfy { !WindowsExecutionPolicy.legacyActions.contains($0) })
     let model = LibraryModel(home: URL(fileURLWithPath: "/nonexistent-metalmax-fixture"), preferences: prefs)
     check("discovery exposes only native Steam without independent engine", model.discoverRuntimes().allSatisfy { $0.id == "steam-mac" && $0.platform == "mac" })
     check("recent Steam account preferred over autologin", activeSteamAccount(["76561198000000000": ["AutoLogin": "1"], "76561198000000001": ["MostRecent": "1"]]) == "76561198000000001")
@@ -105,6 +110,18 @@ func runSelfTests() {
     let fixtureRoot = URL(fileURLWithPath: "/nonexistent-playmelt-runtime")
     let dxmtRoute = Runtime(id: "dxmt-fixture", name: "DXMT", platform: "windows", steamRoot: fixtureRoot, appURL: nil)
     var metalRoute = dxmtRoute; metalRoute.renderer = "d3dmetal"
+    var previouslyQualified = metalRoute; previouslyQualified.graphicsValidated = true
+    let blockedWindowsGame = Game(id: "steam:4711740", appId: "4711740", title: "Beta", store: "steam", installed: true, platform: "windows", runtimeId: previouslyQualified.id, runtimeName: "Legacy", ownership: "fixture", complete: true)
+    let blockedWindowsState = blockedWindowsGame.json(runtimes: [previouslyQualified], availability: [previouslyQualified.id: true])
+    check("cached availability and graphics flags cannot bypass no-Wine policy", blockedWindowsState["canLaunch"] as? Bool == false && (blockedWindowsState["installRoutes"] as? [[String: Any]])?.isEmpty == true)
+    let nativeRoute = Runtime(id: "native-fixture", name: "Mac", platform: "mac", steamRoot: fixtureRoot, appURL: nil)
+    var multiPlatform = blockedWindowsGame; multiPlatform.appId = "12345"; multiPlatform.supportedPlatforms = ["mac", "windows"]
+    let macOptions = multiPlatform.json(runtimes: [previouslyQualified, nativeRoute], availability: [previouslyQualified.id: true, nativeRoute.id: true])["installRoutes"] as? [[String: Any]]
+    check("complete Windows installation does not block a Mac installation", macOptions?.count == 1 && macOptions?.first?["runtimeId"] as? String == nativeRoute.id && macOptions?.first?["canInstallAndPlay"] as? Bool == true)
+    let installedMacOptions = multiPlatform.json(runtimes: [nativeRoute], availability: [nativeRoute.id: true], completedRuntimeIDs: [nativeRoute.id])["installRoutes"] as? [[String: Any]]
+    check("other row reporting complete Mac installation prevents duplicate installation", installedMacOptions?.first?["canInstall"] as? Bool == false)
+    model.games = [multiPlatform]
+    check("installation completion is bound to the requested runtime", model.hasCompleteInstallation(appID: "12345", runtimeID: previouslyQualified.id) && !model.hasCompleteInstallation(appID: "12345", runtimeID: nativeRoute.id))
     check("Mortal Shell cannot install into DXMT", !SteamGameLaunchProfile.supportsInstallation(appID: "2584270", runtime: dxmtRoute))
     check("Mortal Shell installs only into its DX12 route", SteamGameLaunchProfile.supportsInstallation(appID: "2584270", runtime: metalRoute))
     check("Mortal Shell II beta is classified as DirectX12", SteamGameLaunchProfile.requiredGraphicsAPI(appID: "4711740") == "DirectX12")

@@ -167,6 +167,20 @@ struct SteamAppInfo {
     }
 }
 
+/// The former Windows routes use Wine. Keeping their files does not authorize
+/// invoking them; a graphics bridge alone is not a Windows executable runtime.
+enum WindowsExecutionPolicy {
+    static let mode = "no-wine"
+    static let message = "Le moteur Windows sans Wine est en développement."
+    static let legacyActions: Set<String> = ["setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam"]
+    static func permits(platform: String, hasWine: Bool = false) -> Bool { platform == "mac" && !hasWine }
+    static var json: [String: Any] {
+        ["mode": mode, "windowsExecutionAvailable": false, "wineAllowed": false,
+         "message": message, "missingComponents": ["windows-executable-loader", "win32-api-runtime", "validated-dx12-device", "steam-install-and-launch-integration"],
+         "gameExecutionVerified": false]
+    }
+}
+
 struct Runtime {
     let id: String, name: String, platform: String
     let steamRoot: URL, appURL: URL?
@@ -176,12 +190,14 @@ struct Runtime {
     var verifiedIndependentEngine = false
     var renderer = "dxmt"
     var graphicsValidated = false
+    var executionAllowed: Bool { WindowsExecutionPolicy.permits(platform: platform, hasWine: wineURL != nil) }
     var available: Bool {
+        guard executionAllowed else { return false }
         if let appURL { return FileManager.default.fileExists(atPath: appURL.path) }
         return platform == "windows" && verifiedIndependentEngine && wineURL.map { FileManager.default.isExecutableFile(atPath: $0.path) } == true && FileManager.default.fileExists(atPath: steamRoot.appendingPathComponent("steam.exe").path)
     }
     var displayName: String { platform == "mac" ? "Mac natif" : renderer == "d3dmetal" ? "DirectX 12" : "DirectX 11" }
-    var json: [String: Any] { ["id": id, "name": name, "displayName": displayName, "platform": platform, "available": available, "renderer": renderer, "graphicsValidated": graphicsValidated] }
+    var json: [String: Any] { ["id": id, "name": name, "displayName": displayName, "platform": platform, "available": available, "executionAllowed": executionAllowed, "renderer": renderer, "graphicsValidated": graphicsValidated] }
 }
 struct Account {
     let id: String, name: String, source: String, recent: Bool
@@ -193,17 +209,18 @@ struct Game {
     var supportedPlatforms: [String] = []
     var customImageURL = ""
     var customPortraitURL = ""
-    func json(runtimes: [Runtime], availability: [String: Bool]? = nil) -> [String: Any] {
-        func usable(_ runtime: Runtime) -> Bool { availability?[runtime.id] ?? runtime.available }
+    func json(runtimes: [Runtime], availability: [String: Bool]? = nil, completedRuntimeIDs: Set<String>? = nil) -> [String: Any] {
+        func usable(_ runtime: Runtime) -> Bool { runtime.executionAllowed && (availability?[runtime.id] ?? runtime.available) }
         let runtime = runtimes.first { $0.id == runtimeId && usable($0) }
         let available = runtime != nil
         let routeMatches = runtime.map { SteamGameLaunchProfile.supportsInstallation(appID: appId, runtime: $0) } ?? false
         let launchSupported = store != "steam" || (routeMatches && SteamGameLaunchProfile.blockReason(appID: appId, platform: platform, renderer: runtime?.renderer ?? "", graphicsValidated: runtime?.graphicsValidated ?? false) == nil)
         let platforms = supportedPlatforms.isEmpty ? (platform == "unknown" ? [] : [platform]) : supportedPlatforms
+        let completedRoutes = completedRuntimeIDs ?? (complete ? [runtimeId] : [])
         let routes: [[String: Any]] = store == "steam" ? runtimes.filter {
             usable($0) && platforms.contains($0.platform) && SteamGameLaunchProfile.supportsInstallation(appID: appId, runtime: $0)
         }.map { candidate in
-            let allowed = !complete
+            let allowed = !completedRoutes.contains(candidate.id)
             let canPlay = SteamGameLaunchProfile.blockReason(appID: appId, platform: candidate.platform, renderer: candidate.renderer, graphicsValidated: candidate.graphicsValidated) == nil
             return ["runtimeId": candidate.id, "canInstall": allowed, "canInstallAndPlay": allowed && canPlay]
         } : []
@@ -216,7 +233,7 @@ struct Game {
                 "localImageURL": store == "steam" ? "metalmaxart://steam/\(appId)" : "",
                 "portraitImageURL": !customPortraitURL.isEmpty ? customPortraitURL : store == "steam" ? "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appId)/library_600x900.jpg" : "",
                 "localPortraitURL": store == "steam" ? "metalmaxart://steam/\(appId)/portrait" : "",
-                "canLaunch": installed && complete && launchSupported && (store == "epic" ? FileManager.default.fileExists(atPath: "/Applications/Epic Games Launcher.app") : available),
+                "canLaunch": installed && complete && launchSupported && (store == "epic" ? WindowsExecutionPolicy.permits(platform: platform) && FileManager.default.fileExists(atPath: "/Applications/Epic Games Launcher.app") : available),
                 "canInstall": store == "steam" && !complete && platform != "unknown" && available && routeMatches,
                 "canInstallAndPlay": store == "steam" && !complete && platform != "unknown" && available && launchSupported,
                 "installComplete": complete]
@@ -395,7 +412,7 @@ final class LibraryModel {
     static func makeGame(_ id: String, ownership: String, metadata: [String: SteamAppInfo], runtimes: [Runtime], availability: [String: Bool]? = nil) -> Game {
         let info = metadata[id]
         let platform = info?.platforms.contains("macos") == true ? "mac" : info?.platforms.contains("windows") == true ? "windows" : "unknown"
-        let runtime = runtimes.first { $0.platform == platform && (availability?[$0.id] ?? $0.available) && SteamGameLaunchProfile.supportsInstallation(appID: id, runtime: $0) }
+        let runtime = runtimes.first { $0.executionAllowed && $0.platform == platform && (availability?[$0.id] ?? $0.available) && SteamGameLaunchProfile.supportsInstallation(appID: id, runtime: $0) }
         var game = Game(id: "steam:\(id)", appId: id, title: info?.name ?? "Steam \(id)", store: "steam", installed: false, platform: platform, runtimeId: runtime?.id ?? "", runtimeName: runtime?.name ?? (platform == "windows" ? "Moteur Windows non configuré" : "Aucune route vérifiée"), ownership: ownership)
         game.supportedPlatforms = ["macos", "windows"].filter { info?.platforms.contains($0) == true }.map { $0 == "macos" ? "mac" : "windows" }
         if let path = info?.portraitAssets.first { game.customPortraitURL = SteamAppInfo.artworkURL(appID: id, path: path) ?? "" }
@@ -503,8 +520,12 @@ final class LibraryModel {
         }
     }
     func state() -> [String: Any] {
-        let hardware = hardwareState()
+        let hardware = hardwareState(renderProtectionEnabled: RenderProtection.enabled(in: preferences))
         let availability = Dictionary(uniqueKeysWithValues: runtimes.map { ($0.id, $0.available) })
+        var completedRoutes: [String: Set<String>] = [:]
+        for game in games where game.store == "steam" && game.installed && game.complete {
+            completedRoutes[game.appId, default: []].insert(game.runtimeId)
+        }
         let epicCount = games.filter { $0.store == "epic" && $0.installed }.count
         let epicPresent = FileManager.default.fileExists(atPath: "/Applications/Epic Games Launcher.app")
         var epic: [String: Any] = ["status": epicPresent ? "launcher-present" : "unavailable", "message": epicPresent ? "Lanceur officiel présent. \(epicCount) jeux installés détectés. Bibliothèque du compte Epic non synchronisée." : "Epic Games Launcher n’est pas installé.", "installedCount": epicCount]
@@ -516,12 +537,16 @@ final class LibraryModel {
         }
         return ["version": "2.0.0", "accounts": accounts.map { ["id": $0.id, "name": $0.name, "source": $0.source, "selected": $0.id == selectedAccountID] as [String: Any] },
                 "selectedAccountId": selectedAccountID, "libraryStatus": ["status": libraryStatus, "message": libraryMessage, "updatedAt": lastSync],
-                "games": games.map { $0.json(runtimes: runtimes, availability: availability) }, "runtimes": runtimes.map(\.json), "hardware": hardware,
-                "warnings": warnings, "epic": epic]
+                "games": games.map { $0.json(runtimes: runtimes, availability: availability, completedRuntimeIDs: completedRoutes[$0.appId] ?? []) }, "runtimes": runtimes.map(\.json), "hardware": hardware,
+                "warnings": warnings, "epic": epic, "executionPolicy": WindowsExecutionPolicy.json,
+                "graphicsFeatures": GraphicsFeatureContract.diagnosticsSnapshot()]
+    }
+    func hasCompleteInstallation(appID: String, runtimeID: String) -> Bool {
+        games.contains { $0.store == "steam" && $0.appId == appID && $0.runtimeId == runtimeID && $0.installed && $0.complete }
     }
 }
 
-func hardwareState() -> [String: Any] {
+func hardwareState(renderProtectionEnabled: Bool = true) -> [String: Any] {
     func sysString(_ name: String) -> String {
         var size = 0; guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0, size < 1024 else { return "Indisponible" }
         var bytes = [CChar](repeating: 0, count: size); guard sysctlbyname(name, &bytes, &size, nil, 0) == 0 else { return "Indisponible" }; return String(cString: bytes)
@@ -530,9 +555,18 @@ func hardwareState() -> [String: Any] {
     switch ProcessInfo.processInfo.thermalState { case .nominal: thermal = "nominal"; case .fair: thermal = "fair"; case .serious: thermal = "serious"; case .critical: thermal = "critical"; @unknown default: thermal = "unknown" }
     var swap = xsw_usage(); var swapSize = MemoryLayout<xsw_usage>.size
     let hasSwap = sysctlbyname("vm.swapusage", &swap, &swapSize, nil, 0) == 0
+    // Metadata only. No buffer, heap, texture, command queue or GPU work is created.
+    let device = MTLCreateSystemDefaultDevice()
+    let memory = GraphicsMemoryBudget.evaluate(inputs: .init(
+        totalUnifiedBytes: ProcessInfo.processInfo.physicalMemory,
+        recommendedWorkingSetBytes: device?.recommendedMaxWorkingSetSize,
+        observedOwnAllocatedBytes: device.map { UInt64($0.currentAllocatedSize) },
+        hasUnifiedMemory: device?.hasUnifiedMemory ?? false,
+        renderProtectionEnabled: renderProtectionEnabled, pressure: .unknown))
     var result: [String: Any] = ["chip": sysString("machdep.cpu.brand_string"), "memoryGB": ProcessInfo.processInfo.physicalMemory / 1_073_741_824,
-                               "cpuCores": ProcessInfo.processInfo.processorCount, "gpuName": MTLCreateSystemDefaultDevice()?.name ?? "Indisponible",
+                               "cpuCores": ProcessInfo.processInfo.processorCount, "gpuName": device?.name ?? "Indisponible",
                                "lowPowerMode": ProcessInfo.processInfo.isLowPowerModeEnabled, "thermalState": thermal,
+                               "gpuMemoryBudget": memory.json, "gpuAllocatorConnected": false,
                                "performanceStatus": "Aucun benchmark lancé. Aucun réglage système ou bouteille modifié."]
     if hasSwap { result["swapUsedGB"] = Double(swap.xsu_used) / 1_073_741_824 }
     return result

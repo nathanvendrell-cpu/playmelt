@@ -186,6 +186,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         let duringScan: Set<String> = ["refresh", "setRenderProtection", "selectAccount", "cancelWindowsRuntime", "cancelD3DMetalRuntime", "cancelInstallAndPlay"]
         guard !loading || duringScan.contains(action) else { result(false, "Lecture locale en cours. Réessayez dans un instant."); return }
         guard !RenderProtection.blocks(action, enabled: renderProtectionEnabled) else { result(false, "Rendus en cours : cette action est suspendue."); return }
+        guard !WindowsExecutionPolicy.legacyActions.contains(action) else { result(false, WindowsExecutionPolicy.message); return }
         switch action {
         case "setRenderProtection":
             guard let enabled = dict["enabled"] as? Bool else { return }
@@ -293,6 +294,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         directX12["busy"] = rendererImportBusy || d3dMetalIsBusy
         state["d3dMetal"] = directX12
         state["renderProtectionEnabled"] = renderProtectionEnabled
+        state["executionPolicy"] = WindowsExecutionPolicy.json
         return state
     }
     func importD3DMetal() {
@@ -414,7 +416,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         if !installing, let reason = SteamGameLaunchProfile.blockReason(appID: game.appId, platform: runtime.platform, renderer: runtime.renderer, graphicsValidated: runtime.graphicsValidated) { result(false, reason); return nil }
         if runtime.platform == "windows" && (runtimeIsBusy || d3dMetalIsBusy || steamBootstrap.busy || d3dMetalSteamBootstrap.busy) { result(false, "La préparation Windows est encore en cours."); return nil }
         if installing {
-            guard !game.complete, let info = model.metadata[game.appId], info.platforms.contains(runtime.platform == "mac" ? "macos" : "windows") else { result(false, "Cette édition ne peut pas être installée avec le client choisi."); return nil }
+            guard !model.hasCompleteInstallation(appID: game.appId, runtimeID: runtime.id), let info = model.metadata[game.appId], info.platforms.contains(runtime.platform == "mac" ? "macos" : "windows") else { result(false, "Cette édition ne peut pas être installée avec le client choisi."); return nil }
         } else if !game.installed || !game.complete || game.json(runtimes: model.runtimes)["canLaunch"] as? Bool != true { result(false, "Installation absente ou incomplète. Vérifiez-la dans Steam."); return nil }
         let active = activeSteamAccount(TextVDF.read(runtime.steamRoot.appendingPathComponent("config/loginusers.vdf")).object("users"))
         if let active, !model.selectedAccountID.isEmpty, active != model.selectedAccountID { result(false, "Changez de compte dans Steam pour utiliser le compte sélectionné."); return nil }
@@ -426,6 +428,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     func dispatchSteam(_ game: Game, runtime: Runtime, installing: Bool, onFailure: @escaping (String) -> Void,
                        completion: @escaping (Bool, String) -> Void) {
         guard !renderProtectionEnabled else { completion(false, "Rendus en cours : installation et lancement suspendus."); return }
+        guard runtime.executionAllowed else { completion(false, WindowsExecutionPolicy.message); return }
         let key = "game:\(runtime.id):\(game.appId)"
         guard !closing, let token = requestGate.acquire(key) else { completion(false, "Demande déjà envoyée à Steam."); return }
         let finish: (Bool, String) -> Void = { [weak self] ok, message in
@@ -442,6 +445,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     }
     func runWindowsClient(_ runtime: Runtime, arguments: [String], onFailure: @escaping (String) -> Void,
                           completion: @escaping (Bool, String) -> Void) {
+        guard runtime.executionAllowed else { completion(false, WindowsExecutionPolicy.message); return }
         let key = "windows-client:" + arguments.joined(separator: "\u{1f}")
         guard !closing, let token = requestGate.acquire(key) else { completion(false, "Demande déjà envoyée à Steam Windows."); return }
         defer { requestGate.finish(key, token: token) }
@@ -464,6 +468,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         guard !CommandLine.arguments.contains("--audit-read-only") else { result(false, "Mode de vérification : installations et lancements désactivés."); return }
         guard !installCoordinator.isActive else { result(false, "Un suivi d’installation est déjà en cours. Arrêtez le suivi avant une autre demande."); return }
         if game.store == "epic" {
+            guard WindowsExecutionPolicy.permits(platform: game.platform) else { result(false, WindowsExecutionPolicy.message); return }
             guard !installing, game.complete, !game.epicLaunchID.isEmpty, let encoded = game.epicLaunchID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed), let url = URL(string: "com.epicgames.launcher://apps/\(encoded)?action=launch&silent=true") else { result(false, "Route Epic indisponible."); return }
             let key = "epic:\(game.appId)"
             guard let token = requestGate.acquire(key) else { result(false, "Demande déjà envoyée à Epic."); return }
@@ -538,6 +543,7 @@ if CommandLine.arguments.contains("--self-test") {
     metalState.merge(metalRuntime.snapshot(base: runtime.descriptor())) { _, latest in latest }; runtimeState["d3dMetal"] = metalState
     state["windowsRuntime"] = runtimeState; state["installJob"] = NSNull()
     state["renderProtectionEnabled"] = RenderProtection.enabled(in: model.preferences)
+    runtimeState["executionPolicy"] = WindowsExecutionPolicy.json; state["windowsRuntime"] = runtimeState
     if let data = try? JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys]) { FileHandle.standardOutput.write(data); print("") }
 } else {
     let app = NSApplication.shared; app.setActivationPolicy(.regular)
