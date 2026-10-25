@@ -15,11 +15,11 @@ lecture/exécution. Aucune page n'est simultanément accessible en écriture et
 exécution. Un conflit de permissions entre sections partageant une page est refusé.
 
 `pm_pe_load()` ne lance jamais le point d'entrée. Le harnais séparé `cpu_probe.c`
-est le seul à l'appeler, sur les octets embarqués produits par `probe_fixture.py`.
+l'appelle explicitement sur les octets embarqués produits par `probe_fixture.py`.
 Il n'accepte aucun chemin d'exécutable. `pm_pe_unload()` rapporte le résultat réel
 de `munmap` ; en cas d'échec, le handle reste disponible pour un nouvel essai.
 
-Les DLL sont acceptées uniquement lorsque leur point d'entrée vaut zéro. Le
+Le chargeur strict accepte les DLL uniquement lorsque leur point d'entrée vaut zéro. Le
 catalogue d'exports est copié depuis les octets originaux avant relocalisation
 et liaison : noms, ordinaux, trous et forwarders restent distincts. Les adresses
 d'exports directs désignent la nouvelle image ; leurs permissions finales sont
@@ -48,6 +48,27 @@ les noms précis de `kernel32.dll` ou `kernelbase.dll` :
 
 Dans ce resolver WinAPI, les noms inconnus et les imports par ordinal sont refusés. Aucun succès fictif,
 recherche de DLL, téléchargement ou `dlopen` n'est utilisé.
+
+`winapi_modules.c` ajoute un resolver optionnel pour `GetModuleHandleA`,
+`GetModuleHandleW` et `GetProcAddress`. Les handles viennent exclusivement des
+images enregistrées ou des tables de services hôtes explicitement déclarées.
+Les noms exacts, ordinaux, données et forwarders sont résolus avec le même registre
+fermé. Un contexte lié au thread protège leur durée de vie ; il ne peut pas être
+détruit pendant son utilisation. Les erreurs alimentent le `LastError` existant.
+Le resolver initial des sept fonctions reste utilisable seul.
+
+Les noms de modules sont limités aux basenames ASCII ; `W` accepte leur encodage
+UTF-16 ASCII, sans conversion Unicode générale. Aucun `LoadLibrary`, `FreeLibrary`,
+compteur de références Windows, API set ou chargement de dépendance n'est simulé.
+
+Une API séparée `pm_pe_load_synthetic_dll` autorise un point d'entrée non nul
+uniquement pour nos fixtures embarquées. Elle prépare l'image sans l'appeler.
+`pm_pe_synthetic_dll_attach` et `detach` appellent explicitement ce point via l'ABI
+x64 ; un attach refusé déclenche son nettoyage. Le handle et le thread d'origine
+sont requis. Double appel, réentrance et libération pendant l'attachement sont
+refusés. Cette expérimentation ne fournit ni verrou global de chargement Windows,
+ni notifications de threads, CRT, TLS ou gestion d'exception. Un appelant C peut
+toujours fournir des octets dangereux : cette API n'est pas une sandbox.
 
 ## Preuve CPU reproductible
 
@@ -83,6 +104,20 @@ module absent et d'un trou d'ordinal, puis le retrait et la libération des imag
 Aucun `DllMain` n'est exécuté. Les modules testés sont entièrement écrits dans
 ce dépôt ; aucune DLL d'un jeu ou de Windows n'est fournie à ces harnais.
 
+Deux autres harnais embarqués isolent les nouvelles fonctions et le cycle DLL :
+
+```sh
+python3 -B research/windows_native/loader/run_winapi_call_probe.py
+python3 -B research/windows_native/loader/run_dll_lifecycle_probe.py
+```
+
+Le premier appelle réellement les trois fonctions depuis un PE, puis utilise les
+adresses obtenues. Le second exécute quatre notifications de DLL synthétiques,
+vérifie les arguments, l'ordre attach/detach, le refus d'attach et les refus de
+réentrance, mauvais thread et libération prématurée. Les images sont libérées
+avant la sortie. Ces commandes compilent et s'exécutent successivement à priorité
+réduite ; elles n'acceptent aucun chemin d'exécutable externe.
+
 Les suites `test_pe_loader.c` et `test_winapi_subset.c` couvrent séparément les
 rejets, les permissions, les allocations/libérations et les fonctions système.
 La première utilise des doubles des appels mémoire, avec vérification
@@ -96,7 +131,8 @@ ignore SIGTERM après la sortie de son parent. Aucun GPU, modèle d'inférence o
 Le sous-ensemble est volontairement étroit : fichier de 16 Mio maximum, image de
 64 Mio maximum, 32 sections, 1 024 symboles importés, 4 096 relocalisations.
 Seuls les répertoires export, import, relocalisation et IAT sont acceptés. Le
-registre ne charge que des images déjà préparées, sans initialisation DLL.
+registre ne charge que des images déjà préparées. L'initialisation opt-in des
+fixtures ne constitue pas un cycle de vie compatible avec des DLL Windows réelles.
 TLS de l'exécutable, gestion des exceptions/unwind, CRT, ressources, DLL
 chargées à la demande, API sets, mémoire/processus/threads Windows, Win32/NT,
 audio, entrées, Steamworks et D3D12 ne sont pas implémentés. Certains sont refusés
@@ -122,8 +158,9 @@ Windows. Les quatre DLL ont un point d'initialisation non nul et un répertoire
 d'exceptions ; le chargeur actuel les refuse donc volontairement. DXGI dépend aussi
 des fenêtres, écrans, événements, threads, sémaphores et du registre Windows.
 
-La prochaine étape doit traiter les contrats de résolution de modules observés,
-puis leur initialisation et leurs exceptions avec preuves CPU distinctes. Ces
+La résolution de modules et l'initialisation synthétique ont maintenant des
+preuves CPU distinctes. Il reste notamment les exceptions/unwind, la mémoire,
+les synchronisations et le pont graphique réellement utilisés par ces composants. Ces
 imports ne décrivent pas les dépendances propres de Mortal Shell II, dont aucun
 binaire n'est disponible dans ce prototype. Une table d'import ne révèle pas non
 plus toutes les fonctions recherchées dynamiquement ou les exigences du pont hôte.
@@ -136,3 +173,6 @@ plus toutes les fonctions recherchées dynamiquement ou les exigences du pont h�
 - [Apple : environnement Rosetta](https://developer.apple.com/documentation/apple-silicon/about-the-rosetta-translation-environment).
 - [Microsoft : QPC et mesure du temps](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps).
 - [Microsoft : format FILETIME](https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-filetime).
+- [Microsoft : GetModuleHandleA](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandlea).
+- [Microsoft : GetProcAddress](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
+- [Microsoft : DllMain](https://learn.microsoft.com/en-us/windows/win32/dlls/dllmain).

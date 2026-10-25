@@ -8,7 +8,8 @@
 extern "C" {
 #endif
 
-/* Experimental mapping only: no entry, TLS callback, DllMain, Wine or GPU call.
+/* Experimental mapping APIs never call an entry point, TLS, Wine or GPU.
+ * Only the separate explicit synthetic lifecycle API below invokes DllMain.
  * The caller supplies immutable bytes of its OWN synthetic PE64 AMD64 fixture.
  * No filesystem access, dependency discovery, dlopen or external CLI is provided.
  * Resolver uses the host C ABI; addresses it returns may use a different ABI.
@@ -21,12 +22,24 @@ typedef int (*pm_import_resolver)(void *context, const char *dll, const char *na
                                  uintptr_t *address);
 
 struct pm_pe_export_catalog;
+struct pm_pe_synthetic_dll_control;
 typedef struct pm_pe_image {
     void *mapping;
     size_t mapping_size;
     uint32_t entrypoint_rva;
     struct pm_pe_export_catalog *exports; /* Owned; never copy image ownership. */
+    struct pm_pe_synthetic_dll_control *synthetic_dll; /* Explicit fixture-only opt-in. */
 } pm_pe_image;
+
+typedef enum pm_pe_dll_state {
+    PM_PE_DLL_UNAVAILABLE = 0,
+    PM_PE_DLL_READY,
+    PM_PE_DLL_ATTACHING,
+    PM_PE_DLL_ATTACHED,
+    PM_PE_DLL_DETACHING,
+    PM_PE_DLL_DETACHED,
+    PM_PE_DLL_FAILED
+} pm_pe_dll_state;
 
 typedef enum pm_pe_export_kind {
     PM_PE_EXPORT_DIRECT = 1,
@@ -59,8 +72,38 @@ typedef struct pm_pe_export {
  */
 int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
                void *context, pm_pe_image *image, char *error, size_t error_cap);
+
+/* Separate research opt-in; ONLY source-generated embedded DLL fixtures owned by
+ * this project. No external file path is accepted. This is not a sandbox against
+ * a malicious native caller. Requires a DLL with a nonzero file-backed RX entry.
+ * All ordinary loader limits and unsupported-directory refusals still apply.
+ * Loading only maps/binds/protects; it never invokes the entry point.
+ */
+int pm_pe_load_synthetic_dll(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
+                            void *context, pm_pe_image *image, char *error, size_t error_cap);
+
+/* One-shot explicit Microsoft x64 ABI process notifications, on the loading
+ * thread only. Attach calls entry(base,1,NULL); FALSE calls entry(base,0,NULL)
+ * for cleanup and returns failure in FAILED state. Explicit detach calls
+ * entry(base,0,NULL), ignores its BOOL return, and enters DETACHED. Caller then
+ * unloads. READY/FAILED/DETACHED may unload; ATTACHING/ATTACHED/DETACHING may not.
+ * No thread notifications, CRT, TLS, loader lock, exception handling/unwind or
+ * arbitrary DLL compatibility is implemented. A fault/exception is not caught.
+ *
+ * Keep this handle alive at its original address; never copy/mutate its fields.
+ * All operations and imported callbacks are confined to the loading thread.
+ * Another thread must not race handle destruction or inspect mapping contents.
+ * Calls from another thread are refused while the original handle is live;
+ * this does not make raw C handle access thread-safe. Nested lifecycle operations
+ * on the same image are refused. Detach does not wait for arbitrary guest work.
+ */
+int pm_pe_synthetic_dll_attach(pm_pe_image *image, char *error, size_t error_cap);
+int pm_pe_synthetic_dll_detach(pm_pe_image *image, char *error, size_t error_cap);
+pm_pe_dll_state pm_pe_synthetic_dll_state(const pm_pe_image *image);
+
 /* Success=1, including an empty/NULL image. Failure=0 preserves the handle so the
- * caller can retry; never claim imageUnmapped when this function returns 0. */
+ * caller can retry; never claim imageUnmapped when this function returns 0.
+ * An opted-in DLL additionally enforces the lifecycle and thread rules above. */
 int pm_pe_unload(pm_pe_image *image);
 
 /* Exact case-sensitive name, or public (biased) uint32 ordinal. 1=found,

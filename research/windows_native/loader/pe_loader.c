@@ -5,6 +5,7 @@
 #include "pe_loader.h"
 
 #include <limits.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +45,15 @@ struct pm_pe_export_catalog {
     char strings[PM_MAX_EXPORT_STRINGS];
 };
 
+struct pm_pe_synthetic_dll_control {
+    const pm_pe_image *owner;
+    const void *mapping;
+    size_t mapping_size;
+    uint32_t entrypoint_rva;
+    pthread_t thread;
+    pm_pe_dll_state state;
+};
+
 typedef struct {
     const uint8_t *bytes;
     size_t size, page_size, mapping_size;
@@ -53,6 +63,7 @@ typedef struct {
     pm_section sections[PM_MAX_SECTIONS];
     uint8_t *mapping, *permissions;
     struct pm_pe_export_catalog *exports;
+    int synthetic_dll;
     char *error;
     size_t error_cap;
 } pm_loader;
@@ -157,7 +168,10 @@ static int parse_headers(pm_loader *p) {
         return fail(p, "unsupported-alignment: invalid section/file alignment");
     p->image_base = u64(opt + 24); p->entry = u32(opt + 16);
     int is_dll = (attributes & 0x2000) != 0;
-    if (is_dll && p->entry != 0) return fail(p, "unsupported-dll: nonzero DLL initialization entry point");
+    if (p->synthetic_dll) {
+        if (!is_dll || p->entry == 0)
+            return fail(p, "invalid-synthetic-dll: DLL flag and nonzero initialization entry required");
+    } else if (is_dll && p->entry != 0) return fail(p, "unsupported-dll: nonzero DLL initialization entry point");
     p->image_size = u32(opt + 56); p->header_size = u32(opt + 60);
     if (p->image_size == 0 || p->image_size > PM_MAX_IMAGE || p->image_size % section_align != 0 ||
         p->header_size == 0 || p->header_size > 1024u * 1024u || p->header_size % file_align != 0 ||
@@ -213,10 +227,10 @@ static int parse_headers(pm_loader *p) {
         }
         p->dirs[i][0] = rva; p->dirs[i][1] = size;
     }
-    if (!is_dll) {
+    if (!is_dll || p->synthetic_dll) {
         const pm_section *entry_section = section_for(p, p->entry, 1);
         if (p->entry == 0 || entry_section == NULL || !(entry_section->flags & PM_SCN_EXECUTE) || raw_at(p, p->entry, 1) == NULL)
-            return fail(p, "invalid-entry: EXE entry point must be file-backed in an executable section");
+            return fail(p, "invalid-entry: entry point must be file-backed in an executable section");
     }
     long page = sysconf(_SC_PAGESIZE);
     if (page < 4096 || page > 65536 || !power_of_two((uint32_t)page))
@@ -461,15 +475,22 @@ static int protect_image(pm_loader *p) {
     return 1;
 }
 
-int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
-               void *context, pm_pe_image *image, char *error, size_t error_cap) {
+static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
+                       void *context, pm_pe_image *image, char *error, size_t error_cap,
+                       int synthetic_dll) {
     pm_loader p = {0};
     p.bytes = bytes; p.size = size; p.error = error; p.error_cap = error_cap;
+    p.synthetic_dll = synthetic_dll;
     if (error != NULL && error_cap) error[0] = '\0';
     if (image == NULL) return fail(&p, "invalid-argument: output image is null");
-    if (image->mapping != NULL || image->mapping_size != 0 || image->entrypoint_rva != 0 || image->exports != NULL)
+    if (image->mapping != NULL || image->mapping_size != 0 || image->entrypoint_rva != 0 || image->exports != NULL || image->synthetic_dll != NULL)
         return fail(&p, "invalid-argument: unload the previous image before reuse");
     int ok = parse_headers(&p) && parse_exports(&p);
+    struct pm_pe_synthetic_dll_control *control = NULL;
+    if (ok && synthetic_dll) {
+        control = calloc(1, sizeof *control);
+        if (control == NULL) ok = fail(&p, "allocation-failed: synthetic DLL lifecycle");
+    }
     if (ok) {
         void *mapping = mmap(NULL, p.mapping_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
         if (mapping == MAP_FAILED) ok = fail(&p, "allocation-failed: anonymous image mapping");
@@ -486,6 +507,7 @@ int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
     free(p.permissions);
     if (!ok) {
         free(p.exports);
+        free(control);
         if (p.mapping != NULL && munmap(p.mapping, p.mapping_size) != 0) {
             image->mapping = p.mapping;
             image->mapping_size = p.mapping_size;
@@ -502,14 +524,90 @@ int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
         p.exports->bound_mapping_size = p.mapping_size;
     }
     image->exports = p.exports;
+    if (control != NULL) {
+        control->owner = image; control->mapping = p.mapping;
+        control->mapping_size = p.mapping_size; control->entrypoint_rva = p.entry;
+        control->thread = pthread_self(); control->state = PM_PE_DLL_READY;
+        image->synthetic_dll = control;
+    }
     return 1;
+}
+
+int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
+               void *context, pm_pe_image *image, char *error, size_t error_cap) {
+    return load_image(bytes, size, resolver, context, image, error, error_cap, 0);
+}
+
+int pm_pe_load_synthetic_dll(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
+                            void *context, pm_pe_image *image, char *error, size_t error_cap) {
+    return load_image(bytes, size, resolver, context, image, error, error_cap, 1);
+}
+
+static struct pm_pe_synthetic_dll_control *dll_control(const pm_pe_image *image) {
+    if (image == NULL || image->synthetic_dll == NULL) return NULL;
+    struct pm_pe_synthetic_dll_control *control = image->synthetic_dll;
+    if (control->owner != image || !pthread_equal(control->thread, pthread_self()) ||
+        control->mapping != image->mapping || control->mapping_size != image->mapping_size ||
+        control->entrypoint_rva != image->entrypoint_rva || image->mapping == NULL ||
+        image->entrypoint_rva == 0 || image->entrypoint_rva >= image->mapping_size) return NULL;
+    return control;
+}
+
+pm_pe_dll_state pm_pe_synthetic_dll_state(const pm_pe_image *image) {
+    struct pm_pe_synthetic_dll_control *control = dll_control(image);
+    return control ? control->state : PM_PE_DLL_UNAVAILABLE;
+}
+
+/* Microsoft dynamic-load DllMain semantics, consulted 2026-10-25:
+ * https://learn.microsoft.com/en-us/windows/win32/dlls/dllmain
+ * FALSE from PROCESS_ATTACH receives PROCESS_DETACH; detach's BOOL is ignored.
+ * No Windows exception dispatcher or host fault recovery is provided here. */
+static int notify_synthetic_dll(pm_pe_image *image, int attach, char *error, size_t error_cap) {
+    pm_loader report = {0}; report.error = error; report.error_cap = error_cap;
+    if (error != NULL && error_cap) error[0] = '\0';
+    struct pm_pe_synthetic_dll_control *control = dll_control(image);
+    if (control == NULL) return fail(&report, "invalid-synthetic-dll: live original handle and loading thread required");
+    if (control->state != (attach ? PM_PE_DLL_READY : PM_PE_DLL_ATTACHED))
+        return fail(&report, "invalid-dll-transition: duplicate, nested, or out-of-order notification");
+#if defined(__x86_64__)
+    typedef int32_t (__attribute__((ms_abi)) *dll_entry)(void *, uint32_t, void *);
+    dll_entry entry = (dll_entry)((uint8_t *)image->mapping + image->entrypoint_rva);
+    if (attach) {
+        control->state = PM_PE_DLL_ATTACHING;
+        int32_t accepted = entry(image->mapping, 1, NULL);
+        if (accepted) { control->state = PM_PE_DLL_ATTACHED; return 1; }
+        control->state = PM_PE_DLL_DETACHING;
+        (void)entry(image->mapping, 0, NULL);
+        control->state = PM_PE_DLL_FAILED;
+        return fail(&report, "dll-attach-failed: PROCESS_DETACH cleanup completed; unload the failed image");
+    }
+    control->state = PM_PE_DLL_DETACHING;
+    (void)entry(image->mapping, 0, NULL);
+    control->state = PM_PE_DLL_DETACHED;
+    return 1;
+#else
+    return fail(&report, "unsupported-host: synthetic DllMain execution requires x86_64 Microsoft ABI");
+#endif
+}
+
+int pm_pe_synthetic_dll_attach(pm_pe_image *image, char *error, size_t error_cap) {
+    return notify_synthetic_dll(image, 1, error, error_cap);
+}
+int pm_pe_synthetic_dll_detach(pm_pe_image *image, char *error, size_t error_cap) {
+    return notify_synthetic_dll(image, 0, error, error_cap);
 }
 
 int pm_pe_unload(pm_pe_image *image) {
     if (image == NULL) return 1;
+    if (image->synthetic_dll != NULL) {
+        struct pm_pe_synthetic_dll_control *control = dll_control(image);
+        if (control == NULL || (control->state != PM_PE_DLL_READY &&
+            control->state != PM_PE_DLL_DETACHED && control->state != PM_PE_DLL_FAILED)) return 0;
+    }
     if ((image->mapping == NULL) != (image->mapping_size == 0)) return 0;
     if (image->mapping != NULL && munmap(image->mapping, image->mapping_size) != 0) return 0;
     free(image->exports);
+    free(image->synthetic_dll);
     *image = (pm_pe_image){0};
     return 1;
 }

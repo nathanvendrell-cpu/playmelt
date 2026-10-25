@@ -27,8 +27,11 @@ typedef struct pm_filetime {
 } pm_filetime;
 
 enum {
+    PM_ERROR_INVALID_HANDLE = 6,
     PM_ERROR_GEN_FAILURE = 31,
     PM_ERROR_INVALID_PARAMETER = 87,
+    PM_ERROR_MOD_NOT_FOUND = 126,
+    PM_ERROR_PROC_NOT_FOUND = 127,
     PM_ERROR_ARITHMETIC_OVERFLOW = 534
 };
 

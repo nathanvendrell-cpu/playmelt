@@ -515,9 +515,65 @@ static void test_export_mutations(void) {
     }
 }
 
+static void reject_synthetic(fixture *f, const char *message) {
+    pm_pe_image image = {0}; char error[192]; resolver_state state = {0};
+    reset_tracking();
+    CHECK(!pm_pe_load_synthetic_dll(f->bytes, sizeof f->bytes, resolve, &state,
+                                   &image, error, sizeof error));
+    CHECK(strstr(error, message) != NULL);
+    CHECK(image.mapping == NULL && image.synthetic_dll == NULL && live_mappings == 0 && live_allocations == 0);
+}
+
+static void test_synthetic_dll_mapping_only(void) {
+    // Inert instruction bytes are NEVER called. Actual ABI notifications have a
+    // separate, tiny x86_64-only embedded-code probe.
+    fixture f = make_fixture();
+    reject_synthetic(&f, "DLL flag");
+    w16(f.bytes + 0x96, 0x2022); w32(f.bytes + OPT + 16, 0);
+    reject_synthetic(&f, "nonzero initialization");
+    w32(f.bytes + OPT + 16, 0xc000); reject_synthetic(&f, "invalid-entry");
+    w32(f.bytes + OPT + 16, 0x4200); w32(f.bytes + SECTIONS + 8, 0x400);
+    reject_synthetic(&f, "invalid-entry");
+    f = make_fixture(); w16(f.bytes + 0x96, 0x2022);
+    reject_fixture(&f, "unsupported-dll"); // Strict mode remains unchanged.
+    for (unsigned index = 0; index < 2; ++index) {
+        fixture rejected = f;
+        directory(&rejected, index ? 9 : 3, 0x8400, 16);
+        reject_synthetic(&rejected, index ? "TLS" : "exception/unwind");
+    }
+    pm_pe_image image = {0}; char error[192]; resolver_state state = {0};
+    reset_tracking();
+    CHECK(pm_pe_load_synthetic_dll(f.bytes, sizeof f.bytes, resolve, &state, &image, error, sizeof error));
+    CHECK(image.synthetic_dll != NULL && pm_pe_synthetic_dll_state(&image) == PM_PE_DLL_READY);
+    CHECK(wx_requests == 0);
+    CHECK(!pm_pe_synthetic_dll_detach(&image, error, sizeof error));
+    CHECK(pm_pe_synthetic_dll_state(&image) == PM_PE_DLL_READY);
+    pm_pe_image copied = image;
+    CHECK(pm_pe_synthetic_dll_state(&copied) == PM_PE_DLL_UNAVAILABLE);
+    CHECK(!pm_pe_synthetic_dll_attach(&copied, error, sizeof error));
+    CHECK(!pm_pe_unload(&copied));
+    fail_unmapping = 1;
+    CHECK(!pm_pe_unload(&image));
+    CHECK(pm_pe_synthetic_dll_state(&image) == PM_PE_DLL_READY && live_allocations == 1);
+    fail_unmapping = 0;
+    CHECK(pm_pe_unload(&image));
+    CHECK(image.synthetic_dll == NULL && live_allocations == 0 && live_mappings == 0);
+    CHECK(pm_pe_synthetic_dll_state(&image) == PM_PE_DLL_UNAVAILABLE);
+    CHECK(!pm_pe_synthetic_dll_attach(&image, error, sizeof error));
+    reset_tracking(); state = (resolver_state){0}; fail_allocation_at = 2;
+    CHECK(!pm_pe_load_synthetic_dll(f.bytes, sizeof f.bytes, resolve, &state, &image, error, sizeof error));
+    CHECK(strstr(error, "synthetic DLL lifecycle") && !map_calls && !live_allocations);
+    reset_tracking(); fail_protection_at = 1; fail_unmapping = 1;
+    CHECK(!pm_pe_load_synthetic_dll(f.bytes, sizeof f.bytes, resolve, &state, &image, error, sizeof error));
+    CHECK(strstr(error, "cleanup-failed") && image.mapping && !image.synthetic_dll && !live_allocations);
+    fail_unmapping = 0; CHECK(pm_pe_unload(&image));
+    reset_tracking();
+}
+
 int main(void) {
     test_success(); test_rejections(); test_failures_and_limits(); test_seeded_mutations();
     test_export_success(); test_export_rejections(); test_export_string_budget(); test_ordinal_imports(); test_export_mutations();
+    test_synthetic_dll_mapping_only();
     CHECK(live_mappings == 0 && live_allocations == 0 && wx_requests == 0);
     printf("PE loader: %u checks PASS; 384 synthetic mutations; executionPerformed=false; wineUsed=false; liveMappings=0; liveAllocations=0\n", checks);
     return 0;
