@@ -38,11 +38,14 @@ final class EpicConnector {
     private let queue = DispatchQueue(label: "com.robtech.metalmax.epic", qos: .utility)
     private let lock = NSLock()
     private var session: [String: Any]?
-    private var activeProcess: Process?
+    private let runner: OwnedProcessRunning
     private var generation = 0
     private var requestPending = false
+    private var closing = false
 
-    init(projectRoot: URL? = nil, pythonURL: URL? = nil, workerURL: URL? = nil) {
+    init(projectRoot: URL? = nil, pythonURL: URL? = nil, workerURL: URL? = nil,
+         runner: OwnedProcessRunning = OwnedProcessRunner()) {
+        self.runner = runner
         let configured = Bundle.main.object(forInfoDictionaryKey: "MetalMaxSourceDirectory") as? String
         let applicationSupport = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt")
         self.projectRoot = projectRoot ?? configured.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? applicationSupport
@@ -90,24 +93,14 @@ final class EpicConnector {
     func clearSession() {
         lock.lock()
         session = nil; generation += 1
-        let process = activeProcess
         lock.unlock()
-        if let process, process.isRunning { process.terminate() }
     }
 
-    /// Call from applicationWillTerminate to reap this connector's own worker.
-    func shutdown() {
-        clearSession()
-        lock.lock(); let process = activeProcess; lock.unlock()
-        if let process, process.isRunning {
-            process.terminate()
-            for _ in 0..<20 {
-                if !process.isRunning { break }
-                Thread.sleep(forTimeInterval: 0.05)
-            }
-            if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
-            process.waitUntilExit()
-        }
+    /// Completion follows cancellation and exact worker/group reaping. The app
+    /// waits asynchronously; no 180-second worker wait blocks its main thread.
+    func shutdown(completion: @escaping () -> Void = {}) {
+        lock.lock(); closing = true; session = nil; generation += 1; lock.unlock()
+        queue.async { DispatchQueue.main.async { completion() } }
     }
 
     private static func snapshot(_ payload: [String: Any]) -> Result<EpicSnapshot, Error> {
@@ -129,9 +122,9 @@ final class EpicConnector {
             return
         }
         lock.lock()
-        guard !requestPending else {
+        guard !requestPending && !closing else {
             lock.unlock()
-            completion(.failure(EpicConnectorError.failed(code: "busy", message: "Une opération Epic est déjà en cours.")))
+            completion(.failure(EpicConnectorError.failed(code: "busy", message: "Une opération Epic est déjà en cours ou l’application se ferme.")))
             return
         }
         requestPending = true
@@ -149,7 +142,7 @@ final class EpicConnector {
                 self.lock.lock()
                 let cancelled = self.generation != requestGeneration
                 if !cancelled, let refreshed = response["session"] as? [String: Any] { self.session = refreshed }
-                if let error = response["error"] as? [String: Any], error["code"] as? String == "authenticationFailed" { self.session = nil }
+                if !cancelled, let error = response["error"] as? [String: Any], error["code"] as? String == "authenticationFailed" { self.session = nil }
                 self.lock.unlock()
                 // Never give the callback (and therefore WebKit) tokens.
                 response.removeValue(forKey: "session")
@@ -169,73 +162,22 @@ final class EpicConnector {
     private func runWorker(_ input: [String: Any], generation requestGeneration: Int) throws -> [String: Any] {
         let body = try JSONSerialization.data(withJSONObject: input)
         guard body.count <= 1024 * 1024 else { throw EpicConnectorError.invalidResponse }
-        let process = Process()
-        process.executableURL = pythonURL
-        process.arguments = ["-I", "-B", workerURL.path]
-        process.currentDirectoryURL = projectRoot
-        // Do not inherit Python hooks or a Legendary configuration pointing to another account.
-        process.environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": NSHomeDirectory(),
-                               "LANG": "fr_FR.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"]
-        let incoming = Pipe(), outgoing = Pipe()
-        process.standardInput = incoming
-        process.standardOutput = outgoing
-        process.standardError = FileHandle.nullDevice
-        let finished = DispatchSemaphore(value: 0)
-        let readerFinished = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in finished.signal() }
-        let output = EpicBoundedOutput()
-        defer {
-            if process.isRunning {
-                process.terminate()
-                if finished.wait(timeout: .now() + 2) == .timedOut, process.isRunning {
-                    Darwin.kill(process.processIdentifier, SIGKILL)
-                }
-            }
-            if process.processIdentifier > 0 { process.waitUntilExit() }
-            try? incoming.fileHandleForWriting.close()
-            try? outgoing.fileHandleForReading.close()
-            lock.lock(); activeProcess = nil; lock.unlock()
-        }
-        try process.run()
-        lock.lock()
-        activeProcess = process
-        let cancelled = generation != requestGeneration
-        lock.unlock()
-        guard !cancelled else {
+        var request = OwnedProcessRequest(executable: pythonURL, arguments: ["-I", "-B", workerURL.path],
+            environment: ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": NSHomeDirectory(),
+                          "LANG": "fr_FR.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"])
+        request.directory = projectRoot; request.input = body; request.timeout = 180
+        request.outputLimit = 16 * 1024 * 1024; request.mergeStandardError = false
+        do {
+            let result = try runner.run(request, cancelled: {
+                self.lock.lock(); defer { self.lock.unlock() }
+                return self.closing || self.generation != requestGeneration
+            })
+            guard result.exitCode == 0,
+                  let response = try JSONSerialization.jsonObject(with: result.output) as? [String: Any] else { throw EpicConnectorError.invalidResponse }
+            return response
+        } catch OwnedProcessError.cancelled {
             throw EpicConnectorError.failed(code: "cancelled", message: "Connexion Epic annulée.")
-        }
-        DispatchQueue.global(qos: .utility).async {
-            defer { readerFinished.signal() }
-            do {
-                while let data = try outgoing.fileHandleForReading.read(upToCount: 65536), !data.isEmpty {
-                    if !output.append(data) {
-                        if process.isRunning { process.terminate() }
-                        return
-                    }
-                }
-            } catch { /* The owner handles cancellation or malformed output. */ }
-        }
-        try incoming.fileHandleForWriting.write(contentsOf: body)
-        try incoming.fileHandleForWriting.close()
-        guard finished.wait(timeout: .now() + 180) == .success else { throw EpicConnectorError.timedOut }
-        process.waitUntilExit()
-        guard readerFinished.wait(timeout: .now() + 2) == .success,
-              output.append(Data()), process.terminationStatus == 0,
-              let response = try JSONSerialization.jsonObject(with: output.value()) as? [String: Any] else {
-            throw EpicConnectorError.invalidResponse
-        }
-        return response
+        } catch OwnedProcessError.timedOut { throw EpicConnectorError.timedOut }
+        catch is OwnedProcessError { throw EpicConnectorError.invalidResponse }
     }
-}
-
-private final class EpicBoundedOutput {
-    private let lock = NSLock()
-    private var bytes = Data()
-    private var overflow = false
-    func append(_ value: Data) -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        guard !overflow, bytes.count + value.count <= 16 * 1024 * 1024 else { overflow = true; return false }
-        bytes.append(value); return true
-    }
-    func value() -> Data { lock.lock(); defer { lock.unlock() }; return bytes }
 }

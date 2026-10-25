@@ -13,81 +13,20 @@ protocol D3DMetalCommandRunning {
     func run(_ command: D3DMetalCommand, cancelled: () -> Bool) throws -> String
 }
 
-/// Each invocation owns a fresh process group. Cancellation signals only that
-/// group while its leader remains unreaped, preventing PID reuse. Detached Wine
-/// services are stopped separately, using only the exclusively owned prefix.
+/// Adapter preserving the DX12 test contract while sharing lifecycle supervision.
 final class D3DMetalProcessRunner: D3DMetalCommandRunning {
+    private let runner: OwnedProcessRunning
+    init(runner: OwnedProcessRunning = OwnedProcessRunner()) { self.runner = runner }
     func run(_ command: D3DMetalCommand, cancelled: () -> Bool) throws -> String {
-        if cancelled() { throw RuntimeSetupError.cancelled }
-        var pipes: [Int32] = [0,0]
-        guard pipe(&pipes) == 0 else { throw RuntimeSetupError.failed("Impossible de superviser le processus de préparation.") }
-        var readOpen = true, writeOpen = true
-        defer { if readOpen { close(pipes[0]) }; if writeOpen { close(pipes[1]) } }
-        var actions: posix_spawn_file_actions_t?, attributes: posix_spawnattr_t?
-        guard posix_spawn_file_actions_init(&actions) == 0 else { throw RuntimeSetupError.failed("Initialisation du superviseur impossible.") }
-        defer { posix_spawn_file_actions_destroy(&actions) }
-        guard posix_spawnattr_init(&attributes) == 0 else { throw RuntimeSetupError.failed("Initialisation du groupe de processus impossible.") }
-        defer { posix_spawnattr_destroy(&attributes) }
-        let setup = [
-            posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP)),
-            posix_spawnattr_setpgroup(&attributes, 0),
-            posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0),
-            posix_spawn_file_actions_adddup2(&actions, pipes[1], STDOUT_FILENO),
-            posix_spawn_file_actions_adddup2(&actions, pipes[1], STDERR_FILENO),
-            posix_spawn_file_actions_addclose(&actions, pipes[0]),
-            posix_spawn_file_actions_addclose(&actions, pipes[1])
-        ]
-        guard setup.allSatisfy({ $0 == 0 }), fcntl(pipes[0], F_SETFL, O_NONBLOCK) == 0,
-              fcntl(pipes[0], F_SETFD, FD_CLOEXEC) == 0, fcntl(pipes[1], F_SETFD, FD_CLOEXEC) == 0 else { throw RuntimeSetupError.failed("Configuration du superviseur impossible.") }
-        var argv = ([command.executable.path] + command.arguments).map { strdup($0) } + [nil]
-        var envp = command.environment.keys.sorted().map { strdup($0 + "=" + command.environment[$0]!) } + [nil]
-        defer { for item in argv { free(item) }; for item in envp { free(item) } }
-        var pid: pid_t = 0
-        let spawned = posix_spawn(&pid, command.executable.path, &actions, &attributes, &argv, &envp)
-        guard spawned == 0 else { throw RuntimeSetupError.failed("Impossible de démarrer \(command.executable.lastPathComponent) (\(spawned)).") }
-        close(pipes[1]); writeOpen = false
-        var output = Data(), buffer = [UInt8](repeating: 0, count: 8192), status: Int32 = 0, overflow = false
-        func drain() {
-            // A continuous writer must not starve timeout/cancellation checks.
-            for _ in 0..<8 {
-                let count = Darwin.read(pipes[0], &buffer, buffer.count)
-                if count <= 0 { break }
-                let available = max(0, 65536 - output.count)
-                if count > available { overflow = true }
-                if available > 0 { output.append(contentsOf: buffer.prefix(min(count, available))) }
-            }
-        }
-        let deadline = ProcessInfo.processInfo.systemUptime + command.timeout
-        while true {
-            drain()
-            let wantsCancel = cancelled(), timedOut = ProcessInfo.processInfo.systemUptime >= deadline
-            if wantsCancel || timedOut {
-                // Keep the leader unreaped until group escalation has finished.
-                _ = kill(-pid, SIGTERM)
-                let grace = ProcessInfo.processInfo.systemUptime + 1
-                while ProcessInfo.processInfo.systemUptime < grace { drain(); Thread.sleep(forTimeInterval: 0.02) }
-                _ = kill(-pid, SIGKILL)
-                while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
-                drain()
-                if wantsCancel { throw RuntimeSetupError.cancelled }
-                throw RuntimeSetupError.failed("Le délai de \(command.executable.lastPathComponent) est dépassé.")
-            }
-            let result = waitpid(pid, &status, WNOHANG)
-            if result == pid { break }
-            if result < 0 && errno != EINTR {
-                // Signal only while the known leader still owns this group.
-                // Otherwise ownership cannot be re-established from a PID alone;
-                // report failure and let the prefix-scoped cleanup run.
-                if getpgid(pid) == pid { _ = kill(-pid,SIGKILL); while waitpid(pid,&status,0) < 0 && errno == EINTR {} }
-                throw RuntimeSetupError.failed("Le processus de préparation ne peut pas être suivi.")
-            }
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        drain(); close(pipes[0]); readOpen = false
-        let code = (status & 0x7f) == 0 ? (status >> 8) & 255 : 128 + (status & 0x7f)
-        guard code == 0 else { throw RuntimeSetupError.failed("Échec de \(command.executable.lastPathComponent) (code \(code)).") }
-        if overflow && ["/bin/ps","/usr/bin/nm"].contains(command.executable.path) { throw RuntimeSetupError.failed("La sortie de contrôle est trop volumineuse pour confirmer son résultat complet.") }
-        return String(decoding: output, as: UTF8.self)
+        var request = OwnedProcessRequest(executable: command.executable, arguments: command.arguments, environment: command.environment)
+        request.timeout = command.timeout
+        request.failOnOverflow = ["/bin/ps", "/usr/bin/nm"].contains(command.executable.path)
+        request.preserveGroupOnSuccess = command.arguments == ["wineboot", "-u"]
+        do {
+            let result = try runner.run(request, cancelled: cancelled)
+            guard result.exitCode == 0 else { throw RuntimeSetupError.failed("Échec de \(command.executable.lastPathComponent) (code \(result.exitCode)).") }
+            return String(decoding: result.output, as: UTF8.self)
+        } catch OwnedProcessError.cancelled { throw RuntimeSetupError.cancelled }
     }
 }
 

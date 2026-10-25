@@ -55,7 +55,7 @@ const sent = [];
 const component = {
   status: "not-prepared",
   message: "Composant importé",
-  imported: true,
+  imported: false,
   version: "3.0",
   prepared: false,
   steamInstalled: false,
@@ -130,7 +130,7 @@ assert.equal(
   true,
   "Absent protection field defaults to enabled",
 );
-assert(button(body, "Préparer DirectX 12").disabled);
+assert(!button(body, "Préparer DirectX 12"), "Import precedes preparation");
 assert(
   !button(body, "Importer le composant Apple").disabled,
   "Import is allowed during renders",
@@ -144,6 +144,14 @@ assert(
 );
 button(body, "Obtenir auprès d’Apple").handlers.click();
 assert.equal(sent.pop().action, "openD3DMetalDownload");
+component.imported = true;
+api.renderGameDialog(game);
+assert(button(body, "Préparer DirectX 12").disabled);
+assert(
+  !button(body, "Importer le composant Apple") &&
+    !button(body, "Obtenir auprès d’Apple"),
+  "Completed import removes obsolete actions",
+);
 for (const action of [
   "launchGame",
   "installGame",
@@ -188,7 +196,7 @@ for (const status of ["checking", "initializing", "stopping"]) {
   Object.assign(component, { status, busy: true, cancellable: true });
   api.renderGameDialog(game);
   assert(button(body, "Annuler") && !button(body, "Annuler").disabled);
-  assert(button(body, "Importer le composant Apple").disabled);
+  assert(!button(body, "Importer le composant Apple"));
   assert(!button(body, "Préparer DirectX 12"));
   assert(
     !all(body).some((n) => n.tag === "progress"),
@@ -206,7 +214,8 @@ Object.assign(component, {
 });
 api.renderGameDialog(game);
 assert.equal(sent.length, 0);
-button(body, "Installer Steam pour DirectX 12").handlers.click();
+const steamInstaller = button(body, "Installer Steam pour DirectX 12");
+steamInstaller.handlers.click();
 assert.equal(sent.pop().action, "installSteamD3DMetal");
 Object.assign(component, {
   steamBusy: true,
@@ -216,11 +225,11 @@ Object.assign(component, {
 api.renderGameDialog(game);
 const steamDownload = button(body, "Installer Steam pour DirectX 12");
 assert(
-  steamDownload.disabled,
+  !steamDownload && steamInstaller.disabled,
   "DX12 Steam bootstrap blocks another install even when component.busy=false",
 );
-assert(button(body, "Importer le composant Apple").disabled);
-steamDownload.handlers.click();
+assert(!button(body, "Importer le composant Apple"));
+steamInstaller.handlers.click();
 assert.equal(
   sent.length,
   0,
@@ -240,7 +249,7 @@ assert.notEqual(
 );
 assert(all(body).some((n) => n.textContent === "Installation de Steam…"));
 assert(all(body).some((n) => n.title === component.steamMessage));
-assert(button(body, "Installer Steam pour DirectX 12").disabled);
+assert(!button(body, "Installer Steam pour DirectX 12"));
 assert(
   !button(body, "Annuler"),
   "Steam bootstrap does not advertise a runtime-only cancellation command",
@@ -259,8 +268,10 @@ component.steamMessage = "Steam Windows est installé.";
 component.steamInstalled = true;
 game.canInstall = true;
 api.renderGameDialog(game);
-button(body, "Ouvrir Steam DirectX 12").handlers.click();
-assert.equal(sent.pop().action, "openD3DMetalSteam");
+assert(
+  !button(body, "Ouvrir Steam DirectX 12"),
+  "Game installation is the single useful next action",
+);
 button(body, "Installer").handlers.click();
 const installation = sent.pop();
 assert.equal(installation.action, "installGame");
@@ -272,10 +283,7 @@ assert(
 );
 context.state.renderProtectionEnabled = true;
 api.renderGameDialog(game);
-assert(
-  button(body, "Installer").disabled &&
-    button(body, "Ouvrir Steam DirectX 12").disabled,
-);
+assert(button(body, "Installer").disabled);
 const holder = elements.d3dMetalSettings;
 api.updateD3DMetalSettings(holder);
 assert(button(holder, "Ouvrir Steam DirectX 12"));
@@ -309,7 +317,7 @@ assert(
 delete state.windowsRuntime.d3dMetal;
 api.updateD3DMetalSettings(holder);
 assert(
-  button(holder, "Importer le composant Apple").disabled,
+  !button(holder, "Importer le composant Apple"),
   "No native feature means no fake import",
 );
 state.windowsRuntime.d3dMetal = component;

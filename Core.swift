@@ -180,7 +180,8 @@ struct Runtime {
         if let appURL { return FileManager.default.fileExists(atPath: appURL.path) }
         return platform == "windows" && verifiedIndependentEngine && wineURL.map { FileManager.default.isExecutableFile(atPath: $0.path) } == true && FileManager.default.fileExists(atPath: steamRoot.appendingPathComponent("steam.exe").path)
     }
-    var json: [String: Any] { ["id": id, "name": name, "platform": platform, "available": available, "renderer": renderer, "graphicsValidated": graphicsValidated] }
+    var displayName: String { platform == "mac" ? "Mac natif" : renderer == "d3dmetal" ? "DirectX 12" : "DirectX 11" }
+    var json: [String: Any] { ["id": id, "name": name, "displayName": displayName, "platform": platform, "available": available, "renderer": renderer, "graphicsValidated": graphicsValidated] }
 }
 struct Account {
     let id: String, name: String, source: String, recent: Bool
@@ -192,14 +193,23 @@ struct Game {
     var supportedPlatforms: [String] = []
     var customImageURL = ""
     var customPortraitURL = ""
-    func json(runtimes: [Runtime]) -> [String: Any] {
-        let runtime = runtimes.first { $0.id == runtimeId && $0.available }
+    func json(runtimes: [Runtime], availability: [String: Bool]? = nil) -> [String: Any] {
+        func usable(_ runtime: Runtime) -> Bool { availability?[runtime.id] ?? runtime.available }
+        let runtime = runtimes.first { $0.id == runtimeId && usable($0) }
         let available = runtime != nil
         let routeMatches = runtime.map { SteamGameLaunchProfile.supportsInstallation(appID: appId, runtime: $0) } ?? false
         let launchSupported = store != "steam" || (routeMatches && SteamGameLaunchProfile.blockReason(appID: appId, platform: platform, renderer: runtime?.renderer ?? "", graphicsValidated: runtime?.graphicsValidated ?? false) == nil)
+        let platforms = supportedPlatforms.isEmpty ? (platform == "unknown" ? [] : [platform]) : supportedPlatforms
+        let routes: [[String: Any]] = store == "steam" ? runtimes.filter {
+            usable($0) && platforms.contains($0.platform) && SteamGameLaunchProfile.supportsInstallation(appID: appId, runtime: $0)
+        }.map { candidate in
+            let allowed = !complete
+            let canPlay = SteamGameLaunchProfile.blockReason(appID: appId, platform: candidate.platform, renderer: candidate.renderer, graphicsValidated: candidate.graphicsValidated) == nil
+            return ["runtimeId": candidate.id, "canInstall": allowed, "canInstallAndPlay": allowed && canPlay]
+        } : []
         return ["id": id, "appId": appId, "title": title, "store": store, "installed": installed,
                 "platform": platform, "runtimeId": runtimeId, "runtimeName": runtimeName, "ownership": ownership,
-                "platforms": supportedPlatforms.isEmpty ? (platform == "unknown" ? [] : [platform]) : supportedPlatforms,
+                "platforms": platforms, "installRoutes": routes,
                 "requiredRenderer": store == "steam" ? SteamGameLaunchProfile.requiredRenderer(appID: appId) : "auto",
                 "requiredGraphicsAPI": store == "steam" ? SteamGameLaunchProfile.requiredGraphicsAPI(appID: appId) : "unknown",
                 "imageURL": !customImageURL.isEmpty ? customImageURL : store == "steam" ? "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appId)/header.jpg" : "",
@@ -270,10 +280,11 @@ func steamInstallationPath(apps: URL, directory: String) -> URL? {
     return path
 }
 
-func containsLaunchBinary(_ root: URL, platform: String) -> Bool {
+func containsLaunchBinary(_ root: URL, platform: String, cancelled: () -> Bool = { false }) -> Bool {
     guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey], options: [.skipsHiddenFiles]) else { return false }
     var count = 0
     while let file = walker.nextObject() as? URL {
+        if cancelled() { return false }
         count += 1; if count > 1500 { break }
         if walker.level > 6 { walker.skipDescendants(); continue }
         if platform == "windows", file.pathExtension.lowercased() == "exe",
@@ -329,92 +340,59 @@ final class LibraryModel {
         }
         return runtimes
     }
-    func refresh() {
-        runtimes = discoverRuntimes(); warnings = []; accounts = []; metadata = [:]
-        for runtime in runtimes {
-            let users = TextVDF.read(runtime.steamRoot.appendingPathComponent("config/loginusers.vdf")).object("users")
-            for (id, value) in users where Self.validAccountID(id) {
-                let v = value as? [String: Any] ?? [:]
-                if !accounts.contains(where: { $0.id == id }) {
-                    accounts.append(Account(id: id, name: v.string("PersonaName").isEmpty ? "Compte Steam" : v.string("PersonaName"), source: runtime.name, recent: v.string("MostRecent") == "1" || v.string("AutoLogin") == "1"))
-                }
-            }
-            metadata.merge(SteamAppInfo.load(runtime.steamRoot.appendingPathComponent("appcache/appinfo.vdf"))) { first, _ in first }
+    private var scanGeneration: UInt64 = 0
+    private let auditScanner = LibraryScanner()
+    private var scannedAvailability: [String: Bool] = [:]
+    private(set) var lastScanMetrics = LibraryScanMetrics()
+    func makeScanRequest() -> LibraryScanRequest {
+        scanGeneration &+= 1
+        let store = preferences
+        return LibraryScanRequest(generation: scanGeneration, requestedAccountID: selectedAccountID,
+                                  home: home, runtimes: discoverRuntimes(),
+                                  readSavedSnapshot: { id in
+            guard Self.validAccountID(id) else { return nil }
+            return store.data(forKey: "steamLibrarySnapshot." + id)
+        })
+    }
+    @discardableResult func applyScan(_ snapshot: LibraryScanSnapshot) -> Bool {
+        guard snapshot.generation == scanGeneration, snapshot.requestedAccountID == selectedAccountID else { return false }
+        runtimes = snapshot.runtimes; accounts = snapshot.accounts; metadata = snapshot.metadata
+        selectedAccountID = snapshot.selectedAccountID; scannedAvailability = snapshot.runtimeAvailability
+        lastScanMetrics = snapshot.metrics
+        if authenticatedGames[selectedAccountID] == nil, let saved = snapshot.savedLibrary, saved.accountID == selectedAccountID {
+            authenticatedGames[selectedAccountID] = saved.games.map { $0 as [String: Any] }
+            authenticatedDates[selectedAccountID] = saved.updatedAt
         }
-        accounts.sort { $0.recent != $1.recent ? $0.recent : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        if !accounts.contains(where: { $0.id == selectedAccountID }) { selectedAccountID = accounts.first?.id ?? "" }
-        if authenticatedGames[selectedAccountID] == nil, Self.validAccountID(selectedAccountID),
-           let data = preferences.data(forKey: "steamLibrarySnapshot." + selectedAccountID), data.count < 8_000_000,
-           let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-           saved["accountId"] as? String == selectedAccountID,
-           let source = saved["source"] as? String, Self.steamLibrarySources.contains(source),
-           let rows = saved["games"] as? [[String: Any]], !rows.isEmpty, rows.count < 20_000,
-           rows.allSatisfy({ ($0["appid"] as? String).map(Self.validAppID) == true }),
-           let date = saved["updatedAt"] as? String, ISO8601DateFormatter().date(from: date) != nil {
-            authenticatedGames[selectedAccountID] = rows
-            authenticatedDates[selectedAccountID] = date
-        }
-        var cachedIDs = Set<String>(); var playedIDs = Set<String>()
-        if let short = accounts.first(where: { $0.id == selectedAccountID })?.shortID {
-            for runtime in runtimes {
-                let config = runtime.steamRoot.appendingPathComponent("userdata/\(short)/config")
-                let local = TextVDF.read(config.appendingPathComponent("localconfig.vdf")).object("UserLocalConfigStore").object("Software").object("Valve").object("Steam").object("apps")
-                for id in local.keys where Self.validAppID(id) && (UInt32(id) ?? 0) > 100 { playedIDs.insert(id) }
-                let cache = config.appendingPathComponent("librarycache")
-                for file in (try? FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)) ?? [] {
-                    let id = file.deletingPathExtension().lastPathComponent
-                    if file.pathExtension == "json", Self.validAppID(id), metadata[id] != nil { cachedIDs.insert(id) }
-                }
-            }
-        }
-        cachedIDs.formUnion(playedIDs)
-        games = []
-        for runtime in runtimes {
-            for root in libraryRoots(runtime) {
-                let apps = root.appendingPathComponent("steamapps")
-                for manifest in ((try? FileManager.default.contentsOfDirectory(at: apps, includingPropertiesForKeys: nil)) ?? []).filter({ $0.lastPathComponent.hasPrefix("appmanifest_") && $0.pathExtension == "acf" }) {
-                    let m = TextVDF.read(manifest).object("AppState"); let id = m.string("appid")
-                    guard Self.validAppID(id), id != "228980" else { continue }
-                    let kind = metadata[id]?.type ?? ""; if ["tool", "dlc", "music", "video", "config"].contains(kind) { continue }
-                    let dir = m.string("installdir"); guard let path = steamInstallationPath(apps: apps, directory: dir) else { continue }
-                    let exists = FileManager.default.fileExists(atPath: path.path)
-                    let flags = UInt32(m.string("StateFlags")) ?? 0
-                    let unfinished: UInt32 = 1 | 2 | 32 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 65536 | 131072 | 262144 | 524288 | 1048576 | 2097152 | 4194304 | 8388608
-                    let complete = flags & 4 == 4 && flags & unfinished == 0 && exists
-                    var g = makeGame(id, ownership: cachedIDs.contains(id) ? "account-cache" : "installed-only")
-                    g.id = "steam:\(id):\(runtime.id)"; g.title = m.string("name").isEmpty ? g.title : m.string("name")
-                    let platformSupported = metadata[id]?.platforms.contains(runtime.platform == "mac" ? "macos" : "windows") == true
-                    g.installed = exists; g.path = path; g.complete = complete && platformSupported && containsLaunchBinary(path, platform: runtime.platform)
-                    g.platform = platformSupported ? runtime.platform : "unknown"; g.runtimeId = runtime.id; g.runtimeName = runtime.name
-                    games.append(g)
-                }
-            }
-        }
-        for id in cachedIDs.sorted() where !games.contains(where: { $0.appId == id && $0.store == "steam" }) {
-            guard let info = metadata[id], !["tool", "dlc", "music", "video", "config"].contains(info.type) else { continue }
-            games.append(makeGame(id, ownership: "account-cache"))
-        }
+        games = snapshot.steamGames + snapshot.epicInstalledGames
+        // Merge only current authenticated state. An auth response arriving while
+        // the worker scans cannot be overwritten by an older copy of the model.
         if let verified = authenticatedGames[selectedAccountID] { mergeVerified(verified) }
-        games.append(contentsOf: epicGames())
-        if let snapshot = epicSnapshot { mergeEpic(snapshot) }
+        if let epicSnapshot { mergeEpic(epicSnapshot) }
         games.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        updateLibraryStatus()
+        warnings = ["Une entrée du cache local peut être un ancien jeu, une démo ou un jeu partagé. Steam contrôle les droits lors de l’installation."]
+        return true
+    }
+    /// Synchronous CLI audit/test entrypoint. UI refresh uses LibraryScanner.scan.
+    func refresh() { _ = applyScan(auditScanner.scanSynchronously(makeScanRequest())) }
+    private func updateLibraryStatus() {
         if let verified = authenticatedGames[selectedAccountID] {
             let live = liveAuthenticatedAccounts.contains(selectedAccountID)
             libraryStatus = live ? "synced" : "snapshot"
             lastSync = authenticatedDates[selectedAccountID] ?? ""
             libraryMessage = live ? "Bibliothèque lue dans votre session Steam officielle (\(verified.count) jeux). Les installations et les performances restent vérifiées séparément." : "Dernière bibliothèque Steam vérifiée : \(verified.count) jeux. Copie locale datée, à synchroniser pour confirmer les droits actuels."
         } else if libraryStatus != "syncing" {
-            libraryStatus = "local"
-            lastSync = ""
+            libraryStatus = "local"; lastSync = ""
             libraryMessage = selectedAccountID.isEmpty ? "Ouvrez Steam et connectez votre compte, puis actualisez." : "Compte repéré dans Steam. Historique local et installations détectés ; la propriété et l’exhaustivité restent à vérifier par connexion Steam."
         }
-        if FileManager.default.fileExists(atPath: "/Applications/Highball.app") { warnings.append("Highball est installé. Aucune bibliothèque Steam Highball n’est reliée à Playmelt.") }
-        warnings.append("Une entrée du cache local peut être un ancien jeu, une démo ou un jeu partagé. Steam contrôle les droits lors de l’installation.")
     }
     func makeGame(_ id: String, ownership: String) -> Game {
+        Self.makeGame(id, ownership: ownership, metadata: metadata, runtimes: runtimes, availability: scannedAvailability.isEmpty ? nil : scannedAvailability)
+    }
+    static func makeGame(_ id: String, ownership: String, metadata: [String: SteamAppInfo], runtimes: [Runtime], availability: [String: Bool]? = nil) -> Game {
         let info = metadata[id]
         let platform = info?.platforms.contains("macos") == true ? "mac" : info?.platforms.contains("windows") == true ? "windows" : "unknown"
-        let runtime = runtimes.first { $0.platform == platform && $0.available && SteamGameLaunchProfile.supportsInstallation(appID: id, runtime: $0) }
+        let runtime = runtimes.first { $0.platform == platform && (availability?[$0.id] ?? $0.available) && SteamGameLaunchProfile.supportsInstallation(appID: id, runtime: $0) }
         var game = Game(id: "steam:\(id)", appId: id, title: info?.name ?? "Steam \(id)", store: "steam", installed: false, platform: platform, runtimeId: runtime?.id ?? "", runtimeName: runtime?.name ?? (platform == "windows" ? "Moteur Windows non configuré" : "Aucune route vérifiée"), ownership: ownership)
         game.supportedPlatforms = ["macos", "windows"].filter { info?.platforms.contains($0) == true }.map { $0 == "macos" ? "mac" : "windows" }
         if let path = info?.portraitAssets.first { game.customPortraitURL = SteamAppInfo.artworkURL(appID: id, path: path) ?? "" }
@@ -422,10 +400,12 @@ final class LibraryModel {
         return game
     }
     func libraryRoots(_ runtime: Runtime) -> [URL] {
-        var result = [runtime.steamRoot]
         let folders = TextVDF.read(runtime.steamRoot.appendingPathComponent("steamapps/libraryfolders.vdf")).object("libraryfolders")
-        for value in folders.values {
-            let path = (value as? [String: Any])?.string("path") ?? (value as? String ?? "")
+        return Self.libraryRoots(runtime, paths: folders.values.map { ($0 as? [String: Any])?.string("path") ?? ($0 as? String ?? "") })
+    }
+    static func libraryRoots(_ runtime: Runtime, paths: [String]) -> [URL] {
+        var result = [runtime.steamRoot]
+        for path in paths {
             let resolved: URL?
             if runtime.platform == "mac", path.hasPrefix("/") { resolved = URL(fileURLWithPath: path) }
             else if runtime.platform == "windows", path.lowercased().hasPrefix("c:\\"), let prefix = runtime.prefixURL {
@@ -436,19 +416,29 @@ final class LibraryModel {
             if let resolved, FileManager.default.fileExists(atPath: resolved.path), !result.contains(resolved) { result.append(resolved) }
         }; return result
     }
+    static func readEpicManifest(_ file: URL) -> Game? {
+        guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size < 2_000_000,
+              let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 2_000_000), data.count < 2_000_000,
+              let m = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let app = m.string("AppName"), namespace = m.string("CatalogNamespace"), item = m.string("CatalogItemId")
+        guard !app.isEmpty, namespace != "ue", !m.string("LaunchExecutable").isEmpty,
+              m.string("InstallLocation").hasPrefix("/") else { return nil }
+        let path = URL(fileURLWithPath: m.string("InstallLocation"))
+        return Game(id: "epic:" + app, appId: app, title: m.string("DisplayName"), store: "epic", installed: true,
+                    platform: "mac", runtimeId: "epic-mac", runtimeName: "Epic Games Launcher", ownership: "installed-only",
+                    path: path, complete: m.value("bIsIncompleteInstall") as? Bool != true,
+                    epicLaunchID: [namespace, item, app].joined(separator: ":"))
+    }
     func epicGames() -> [Game] {
         let root = home.appendingPathComponent("Library/Application Support/Epic/EpicGamesLauncher/Data/Manifests")
-        var result: [Game] = []; var seen = Set<String>()
-        for file in ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []).filter({ $0.pathExtension == "item" }) {
-            guard let data = try? Data(contentsOf: file), data.count < 2_000_000, let m = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
-            let app = m.string("AppName"), namespace = m.string("CatalogNamespace"), item = m.string("CatalogItemId")
-            guard !app.isEmpty, !seen.contains(app), namespace != "ue", !m.string("LaunchExecutable").isEmpty else { continue }
-            seen.insert(app)
-            let path = URL(fileURLWithPath: m.string("InstallLocation")); let exists = FileManager.default.fileExists(atPath: path.path)
-            guard exists else { continue }
-            let launchID = [namespace, item, app].joined(separator: ":")
-            result.append(Game(id: "epic:" + app, appId: app, title: m.string("DisplayName"), store: "epic", installed: true, platform: "mac", runtimeId: "epic-mac", runtimeName: "Epic Games Launcher", ownership: "installed-only", path: path, complete: m.value("bIsIncompleteInstall") as? Bool != true, epicLaunchID: launchID))
-        }; return result
+        var seen = Set<String>()
+        return ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "item" }.compactMap(Self.readEpicManifest).filter {
+                guard let path = $0.path else { return false }
+                return FileManager.default.fileExists(atPath: path.path) && seen.insert($0.appId).inserted
+            }
     }
     func mergeVerified(_ list: [[String: Any]]) {
         let ids = Set(list.compactMap { ($0["appid"] as? String).flatMap { Self.validAppID($0) ? $0 : nil } })
@@ -459,9 +449,10 @@ final class LibraryModel {
             if ids.contains(games[index].appId) { games[index].ownership = "authenticated-library" }
             else if games[index].installed { games[index].ownership = "installed-only" }
         }
+        var present = Set(games.filter { $0.store == "steam" }.map(\.appId))
         for row in list {
             guard let id = row["appid"] as? String, Self.validAppID(id) else { continue }
-            if !games.contains(where: { $0.appId == id && $0.store == "steam" }) {
+            if present.insert(id).inserted {
                 var g = makeGame(id, ownership: "authenticated-library")
                 if let name = row["name"] as? String, !name.isEmpty { g.title = String(name.prefix(200)) }; games.append(g)
             }
@@ -489,7 +480,8 @@ final class LibraryModel {
             preferences.set(data, forKey: "steamLibrarySnapshot." + accountID)
         }
         libraryMessage = "Bibliothèque lue dans votre session Steam officielle (\(list.count) jeux). Les installations et les performances restent vérifiées séparément."
-        refresh(); return true
+        mergeVerified(sanitized); games.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        return true
     }
     func mergeEpic(_ snapshot: EpicSnapshot) {
         for row in snapshot.games {
@@ -509,6 +501,7 @@ final class LibraryModel {
     }
     func state() -> [String: Any] {
         let hardware = hardwareState()
+        let availability = Dictionary(uniqueKeysWithValues: runtimes.map { ($0.id, $0.available) })
         let epicCount = games.filter { $0.store == "epic" && $0.installed }.count
         let epicPresent = FileManager.default.fileExists(atPath: "/Applications/Epic Games Launcher.app")
         var epic: [String: Any] = ["status": epicPresent ? "launcher-present" : "unavailable", "message": epicPresent ? "Lanceur officiel présent. \(epicCount) jeux installés détectés. Bibliothèque du compte Epic non synchronisée." : "Epic Games Launcher n’est pas installé.", "installedCount": epicCount]
@@ -520,7 +513,7 @@ final class LibraryModel {
         }
         return ["version": "2.0.0", "accounts": accounts.map { ["id": $0.id, "name": $0.name, "source": $0.source, "selected": $0.id == selectedAccountID] as [String: Any] },
                 "selectedAccountId": selectedAccountID, "libraryStatus": ["status": libraryStatus, "message": libraryMessage, "updatedAt": lastSync],
-                "games": games.map { $0.json(runtimes: runtimes) }, "runtimes": runtimes.map(\.json), "hardware": hardware,
+                "games": games.map { $0.json(runtimes: runtimes, availability: availability) }, "runtimes": runtimes.map(\.json), "hardware": hardware,
                 "warnings": warnings, "epic": epic]
     }
 }

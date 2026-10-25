@@ -18,7 +18,7 @@ Depuis la racine du dépôt, avec le compilateur Swift macOS :
 
 ```sh
 mkdir -p Products.noindex
-swiftc RuntimeSetup.swift D3DMetalStore.swift tests/D3DMetalStoreTests.swift -o Products.noindex/d3dmetal-store-tests
+swiftc OwnedProcess.swift RuntimeSetup.swift D3DMetalStore.swift tests/D3DMetalStoreTests.swift -o Products.noindex/d3dmetal-store-tests
 Products.noindex/d3dmetal-store-tests
 ```
 
@@ -61,7 +61,7 @@ Le descripteur préparé permet de configurer Steam dans ce préfixe, mais ne qu
 Suite CPU de préparation, avec tous les appels Wine simulés :
 
 ```sh
-swiftc RuntimeSetup.swift D3DMetalStore.swift D3DMetalRuntime.swift tests/D3DMetalRuntimeTests.swift -o Products.noindex/d3dmetal-runtime-tests
+swiftc OwnedProcess.swift RuntimeSetup.swift D3DMetalStore.swift D3DMetalRuntime.swift tests/D3DMetalRuntimeTests.swift -o Products.noindex/d3dmetal-runtime-tests
 Products.noindex/d3dmetal-runtime-tests
 ```
 

@@ -13,9 +13,9 @@ struct SteamInstallObservation {
 /// Only reads the selected game's manifests. A byte counter reaching 100% is
 /// never considered installation completion. This does not write Steam files.
 enum SteamInstallManifest {
-    static func inspect(_ url: URL, appID: String, platform: String, accountID: String) -> SteamInstallObservation {
+    static func inspect(_ url: URL, appID: String, platform: String, accountID: String, cachedState: [String:Any]? = nil) -> SteamInstallObservation {
         guard FileManager.default.fileExists(atPath: url.path) else { return .init(status: "awaiting-steam", message: "Validez l’installation dans Steam.") }
-        let state = TextVDF.read(url).object("AppState")
+        let state = cachedState ?? TextVDF.read(url).object("AppState")
         guard state.string("appid") == appID, let flags = UInt64(state.string("StateFlags")) else { return .init(status: "awaiting-steam", message: "Steam prépare l’installation.") }
         let owner = state.string("LastOwner")
         if !owner.isEmpty, owner != "0", !accountID.isEmpty, owner != accountID {
@@ -58,11 +58,12 @@ enum SteamInstallManifest {
         return observation("awaiting-steam", "Steam attend votre validation ou une place dans la file de téléchargement.")
     }
 
-    static func locations(steamRoot: URL, appID: String, platform: String, prefix: URL?) -> [URL] {
+    static func locations(steamRoot: URL, appID: String, platform: String, prefix: URL?, libraryFolders: [String:Any]? = nil) -> [URL] {
         guard LibraryModel.validAppID(appID) else { return [] }
         var roots = [steamRoot]
-        let folders = TextVDF.read(steamRoot.appendingPathComponent("steamapps/libraryfolders.vdf")).object("libraryfolders")
-        for value in folders.values {
+        let folders = libraryFolders ?? TextVDF.read(steamRoot.appendingPathComponent("steamapps/libraryfolders.vdf")).object("libraryfolders")
+        for key in folders.keys.sorted().prefix(31) {
+            let value = folders[key]
             let path = (value as? [String: Any])?.string("path") ?? ""
             var candidate: URL?
             if platform == "mac", path.hasPrefix("/") { candidate = URL(fileURLWithPath: path) }
@@ -87,12 +88,11 @@ enum SteamInstallManifest {
 }
 
 final class SteamInstallCoordinator {
-    private var timer: DispatchSourceTimer?
+    private var observer: SteamInstallObserver?
     private var token: UUID?
     private var job: [String: Any]?
     private var readySignature: String?
     private var closed = false
-    private let queue = DispatchQueue(label: "com.robtech.playmelt.install-observer", qos: .utility)
     var onChange: (() -> Void)?
     var snapshot: [String: Any]? { job }
     var isActive: Bool { token != nil }
@@ -100,37 +100,20 @@ final class SteamInstallCoordinator {
     func begin(gameID: String, appID: String, title: String, runtime: Runtime, accountID: String,
                timeout: TimeInterval = 12 * 60 * 60, onReady: @escaping (UUID) -> Void) -> UUID? {
         guard !closed, token == nil, LibraryModel.validAppID(appID) else { return nil }
-        let id = UUID(); token = id; readySignature = nil; let started = Date()
+        let id = UUID(); token = id; readySignature = nil
         job = ["id": id.uuidString, "gameId": gameID, "appId": appID, "title": title,
                "status": "requesting", "message": "Ouverture de l’installation Steam…", "bytesDownloaded": 0, "bytesTotal": 0,
                "progress": NSNull(), "cancellable": true, "autoLaunch": true]
-        let source = DispatchSource.makeTimerSource(queue: queue)
-        timer = source
-        source.schedule(deadline: .now() + 2, repeating: 2, leeway: .milliseconds(400))
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            let expired = Date().timeIntervalSince(started) > timeout
-            let users = TextVDF.read(runtime.steamRoot.appendingPathComponent("config/loginusers.vdf")).object("users")
-            let activeAccount = activeSteamAccount(users)
-            let changed = activeAccount != nil && !accountID.isEmpty && activeAccount != accountID
-            var observation = SteamInstallObservation(status: "awaiting-steam", message: "Validez l’installation dans Steam.")
-            if !expired && !changed {
-                let paths = SteamInstallManifest.locations(steamRoot: runtime.steamRoot, appID: appID, platform: runtime.platform, prefix: runtime.prefixURL)
-                if let manifest = SteamInstallManifest.latestManifest(in: paths) {
-                    observation = SteamInstallManifest.inspect(manifest, appID: appID, platform: runtime.platform, accountID: accountID)
-                }
-            }
-            DispatchQueue.main.async {
-                self.receive(observation, id: id, expired: expired, accountChanged: changed, onReady: onReady)
-            }
+        observer = SteamInstallObserver(runtime: runtime, appID: appID, accountID: accountID, timeout: timeout) { [weak self] observation, expired, changed in
+            self?.receive(observation, id: id, expired: expired, accountChanged: changed, onReady: onReady)
         }
-        source.resume(); onChange?(); return id
+        onChange?(); return id
     }
     // Kept separate from scheduling so cancellation and observation races can be
     // verified with fixtures without running Steam or waiting for real downloads.
     func receive(_ observation: SteamInstallObservation, id: UUID, expired: Bool = false, accountChanged: Bool = false,
                  onReady: (UUID) -> Void) {
-        guard token == id, timer != nil else { return }
+        guard token == id, observer != nil else { return }
         if expired { finish(status: "timed-out", message: "Le suivi a atteint sa limite de 12 heures. Steam peut continuer ; aucun lancement automatique ne sera effectué."); return }
         if accountChanged { finish(status: "cancelled", message: "Compte Steam changé : lancement automatique annulé."); return }
         if observation.failed { finish(status: observation.status, message: observation.message); return }
@@ -141,9 +124,17 @@ final class SteamInstallCoordinator {
         job?["progress"] = observation.total > 0 ? min(1.0, Double(observation.downloaded) / Double(observation.total)) as Any : NSNull()
         let readyTwice = observation.ready && readySignature == observation.signature
         readySignature = observation.ready ? observation.signature : nil
-        if readyTwice { stopTimer(); job?["cancellable"] = false }
+        if readyTwice { stopObserver() }
         if changed || readyTwice { onChange?() }
         if readyTwice { onReady(id) }
+    }
+    /// A refreshed library can change the selected account while launch is
+    /// pending. End that exact job, instead of leaving a token with no observer.
+    func confirmLaunchContext(id: UUID, accountChanged: Bool, executionBlocked: Bool) -> Bool {
+        guard token == id, observer == nil else { return false }
+        if accountChanged { finish(status: "cancelled", message: "Compte Steam changé : lancement automatique annulé."); return false }
+        if executionBlocked { finish(status: "cancelled", message: "Lancement automatique suspendu."); return false }
+        return true
     }
     func requestFailed(id: UUID, message: String) { guard token == id else { return }; finish(status: "failed", message: message) }
     func launchFailed(id: UUID, message: String) {
@@ -158,12 +149,12 @@ final class SteamInstallCoordinator {
         finish(status: success ? "launch-requested" : "failed", message: message)
     }
     func cancel(message: String = "Suivi et lancement automatique arrêtés. Le téléchargement reste géré par Steam.") { if token != nil { finish(status: "cancelled", message: message) } }
-    func shutdown() { closed = true; stopTimer(); token = nil }
+    func shutdown() { closed = true; stopObserver(); token = nil }
     private func finish(status: String, message: String) {
-        stopTimer(); token = nil; readySignature = nil
+        stopObserver(); token = nil; readySignature = nil
         job?["status"] = status; job?["message"] = message; job?["cancellable"] = false
         onChange?()
     }
-    private func stopTimer() { timer?.setEventHandler {}; timer?.cancel(); timer = nil }
-    deinit { timer?.cancel() }
+    private func stopObserver() { observer?.stop(); observer = nil }
+    deinit { observer?.stop() }
 }

@@ -44,9 +44,9 @@ final class RuntimeSetup {
     let root: URL
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "fr.playmelt.runtime-setup", qos: .utility)
-    private var running = false, cancelled = false
+    private var running = false, cancelled = false, closing = false
     private var download: RuntimeDownload?
-    private var process: Process?
+    private let runner: OwnedProcessRunning
     private var status = "missing", message = "Le moteur Windows de Playmelt doit être préparé."
     private var bytesDownloaded: Int64 = 0
     private var callback: (([String: Any]) -> Void)?
@@ -55,9 +55,10 @@ final class RuntimeSetup {
     private var prefix: URL { root.appendingPathComponent("prefix", isDirectory: true) }
     private var receipt: URL { root.appendingPathComponent("prefix-ready.json") }
 
-    init(root: URL? = nil) {
+    init(root: URL? = nil, runner: OwnedProcessRunning = OwnedProcessRunner()) {
         self.root = root ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Playmelt/Runtime", isDirectory: true)
+        self.runner = runner
     }
 
     func descriptor() -> PlaymeltRuntimeDescriptor {
@@ -111,7 +112,7 @@ final class RuntimeSetup {
                completion: @escaping (Result<PlaymeltRuntimeDescriptor, Error>) -> Void) {
         let before = descriptor()
         lock.lock()
-        if running { lock.unlock(); DispatchQueue.main.async { completion(.failure(RuntimeSetupError.failed("Une préparation est déjà en cours."))) }; return }
+        if running || closing { lock.unlock(); DispatchQueue.main.async { completion(.failure(RuntimeSetupError.failed("Une préparation est déjà en cours ou l’application se ferme."))) }; return }
         running = true; cancelled = false; callback = progress; bytesDownloaded = 0; operationDescriptor = before
         lock.unlock()
         queue.async {
@@ -123,20 +124,20 @@ final class RuntimeSetup {
                 result = .success(ready); self.update("ready", "Moteur prêt.")
             }
             catch { result = .failure(error); self.update(self.isCancelled ? "cancelled" : "failed", error.localizedDescription) }
-            self.lock.lock(); self.running = false; self.download = nil; self.process = nil; self.operationDescriptor = nil; self.lock.unlock()
+            self.lock.lock(); self.running = false; self.download = nil; self.operationDescriptor = nil; self.lock.unlock()
             self.emit()
             DispatchQueue.main.async { completion(result) }
         }
     }
 
     func cancel() {
-        lock.lock(); cancelled = true; let download = self.download; let process = self.process; lock.unlock()
+        lock.lock(); cancelled = true; let download = self.download; lock.unlock()
         download?.cancel()
-        if let process, process.isRunning { process.terminate() }
     }
     /// Termination coordination: completion runs after the setup job's defer blocks, owned
     /// Wine server cleanup and staging cleanup. The app must wait for this before exiting.
     func shutdown(completion: @escaping () -> Void = {}) {
+        lock.lock(); closing = true; lock.unlock()
         cancel()
         queue.async { DispatchQueue.main.async { completion() } }
     }
@@ -253,10 +254,14 @@ final class RuntimeSetup {
         } catch { initializationError = error }
         // wineboot may exit before wineserver flushes system.reg/user.reg. Validate only
         // after the prefix's server has shut down and released its lock, never before it.
+        var cleanupFailed = false
+        do { _ = try command(descriptor.wineserverURL, ["-k"], environment: descriptor.environment, timeout: 10, honourCancellation: false) } catch { cleanupFailed = true }
+        do { _ = try command(descriptor.wineserverURL, ["-w"], environment: descriptor.environment, timeout: 10, honourCancellation: false) } catch { cleanupFailed = true }
         do {
-            _ = try command(descriptor.wineserverURL, ["-k"], environment: descriptor.environment, timeout: 10, honourCancellation: false)
-            _ = try command(descriptor.wineserverURL, ["-w"], environment: descriptor.environment, timeout: 10, honourCancellation: false)
-        } catch {
+            let remaining = try command(URL(fileURLWithPath: "/bin/ps"), ["-axo", "pid=,comm="], timeout: 5, honourCancellation: false)
+            if remaining.split(separator: "\n").contains(where: { $0.contains(engineRoot.path + "/") || $0.contains(prefix.path + "/") }) { cleanupFailed = true }
+        } catch { cleanupFailed = true }
+        if cleanupFailed {
             throw RuntimeSetupError.failed("L’arrêt des processus de préparation n’a pas été confirmé. Le moteur n’est pas marqué prêt; contrôler les processus de cet environnement avant de reprendre.")
         }
         if let initializationError { throw initializationError }
@@ -292,7 +297,7 @@ final class RuntimeSetup {
     /// and is released on close/process exit, so neither PID files nor age guesses are used.
     static func acquireSetupLock(_ root: URL) throws -> Int32 {
         let path = root.appendingPathComponent(".setup.lock").path
-        let fd = Darwin.open(path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, mode_t(0o600))
+        let fd = Darwin.open(path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, mode_t(0o600))
         guard fd >= 0 else { throw RuntimeSetupError.failed("Impossible d’ouvrir le verrou de préparation du moteur.") }
         var metadata = stat()
         guard fstat(fd, &metadata) == 0, metadata.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
@@ -395,42 +400,17 @@ final class RuntimeSetup {
     }
     private func command(_ executable: URL, _ arguments: [String], environment: [String: String]? = nil,
                          timeout: TimeInterval, honourCancellation: Bool = true) throws -> String {
-        if honourCancellation { try checkCancellation() }
-        let process = Process(), output = Pipe()
-        process.executableURL = executable; process.arguments = arguments
-        process.environment = environment ?? ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL": "C"]
-        process.standardInput = FileHandle.nullDevice; process.standardOutput = output; process.standardError = FileHandle.nullDevice
-        let done = DispatchSemaphore(value: 0), readLock = NSLock()
-        var data = Data(), overflow = false
-        try process.run()
-        lock.lock(); self.process = process; lock.unlock()
-        DispatchQueue.global(qos: .utility).async {
-            while let chunk = try? output.fileHandleForReading.read(upToCount: 65536), !chunk.isEmpty {
-                readLock.lock()
-                if data.count + chunk.count <= 8 * 1024 * 1024 { data.append(chunk) } else { overflow = true }
-                readLock.unlock()
-            }
-            done.signal()
-        }
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning && Date() < deadline && !(honourCancellation && isCancelled) { Thread.sleep(forTimeInterval: 0.05) }
-        let expired = process.isRunning
-        if expired {
-            process.terminate()
-            let grace = Date().addingTimeInterval(2)
-            while process.isRunning && Date() < grace { Thread.sleep(forTimeInterval: 0.05) }
-            if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
-        }
-        process.waitUntilExit()
-        _ = done.wait(timeout: .now() + 2)
-        try? output.fileHandleForReading.close()
-        lock.lock(); self.process = nil; lock.unlock()
-        if honourCancellation { try checkCancellation() }
-        guard !expired, process.terminationStatus == 0 else { throw RuntimeSetupError.failed("La commande \(executable.lastPathComponent) a échoué (code \(process.terminationStatus)). Aucune protection macOS n’a été désactivée.") }
-        readLock.lock(); let result = data; let tooLarge = overflow; readLock.unlock()
-        guard !tooLarge else { throw RuntimeSetupError.failed("La sortie de contrôle dépasse la limite autorisée.") }
-        return String(decoding: result, as: UTF8.self)
+        var request = OwnedProcessRequest(executable: executable, arguments: arguments,
+                                          environment: environment ?? ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL": "C"])
+        request.timeout = timeout; request.outputLimit = 8 * 1024 * 1024
+        request.preserveGroupOnSuccess = arguments == ["wineboot", "-u"]
+        do {
+            let result = try runner.run(request, cancelled: { honourCancellation && self.isCancelled })
+            guard result.exitCode == 0 else { throw RuntimeSetupError.failed("La commande \(executable.lastPathComponent) a échoué (code \(result.exitCode)).") }
+            return String(decoding: result.output, as: UTF8.self)
+        } catch OwnedProcessError.cancelled { throw RuntimeSetupError.cancelled }
     }
+
 }
 
 private final class RuntimeDownload: NSObject, URLSessionDownloadDelegate {

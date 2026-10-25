@@ -49,26 +49,30 @@ final class SteamArtworkHandler: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }
 
-final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate {
+final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
     var window: NSWindow?
     var webView: WKWebView?
     let model: LibraryModel
     let result: (Bool, String) -> Void
-    private var captureInFlight = false
-    private var captureGeneration = UUID()
+    private var lifetime = SteamAuthenticationLifetime()
+    private var sessionStore: WKWebsiteDataStore?
     init(model: LibraryModel, result: @escaping (Bool, String) -> Void) { self.model = model; self.result = result }
     static func allowed(_ url: URL) -> Bool {
         guard url.scheme == "https", url.user == nil, url.password == nil, url.port == nil || url.port == 443, let host = url.host?.lowercased() else { return false }
         return ["steamcommunity.com", "steampowered.com", "steamstatic.com"].contains { host == $0 || host.hasSuffix("." + $0) }
     }
     func open() {
+        guard lifetime.open() else { return }
         if let window { window.makeKeyAndOrderFront(nil); return }
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
+        // Keep only the in-memory session between explicit synchronizations, not
+        // a hidden page executing scripts. Nothing is persisted to disk.
+        if sessionStore == nil { sessionStore = .nonPersistent() }
+        config.websiteDataStore = sessionStore!
         // This web view has no privileged message handler or native bridge.
         let web = WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self; web.uiDelegate = self
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = "Steam officiel — connexion et bibliothèque"; window.isReleasedWhenClosed = false
+        window.title = "Steam officiel — connexion et bibliothèque"; window.isReleasedWhenClosed = false; window.delegate = self
         let container = NSView(); let button = NSButton(title: "Lire la bibliothèque affichée", target: self, action: #selector(readLibrary))
         let note = NSTextField(labelWithString: "steamcommunity.com · session temporaire · aucun mot de passe transmis à Playmelt")
         note.font = .systemFont(ofSize: 11); note.textColor = .secondaryLabelColor
@@ -85,7 +89,7 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url, Self.allowed(url) { webView.load(URLRequest(url: url)) }; return nil
     }
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { captureGeneration = UUID(); captureInFlight = false }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { lifetime.navigate() }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { capture(manual: false) }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { result(false, "Steam n’a pas chargé la bibliothèque. Réessayez dans la fenêtre officielle.") }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { result(false, "Connexion Steam indisponible. Vérifiez le réseau puis réessayez.") }
@@ -94,16 +98,14 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard let webView, let url = webView.url, Self.allowed(url), url.host == "steamcommunity.com", url.path.contains("/games") else {
             if manual { result(false, "Terminez la connexion Steam, puis ouvrez Tous les jeux et cliquez sur Lire la bibliothèque affichée.") }; return
         }
-        guard !captureInFlight else { return }
         guard let scriptURL = Bundle.main.url(forResource: "SteamLibraryReader", withExtension: "js"),
               let script = try? String(contentsOf: scriptURL, encoding: .utf8) else {
             result(false, "Le lecteur de bibliothèque Steam est absent. Réinstallez Playmelt."); return
         }
-        let generation = UUID(); captureGeneration = generation; captureInFlight = true
+        guard let generation = lifetime.beginCapture() else { return }
         let selectedAccount = model.selectedAccountID
         webView.callAsyncJavaScript(script, arguments: ["expectedAccountId": selectedAccount], in: nil, in: .page) { [weak self] evaluation in
-            guard let self, self.captureGeneration == generation else { return }
-            self.captureInFlight = false
+            guard let self, self.lifetime.finishCapture(generation) else { return }
             guard self.model.selectedAccountID == selectedAccount else { return }
             guard case .success(let value) = evaluation, let data = value as? [String: Any],
                   data["status"] as? String == "complete", data["source"] as? String == "steamcommunity-profile-gameslist",
@@ -129,14 +131,27 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate {
                 self.result(false, "Le compte Steam connecté ne correspond pas au compte sélectionné, ou la liste reçue est invalide. Aucun compte n’a été remplacé."); return
             }
             self.result(true, "Bibliothèque Steam synchronisée : \(rows.count) jeux, identité du compte vérifiée.")
-            self.window?.orderOut(nil)
+            self.releasePage()
         }
     }
+    func windowWillClose(_ notification: Notification) { releasePage(closeWindow: false) }
+    func releasePage(closeWindow: Bool = true) {
+        lifetime.releasePage()
+        let page = webView, oldWindow = window
+        webView = nil; window = nil
+        page?.stopLoading(); page?.navigationDelegate = nil; page?.uiDelegate = nil
+        oldWindow?.delegate = nil; oldWindow?.contentView = nil
+        if closeWindow { oldWindow?.close() }
+    }
+    func shutdown() { lifetime.shutdown(); releasePage(); sessionStore = nil }
 }
 
 final class ScriptHandler: NSObject, WKScriptMessageHandler {
     weak var webView: WKWebView?
     let model = LibraryModel()
+    let libraryScanner = LibraryScanner()
+    private var scanID = UUID()
+    private var afterRefresh: [() -> Void] = []
     let epicConnector = EpicConnector()
     let runtimeSetup = RuntimeSetup()
     let d3dMetalStore = D3DMetalStore()
@@ -150,7 +165,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     })
     let installCoordinator = SteamInstallCoordinator()
     let requestGate = SteamRequestGate()
-    var clientLaunchers: [UUID: Process] = [:]
+    let clientLauncher = UserProcessLauncher()
     var authentication: SteamAuthentication?
     var loading = false
     private var closing = false
@@ -168,7 +183,8 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
               webView?.url?.standardizedFileURL == resourceURL.standardizedFileURL,
               let dict = message.body as? [String: Any], let action = dict["action"] as? String else { return }
         print("Playmelt action: \(action)"); fflush(stdout)
-        guard !loading || action == "refresh" else { result(false, "Lecture locale en cours. Réessayez dans un instant."); return }
+        let duringScan: Set<String> = ["refresh", "setRenderProtection", "selectAccount", "cancelWindowsRuntime", "cancelD3DMetalRuntime", "cancelInstallAndPlay"]
+        guard !loading || duringScan.contains(action) else { result(false, "Lecture locale en cours. Réessayez dans un instant."); return }
         guard !RenderProtection.blocks(action, enabled: renderProtectionEnabled) else { result(false, "Rendus en cours : cette action est suspendue."); return }
         switch action {
         case "setRenderProtection":
@@ -177,8 +193,8 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             if enabled {
                 installCoordinator.cancel(message: "Rendus en cours : lancement automatique annulé.")
                 runtimeSetup.cancel(); d3dMetalRuntime.cancel()
-                steamBootstrap.shutdown { [weak self] in self?.notifyRuntime() }
-                d3dMetalSteamBootstrap.shutdown { [weak self] in self?.notifyRuntime() }
+                steamBootstrap.cancel { [weak self] in self?.notifyRuntime() }
+                d3dMetalSteamBootstrap.cancel { [weak self] in self?.notifyRuntime() }
             }
             sendState()
         case "refresh": refresh()
@@ -205,9 +221,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             d3dMetalSteamBootstrap.start()
         case "openD3DMetalSteam":
             guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Steam DirectX 12 est indisponible pendant cette opération."); return }
-            refresh()
-            guard let runtime = model.runtimes.first(where: { $0.id == "playmelt-d3dmetal" && $0.available }) else { result(false, "Préparez DirectX 12 puis installez Steam dans cet environnement."); return }
-            runWindowsClient(runtime, arguments: ["steam://open/games"], onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, message) }
+            openWindowsSteam(runtimeID: "playmelt-d3dmetal")
         case "importD3DMetal": importD3DMetal()
         case "openD3DMetalDownload":
             NSWorkspace.shared.open(URL(string: "https://developer.apple.com/games/game-porting-toolkit/")!)
@@ -216,9 +230,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             steamBootstrap.start()
         case "openWindowsSteam":
             guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Steam Windows est indisponible pendant cette opération."); return }
-            refresh()
-            guard let runtime = model.runtimes.first(where: { $0.id == "playmelt-windows" && $0.available }) else { result(false, "Installez d’abord Steam Windows dans Playmelt."); return }
-            runWindowsClient(runtime, arguments: ["steam://open/games"], onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, ok ? "Ouverture de Steam Windows…" : message) }
+            openWindowsSteam(runtimeID: "playmelt-windows")
         case "cancelInstallAndPlay": installCoordinator.cancel()
         case "installAndPlay":
             guard let id = dict["gameId"] as? String, let game = model.games.first(where: { $0.id == id }) else { result(false, "Jeu introuvable. Actualisez la bibliothèque."); return }
@@ -248,13 +260,26 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         default: result(false, "Action non prise en charge.")
         }
     }
-    func refresh() {
-        guard !closing, !loading else { return }; loading = true
-        // The bounded local scan takes about 150ms on the audited machine.
-        // Keep all model access on the main queue to avoid racing an auth return.
+    func refresh(completion: (() -> Void)? = nil) {
+        guard !closing else { return }; loading = true
+        if let completion { afterRefresh.append(completion) }
+        let id = UUID(); scanID = id
         model.windowsDescriptor = runtimeSetup.descriptor()
         model.d3dMetalDescriptor = try? d3dMetalRuntime.descriptor(base: runtimeSetup.descriptor())
-        model.refresh(); loading = false; sendState()
+        libraryScanner.scan(model.makeScanRequest()) { [weak self] snapshot in
+            guard let self, !self.closing, self.scanID == id else { return }
+            guard self.model.applyScan(snapshot) else { self.refresh(); return }
+            self.loading = false; self.sendState()
+            let callbacks = self.afterRefresh; self.afterRefresh.removeAll()
+            for callback in callbacks { callback() }
+        }
+    }
+    private func openWindowsSteam(runtimeID: String) {
+        refresh { [weak self] in
+            guard let self, !self.closing, !self.renderProtectionEnabled, !self.anyRuntimeOperation else { return }
+            guard let runtime = self.model.runtimes.first(where: { $0.id == runtimeID && $0.available }) else { self.result(false, "Préparez cet environnement puis installez Steam."); return }
+            self.runWindowsClient(runtime, arguments: ["steam://open/games"], onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, message) }
+        }
     }
     var runtimeIsBusy: Bool { ["downloading", "verifying", "extracting", "initializing"].contains(runtimeSetup.snapshot()["status"] as? String ?? "") }
     var renderProtectionEnabled: Bool { RenderProtection.enabled(in: model.preferences) }
@@ -365,13 +390,17 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         guard let id = installCoordinator.begin(gameID: game.id, appID: game.appId, title: game.title, runtime: runtime, accountID: account, onReady: { [weak self] id in
             guard let self, !self.closing else { return }
             guard self.model.selectedAccountID == account else { self.installCoordinator.cancel(); return }
-            self.refresh()
-            guard let installed = self.model.games.first(where: { $0.appId == game.appId && $0.runtimeId == runtime.id && $0.installed && $0.complete }),
-                  let currentRuntime = self.validatedSteamRuntime(installed, installing: false, requestedRuntime: runtime.id) else {
-                self.installCoordinator.didRequestLaunch(id: id, success: false, message: "Installation à vérifier dans Steam."); return
-            }
-            self.dispatchSteam(installed, runtime: currentRuntime, installing: false, onFailure: { [weak self] message in self?.installCoordinator.launchFailed(id: id, message: message) }) { [weak self] ok, message in
-                self?.installCoordinator.didRequestLaunch(id: id, success: ok, message: message)
+            self.refresh { [weak self] in
+                guard let self, !self.closing else { return }
+                guard self.installCoordinator.confirmLaunchContext(id: id, accountChanged: self.model.selectedAccountID != account,
+                                                                  executionBlocked: self.renderProtectionEnabled) else { return }
+                guard let installed = self.model.games.first(where: { $0.appId == game.appId && $0.runtimeId == runtime.id && $0.installed && $0.complete }),
+                      let currentRuntime = self.validatedSteamRuntime(installed, installing: false, requestedRuntime: runtime.id) else {
+                    self.installCoordinator.didRequestLaunch(id: id, success: false, message: "Installation à vérifier dans Steam."); return
+                }
+                self.dispatchSteam(installed, runtime: currentRuntime, installing: false, onFailure: { [weak self] message in self?.installCoordinator.launchFailed(id: id, message: message) }) { [weak self] ok, message in
+                    self?.installCoordinator.didRequestLaunch(id: id, success: ok, message: message)
+                }
             }
         }) else { result(false, "Un suivi d’installation est déjà actif."); return }
         dispatchSteam(game, runtime: runtime, installing: true, onFailure: { [weak self] message in self?.installCoordinator.requestFailed(id: id, message: message) }) { [weak self] ok, message in
@@ -421,15 +450,13 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         guard let descriptor = candidate else { completion(false, "Le moteur DirectX 12 n’est pas préparé."); return }
         guard runtime.verifiedIndependentEngine, descriptor.readyEngine, descriptor.steamInstalled,
               runtime.prefixURL == descriptor.prefixURL, runtime.wineURL == descriptor.wineURL else { completion(false, "Le moteur Windows ou Steam Windows n’est pas prêt."); return }
-        let process = Process(); let id = UUID(); process.executableURL = descriptor.wineURL
-        process.arguments = [descriptor.steamRoot.appendingPathComponent("steam.exe").path] + arguments
-        process.environment = descriptor.environment; process.currentDirectoryURL = descriptor.prefixURL
-        process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
-        process.terminationHandler = { [weak self] child in DispatchQueue.main.async {
-            self?.clientLaunchers[id] = nil
-            if child.terminationStatus != 0 { onFailure("Steam Windows s’est arrêté avec une erreur.") }
-        } }
-        do { try process.run(); clientLaunchers[id] = process; completion(true, "Ouverture de Steam Windows…") }
+        do {
+            _ = try clientLauncher.launch(executable: descriptor.wineURL, arguments: [descriptor.steamRoot.appendingPathComponent("steam.exe").path] + arguments,
+                                          environment: descriptor.environment, directory: descriptor.prefixURL) { code in
+                if code != 0 { onFailure("Steam Windows s’est arrêté avec une erreur.") }
+            }
+            completion(true, "Ouverture de Steam Windows…")
+        }
         catch { completion(false, "Impossible d’ouvrir Steam Windows.") }
     }
     func route(_ game: Game, installing: Bool, requestedRuntime: String?) {
@@ -449,7 +476,9 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         dispatchSteam(game, runtime: runtime, installing: installing, onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, message) }
     }
     func beginShutdown() {
-        closing = true; requestGate.shutdown(); installCoordinator.shutdown(); epicConnector.shutdown()
+        closing = true; requestGate.shutdown(); installCoordinator.shutdown(); clientLauncher.shutdown()
+        authentication?.shutdown(); authentication = nil
+        scanID = UUID(); afterRefresh.removeAll()
     }
 }
 
@@ -486,17 +515,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if shuttingDown { return .terminateLater }; shuttingDown = true
-        guard handler != nil else { return .terminateNow }
-        handler?.beginShutdown()
-        handler?.steamBootstrap.shutdown { [weak self] in
-            self?.handler?.d3dMetalSteamBootstrap.shutdown { [weak self] in
-                self?.handler?.d3dMetalRuntime.shutdown { [weak self] in
-                    self?.handler?.runtimeSetup.shutdown { [weak self] in
-                        self?.handler?.finishRendererImport { NSApp.reply(toApplicationShouldTerminate: true) }
-                    }
-                }
-            }
-        }
+        guard let handler else { return .terminateNow }
+        handler.beginShutdown()
+        let group = DispatchGroup()
+        group.enter(); handler.steamBootstrap.shutdown { group.leave() }
+        group.enter(); handler.d3dMetalSteamBootstrap.shutdown { group.leave() }
+        group.enter(); handler.d3dMetalRuntime.shutdown { group.leave() }
+        group.enter(); handler.runtimeSetup.shutdown { group.leave() }
+        group.enter(); handler.epicConnector.shutdown { group.leave() }
+        group.enter(); handler.finishRendererImport { group.leave() }
+        group.enter(); handler.libraryScanner.shutdown { group.leave() }
+        group.notify(queue: .main) { NSApp.reply(toApplicationShouldTerminate: true) }
         return .terminateLater
     }
 }

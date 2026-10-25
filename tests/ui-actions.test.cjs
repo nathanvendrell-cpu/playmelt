@@ -149,17 +149,13 @@ assert.equal(
   0,
   "An unavailable Windows engine cannot start anything",
 );
-const setup = elements.dialogBody.children.find(
-  (child) => child.text === "Moteur Windows à configurer",
+assert(
+  elements.dialogBody.children.some((n) => n.text === "Indisponible"),
+  "Unavailable route stays explicit",
 );
 assert(
-  setup && setup.disabled,
-  "Unavailable Windows route is visibly disabled",
-);
-assert.equal(
-  setup.handlers.click,
-  undefined,
-  "No pretend configuration or native Steam fallback",
+  !elements.dialogBody.children.some((n) => n.tag === "button"),
+  "No fake configuration button for a missing backend",
 );
 context.state.windowsRuntime = {
   status: "missing",
@@ -183,7 +179,7 @@ assert.equal(
   "Opening the setup sheet must not download or configure anything",
 );
 const configure = elements.dialogBody.children.find(
-  (child) => child.text === "Configurer le moteur",
+  (child) => child.text === "Préparer DirectX 11",
 );
 assert(
   configure && !configure.disabled,
@@ -250,7 +246,7 @@ context.state.windowsRuntime = {
 openGame(windowsGame);
 assert.equal(sent.length, 0, "A ready engine must not auto-install Steam");
 const steam = elements.dialogBody.children.find(
-  (child) => child.text === "Installer Steam Windows",
+  (child) => child.text === "Installer Steam pour DirectX 11",
 );
 assert(steam && !steam.disabled);
 steam.handlers.click();
@@ -437,7 +433,7 @@ context.state.windowsRuntime = {
 };
 openGame(windowsGame);
 assert(
-  elements.dialogBody.children.find((n) => n.text === "Configurer le moteur")
+  elements.dialogBody.children.find((n) => n.text === "Préparer DirectX 11")
     .disabled,
   "Protection disables DXMT configuration",
 );
@@ -448,14 +444,15 @@ context.state.windowsRuntime = {
 };
 openGame(windowsGame);
 assert(
-  elements.dialogBody.children.find((n) => n.text === "Installer Steam Windows")
-    .disabled,
+  elements.dialogBody.children.find(
+    (n) => n.text === "Installer Steam pour DirectX 11",
+  ).disabled,
   "Protection disables Steam bootstrap",
 );
 context.state.windowsRuntime.steamInstalled = true;
 openGame(windowsGame);
 assert(
-  elements.dialogBody.children.find((n) => n.text === "Ouvrir Steam Windows")
+  elements.dialogBody.children.find((n) => n.text === "Ouvrir Steam DirectX 11")
     .disabled,
   "Protection disables Steam launches",
 );

@@ -1289,6 +1289,7 @@
             updateToolbar();
             updateJobIndicator();
             updateD3DMetalSettings();
+            updateWindowsSettings();
             refreshVisibleDialog();
             send("setRenderProtection", { enabled });
           });
@@ -1299,6 +1300,197 @@
           ui.dialogGameId = game.id;
           renderGameDialog(game);
           if (!$("gameDialog").open) $("gameDialog").showModal();
+        }
+        function runtimeDisplayName(runtime) {
+          if (runtime?.displayName) return runtime.displayName;
+          if (runtime?.platform === "mac") return "Mac natif";
+          if (
+            runtime?.renderer === "dxmt" ||
+            runtime?.id === "playmelt-windows"
+          )
+            return "DirectX 11";
+          if (
+            runtime?.renderer === "d3dmetal" ||
+            runtime?.id === "playmelt-d3dmetal"
+          )
+            return "DirectX 12";
+          return runtime?.name || "Moteur inconnu";
+        }
+        function installationRoutes(game) {
+          const supplied = Array.isArray(game.installRoutes)
+            ? game.installRoutes
+            : [
+                {
+                  runtimeId: game.runtimeId,
+                  canInstall: game.canInstall || game.canInstallAndPlay,
+                  canInstallAndPlay: game.canInstallAndPlay,
+                },
+              ];
+          const seen = new Set();
+          return supplied.flatMap((option) => {
+            const runtime = state.runtimes.find(
+              (r) => r.id === option.runtimeId,
+            );
+            if (
+              !runtime ||
+              runtime.available !== true ||
+              option.canInstall !== true ||
+              !platforms(game).includes(runtime.platform) ||
+              seen.has(runtime.id)
+            )
+              return [];
+            const renderer =
+              runtime.renderer ||
+              (runtime.id === "playmelt-windows"
+                ? "dxmt"
+                : runtime.id === "playmelt-d3dmetal"
+                  ? "d3dmetal"
+                  : "unknown");
+            if (
+              runtime.platform === "windows" &&
+              ["dxmt", "d3dmetal"].includes(game.requiredRenderer) &&
+              renderer !== game.requiredRenderer
+            )
+              return [];
+            seen.add(runtime.id);
+            return [
+              {
+                runtime,
+                canInstallAndPlay:
+                  option.canInstallAndPlay === true &&
+                  !(
+                    runtime.platform === "windows" &&
+                    renderer === "d3dmetal" &&
+                    runtime.graphicsValidated !== true
+                  ),
+              },
+            ];
+          });
+        }
+        function windowsRuntimeViewState() {
+          const runtime = state.windowsRuntime;
+          const busy =
+            !!runtime &&
+            (runtime.steamBusy === true ||
+              [
+                "downloading",
+                "verifying",
+                "extracting",
+                "initializing",
+              ].includes(runtime.status));
+          const phase = runtime?.steamBusy
+            ? runtime.steamPhase === "downloading"
+              ? "Téléchargement de Steam…"
+              : "Installation de Steam…"
+            : {
+                downloading: "Téléchargement du moteur…",
+                verifying: "Vérification…",
+                extracting: "Extraction…",
+                initializing: "Préparation…",
+                failed: "Préparation échouée",
+                cancelled: "Préparation annulée",
+              }[runtime?.status];
+          const known =
+            !!runtime &&
+            [
+              "missing",
+              "downloading",
+              "verifying",
+              "extracting",
+              "initializing",
+              "ready",
+              "failed",
+              "cancelled",
+            ].includes(runtime.status);
+          const action = !known
+            ? null
+            : runtime.readyEngine === true
+              ? runtime.steamInstalled === true
+                ? "openWindowsSteam"
+                : "installSteamWindows"
+              : "setupWindowsRuntime";
+          const label = {
+            setupWindowsRuntime: "Préparer DirectX 11",
+            installSteamWindows: "Installer Steam pour DirectX 11",
+            openWindowsSteam: "Ouvrir Steam DirectX 11",
+          }[action];
+          const status = busy
+            ? phase
+            : !runtime
+              ? "Indisponible"
+              : !known
+                ? "État inconnu"
+                : renderProtectionEnabled()
+                  ? "Rendus en cours"
+                  : {
+                      failed: "Installation Steam échouée",
+                      cancelled: "Installation Steam annulée",
+                    }[runtime.steamPhase] ||
+                    phase ||
+                    (runtime.readyEngine
+                      ? runtime.steamInstalled
+                        ? "Steam installé"
+                        : "Environnement préparé"
+                      : "À préparer");
+          return {
+            runtime,
+            busy,
+            action,
+            label,
+            status,
+            signature: JSON.stringify([
+              !!runtime,
+              known,
+              busy,
+              action,
+              status,
+              runtime?.cancellable,
+              runtime?.steamMessage,
+              runtime?.message,
+              renderProtectionEnabled(),
+            ]),
+          };
+        }
+        function createWindowsRuntimeControls() {
+          const view = windowsRuntimeViewState();
+          const box = el("div", "renderer-config renderer-config-row");
+          const labels = el("div", "renderer-labels");
+          labels.append(
+            el("span", "", "DirectX 11"),
+            el("span", "renderer-status", view.status),
+          );
+          labels.title =
+            view.runtime?.steamMessage || view.runtime?.message || "";
+          box.append(labels);
+          if (view.busy) {
+            if (!view.runtime.steamBusy && view.runtime.cancellable) {
+              const cancel = el("button", "button secondary", "Annuler");
+              cancel.addEventListener("click", () => {
+                cancel.disabled = true;
+                send("cancelWindowsRuntime");
+              });
+              box.append(cancel);
+            }
+          } else if (view.action) {
+            const button = el("button", "button primary", view.label);
+            button.disabled = renderProtectionEnabled();
+            button.addEventListener("click", () => {
+              if (button.disabled) return;
+              button.disabled = true;
+              send(view.action);
+            });
+            box.append(button);
+          }
+          return box;
+        }
+        function updateWindowsSettings(
+          target = document.getElementById("windowsRuntimeSettings"),
+        ) {
+          if (!target) return;
+          const signature = windowsRuntimeViewState().signature;
+          if (target.dataset.signature === signature) return;
+          target.replaceChildren(createWindowsRuntimeControls());
+          target.dataset.signature = signature;
         }
         function d3dMetalViewState() {
           const runtime = state.windowsRuntime,
@@ -1350,7 +1542,9 @@
                       : "Environnement préparé"
                     : component?.imported
                       ? "Importé — à préparer"
-                      : "À importer");
+                      : component
+                        ? "À importer"
+                        : "Indisponible");
           return {
             component,
             busy,
@@ -1420,7 +1614,7 @@
               {},
               "button secondary",
             );
-          } else if (component?.imported && !component?.busy) {
+          } else if (component?.imported && !view.busy) {
             if (!component.prepared) {
               command(
                 "Préparer DirectX 12",
@@ -1433,38 +1627,33 @@
                 "installSteamD3DMetal",
                 view.busy,
               );
+            } else if (
+              game?.canInstall === true &&
+              typeof game.runtimeId === "string" &&
+              game.runtimeId
+            ) {
+              command("Installer", "installGame", view.busy, {
+                gameId: game.id,
+                runtimeId: game.runtimeId,
+              });
             } else {
               command(
                 "Ouvrir Steam DirectX 12",
                 "openD3DMetalSteam",
                 view.busy,
               );
-              if (
-                game?.canInstall === true &&
-                typeof game.runtimeId === "string" &&
-                game.runtimeId
-              ) {
-                command("Installer", "installGame", view.busy, {
-                  gameId: game.id,
-                  runtimeId: game.runtimeId,
-                });
-              }
             }
           }
-          command(
-            "Importer le composant Apple",
-            "importD3DMetal",
-            !component || view.busy,
-            {},
-            component?.imported ? "button secondary" : "button primary",
-          );
-          command(
-            "Obtenir auprès d’Apple",
-            "openD3DMetalDownload",
-            !component || view.busy,
-            {},
-            "text-button renderer-download",
-          );
+          if (component && component.imported !== true) {
+            command("Importer le composant Apple", "importD3DMetal", view.busy);
+            command(
+              "Obtenir auprès d’Apple",
+              "openD3DMetalDownload",
+              view.busy,
+              {},
+              "text-button renderer-download",
+            );
+          }
           box.append(labels, actions);
           return box;
         }
@@ -1523,11 +1712,12 @@
             renderInstallJob(body, job, game);
             return;
           }
+          const routes = installationRoutes(game);
           const needsWindowsEngine =
             game.store === "steam" &&
             platforms(game).length === 1 &&
             platforms(game)[0] === "windows" &&
-            ((!game.canLaunch && !game.canInstall && !game.canInstallAndPlay) ||
+            ((!game.canLaunch && !routes.length) ||
               state.windowsRuntime?.steamBusy === true ||
               [
                 "downloading",
@@ -1576,37 +1766,22 @@
                 body.append(cancel);
               }
             } else {
-              const steamMissing =
-                runtime?.readyEngine && !runtime.steamInstalled;
-              const steamReady = runtime?.readyEngine && runtime.steamInstalled;
-              const setup = el(
-                "button",
-                "button primary dialog-action",
-                steamMissing
-                  ? "Installer Steam Windows"
-                  : steamReady
-                    ? "Ouvrir Steam Windows"
-                    : runtime
-                      ? "Configurer le moteur"
-                      : "Moteur Windows à configurer",
-              );
-              setup.disabled =
-                !runtime ||
-                runtime.steamBusy === true ||
-                renderProtectionEnabled();
-              setup.title = runtime?.message || "";
-              if (runtime)
+              const view = windowsRuntimeViewState();
+              if (view.action) {
+                const setup = el(
+                  "button",
+                  "button primary dialog-action",
+                  view.label,
+                );
+                setup.disabled = renderProtectionEnabled();
+                setup.title = runtime?.message || "";
                 setup.addEventListener("click", () => {
+                  if (setup.disabled) return;
                   setup.disabled = true;
-                  send(
-                    steamMissing
-                      ? "installSteamWindows"
-                      : steamReady
-                        ? "openWindowsSteam"
-                        : "setupWindowsRuntime",
-                  );
+                  send(view.action);
                 });
-              body.append(setup);
+                body.append(setup);
+              } else body.append(el("span", "renderer-status", view.status));
             }
           } else if (game.canLaunch) {
             const play = el("button", "button primary dialog-action", "Jouer");
@@ -1616,42 +1791,60 @@
               $("gameDialog").close();
             });
             body.append(play);
-          } else if (game.store === "steam" && !game.installed) {
+          } else if (
+            game.store === "steam" &&
+            (!game.installed || routes.length)
+          ) {
             const supported = platforms(game);
-            const available = state.runtimes.filter(
-              (r) => r.available && supported.includes(r.platform),
-            );
-            if (
-              (game.canInstall || game.canInstallAndPlay) &&
-              available.length
-            ) {
-              const label = el("label", "dialog-label", "Installer avec");
-              label.htmlFor = "runtimeSelect";
-              const select = el("select", "route-select");
-              select.id = "runtimeSelect";
-              available.forEach((r) => select.append(new Option(r.name, r.id)));
-              if (available.some((r) => r.id === previousRuntime))
-                select.value = previousRuntime;
-              else if (available.some((r) => r.id === game.runtimeId))
-                select.value = game.runtimeId;
-              const install = el(
-                "button",
-                "button primary dialog-action",
-                game.canInstallAndPlay ? "Installer et jouer" : "Installer",
-              );
+            if (routes.length) {
+              let selected =
+                routes.find((r) => r.runtime.id === previousRuntime) ||
+                routes.find((r) => r.runtime.id === game.runtimeId) ||
+                routes[0];
+              const select =
+                routes.length > 1 ? el("select", "route-select") : null;
+              if (select) {
+                const label = el("label", "dialog-label", "Moteur");
+                label.htmlFor = "runtimeSelect";
+                select.id = "runtimeSelect";
+                routes.forEach((r) =>
+                  select.append(
+                    new Option(runtimeDisplayName(r.runtime), r.runtime.id),
+                  ),
+                );
+                select.value = selected.runtime.id;
+                body.append(label, select);
+              } else
+                body.append(
+                  el(
+                    "span",
+                    "dialog-label",
+                    runtimeDisplayName(selected.runtime),
+                  ),
+                );
+              const install = el("button", "button primary dialog-action");
+              const updateAction = () => {
+                install.textContent = selected.canInstallAndPlay
+                  ? "Installer et jouer"
+                  : "Installer";
+              };
+              updateAction();
               install.disabled = renderProtectionEnabled();
+              select?.addEventListener("change", () => {
+                selected =
+                  routes.find((r) => r.runtime.id === select.value) || selected;
+                updateAction();
+              });
               install.addEventListener("click", () => {
+                if (install.disabled) return;
                 install.disabled = true;
                 send(
-                  game.canInstallAndPlay ? "installAndPlay" : "installGame",
-                  {
-                    gameId: game.id,
-                    runtimeId: select.value,
-                  },
+                  selected.canInstallAndPlay ? "installAndPlay" : "installGame",
+                  { gameId: game.id, runtimeId: selected.runtime.id },
                 );
-                if (!game.canInstallAndPlay) $("gameDialog").close();
+                if (!selected.canInstallAndPlay) $("gameDialog").close();
               });
-              body.append(label, select, install);
+              body.append(install);
             } else {
               const open = el(
                 "button",
@@ -2093,14 +2286,33 @@
           panel.append(top);
           const runtimes = el("section", "diagnostic-panel");
           runtimes.append(el("h2", "", "Clients & environnements"));
-          for (const runtime of state.runtimes) {
+          for (const runtime of state.runtimes.filter(
+            (r) =>
+              !(
+                r.platform === "windows" &&
+                (["dxmt", "d3dmetal"].includes(r.renderer) ||
+                  ["playmelt-windows", "playmelt-d3dmetal"].includes(r.id))
+              ),
+          )) {
             const row = el("div", "runtime-row");
             row.append(
-              el("span", "", runtime.name),
-              el("span", "", runtime.available ? "Disponible" : "Absent"),
+              el("span", "", runtimeDisplayName(runtime)),
+              el(
+                "span",
+                "",
+                runtime.available === true
+                  ? "Steam installé"
+                  : runtime.available === false
+                    ? "Absent"
+                    : "État inconnu",
+              ),
             );
             runtimes.append(row);
           }
+          const windowsSettings = el("div");
+          windowsSettings.id = "windowsRuntimeSettings";
+          runtimes.append(windowsSettings);
+          updateWindowsSettings(windowsSettings);
           const d3dMetalSettings = el("div");
           d3dMetalSettings.id = "d3dMetalSettings";
           runtimes.append(d3dMetalSettings);
@@ -2180,13 +2392,19 @@
         window.onNativeRuntime = (snapshot) => {
           if (!snapshot || typeof snapshot !== "object") return;
           state.windowsRuntime = snapshot;
-          if (ui.view === "diagnostics") updateD3DMetalSettings();
+          if (ui.view === "diagnostics") {
+            updateD3DMetalSettings();
+            updateWindowsSettings();
+          }
           refreshVisibleDialog();
         };
         window.onNativeInstallJob = (job) => {
           if (job !== null && (!job || typeof job !== "object")) return;
           state.installJob = job;
-          if (ui.view === "diagnostics") updateD3DMetalSettings();
+          if (ui.view === "diagnostics") {
+            updateD3DMetalSettings();
+            updateWindowsSettings();
+          }
           updateJobIndicator();
           refreshVisibleDialog();
         };

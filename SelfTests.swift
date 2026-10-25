@@ -3,6 +3,31 @@ import Foundation
 func runSelfTests() {
     var passed = 0; var failed = 0
     func check(_ label: String, _ test: @autoclosure () -> Bool) { if test() { passed += 1; print("PASS \(label)") } else { failed += 1; print("FAIL \(label)") } }
+    var loginLifetime = SteamAuthenticationLifetime()
+    check("closed sign-in page cannot start capture", loginLifetime.beginCapture() == nil)
+    check("sign-in page opens explicitly", loginLifetime.open())
+    let firstCapture = loginLifetime.beginCapture()!
+    check("duplicate sign-in capture is coalesced", loginLifetime.beginCapture() == nil)
+    loginLifetime.releasePage()
+    check("closing page invalidates pending sign-in result", !loginLifetime.finishCapture(firstCapture) && !loginLifetime.isOpen)
+    check("released sign-in page can be reopened", loginLifetime.open())
+    let beforeNavigation = loginLifetime.beginCapture()!
+    loginLifetime.navigate()
+    check("navigation invalidates previous capture", !loginLifetime.finishCapture(beforeNavigation))
+    let currentCapture = loginLifetime.beginCapture()!
+    check("only current sign-in capture can finish", loginLifetime.finishCapture(currentCapture))
+    check("one capture can finish only once", !loginLifetime.finishCapture(currentCapture))
+    loginLifetime.shutdown()
+    check("app shutdown prevents reopening sign-in page", !loginLifetime.open() && loginLifetime.beginCapture() == nil)
+    var cadence = SteamInstallPollingPolicy()
+    let pause = SteamInstallObservation(status: "paused", message: "Paused")
+    check("paused installation uses slower fallback", cadence.delay(for: pause) == 10)
+    check("unchanged pause backs off to thirty seconds", cadence.delay(for: pause) == 30)
+    let activeDownload = SteamInstallObservation(status: "downloading", message: "Downloading", downloaded: 1, total: 100)
+    check("resumed download returns to responsive cadence", cadence.delay(for: activeDownload) == 2)
+    check("unchanged active manifest avoids two-second parsing", cadence.delay(for: activeDownload) == 5)
+    let completedDownload = SteamInstallObservation(status: "installing", message: "Ready", ready: true, signature: "build:1")
+    check("completion retains a second separated validation", cadence.delay(for: completedDownload) == 2 && cadence.delay(for: completedDownload) == 2)
     let parsed = try? TextVDF.parse("// comment\n\"AppState\" { \"appid\" \"427520\" \"name\" \"A \\\"quoted\\\" game\" \"path\" \"C:\\\\Games\" }")
     check("VDF nested app identifier", parsed?.object("appstate").string("appid") == "427520")
     check("VDF escaped quotes", parsed?.object("AppState").string("name") == "A \"quoted\" game")
@@ -98,6 +123,10 @@ func runSelfTests() {
     check("missing DX12 descriptor cannot fall back to another Steam", !unavailableBootstrap.busy && unavailableBootstrap.snapshot["steamPhase"] as? String == "failed")
     var bootstrapStopped = false
     unavailableBootstrap.shutdown { bootstrapStopped = true }
+    let bootstrapDeadline = Date().addingTimeInterval(2)
+    while !bootstrapStopped && Date() < bootstrapDeadline {
+        _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+    }
     check("unused Steam bootstrap shutdown completes without a process", bootstrapStopped && !unavailableBootstrap.busy)
     check("injected game launch args rejected", ScriptHandler.windowsLaunchArguments(appID: "526870 -exec anything") == nil)
     model.selectedAccountID = "76561198000000000"
@@ -240,6 +269,9 @@ func runSelfTests() {
         observer.receive(ready, id: observedID) { _ in launched += 1 }
         observer.receive(ready, id: observedID) { _ in launched += 1 }
         check("stable completed install hands off exactly once", launched == 1 && observer.isActive)
+        check("ready job remains cancellable during library refresh", observer.snapshot?["cancellable"] as? Bool == true)
+        check("account change during handoff finishes the exact job", !observer.confirmLaunchContext(id: observedID, accountChanged: true, executionBlocked: false) && !observer.isActive && observer.snapshot?["status"] as? String == "cancelled")
+        check("stale handoff cannot resume after context invalidation", !observer.confirmLaunchContext(id: observedID, accountChanged: false, executionBlocked: false))
         observer.cancel()
         observer.didRequestLaunch(id: observedID, success: true, message: "late launch callback")
         check("cancellation cannot resurrect a launch callback", observer.snapshot?["status"] as? String == "cancelled")
@@ -258,6 +290,42 @@ func runSelfTests() {
         observer.launchFailed(id: nextID, message: "Callback after shutdown")
         check("shutdown ignores late client failure", observer.snapshot?["status"] as? String == "launch-requested")
         check("new app session never restores an automatic job", SteamInstallCoordinator().snapshot == nil)
+
+        let cacheFile = temporary.appendingPathComponent("observer-cache.vdf")
+        try Data("\"state\" { \"value\" \"before\" }".utf8).write(to: cacheFile)
+        let readCache = SteamInstallReadCache()
+        _ = readCache.read(cacheFile); _ = readCache.read(cacheFile)
+        check("unchanged install input is parsed once", readCache.reads == 1)
+        try Data("\"state\" { \"value\" \"after\" }".utf8).write(to: cacheFile, options: .atomic)
+        check("atomic manifest replacement invalidates cache", readCache.read(cacheFile).object("state").string("value") == "after" && readCache.reads == 2)
+        try FileManager.default.removeItem(at: cacheFile)
+        check("deleted install input cannot return cached state", readCache.read(cacheFile).isEmpty)
+
+        let watchedRoot = temporary.appendingPathComponent("watched-steam")
+        let watchedApps = watchedRoot.appendingPathComponent("steamapps")
+        try FileManager.default.createDirectory(at: watchedApps, withIntermediateDirectories: true)
+        let watchedManifest = watchedApps.appendingPathComponent("appmanifest_526870.acf")
+        try Data("\"AppState\" { \"appid\" \"526870\" \"StateFlags\" \"512\" }".utf8).write(to: watchedManifest)
+        let watchedRuntime = Runtime(id: "fixture-watcher", name: "Fixture", platform: "windows", steamRoot: watchedRoot, appURL: nil)
+        var observations: [String] = [], monitorStopped = false
+        var monitor: SteamInstallObserver? = SteamInstallObserver(runtime: watchedRuntime, appID: "526870", accountID: "", timeout: 60) { observation, _, _ in
+            check("install observation delivered on main thread", Thread.isMainThread)
+            observations.append(observation.status)
+        }
+        defer { monitor?.stop() }
+        func waitFor(_ condition: () -> Bool, seconds: TimeInterval) {
+            let deadline = Date().addingTimeInterval(seconds)
+            while !condition() && Date() < deadline { _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01)) }
+        }
+        waitFor({ observations.contains("paused") }, seconds: 4)
+        check("real filesystem observer reads paused fixture", observations == ["paused"])
+        try Data("\"AppState\" { \"appid\" \"526870\" \"StateFlags\" \"1024\" \"BytesDownloaded\" \"1\" \"BytesToDownload\" \"100\" }".utf8).write(to: watchedManifest, options: .atomic)
+        waitFor({ observations.contains("downloading") }, seconds: 4)
+        check("directory notification bypasses long paused fallback", observations.last == "downloading")
+        weak let releasedMonitor = monitor
+        monitor?.stop { monitorStopped = true }; monitor = nil
+        waitFor({ monitorStopped && releasedMonitor == nil }, seconds: 2)
+        check("stopped observer releases sources and instance", monitorStopped && releasedMonitor == nil)
     } catch { failed += 1; print("FAIL temporary fixture setup") }
     prefs.removePersistentDomain(forName: preferenceSuite)
     print("\(passed) passed; \(failed) failed")
