@@ -188,6 +188,84 @@ lancé. Les logs et hashes des sources compilées sont conservés localement dan
 deux premiers essais négatifs restent dans le log. Cela ne qualifie ni la mémoire
 virtuelle complète de Windows, ni les exceptions, ni DirectX 12.
 
+## NtQueryVirtualMemory pour les régions connues
+
+Le même module mémoire fournit maintenant `NtQueryVirtualMemory` via `ntdll.dll`,
+avec ses six arguments Windows x64. Seuls le pseudo-handle du processus courant
+et `MemoryBasicInformation` sont acceptés. La réponse de 48 octets décrit les
+pages détenues, depuis la page interrogée vers les pages suivantes ayant les
+mêmes protections, sans franchir leur allocation d'origine. La cible n'est pas
+déréférencée, même lorsqu'elle est NOACCESS.
+
+Les deux sorties éventuelles sont validées ensemble : seules des zones détenues
+RW sont acceptées, leurs chevauchements sont refusés et les paddings sont mis à
+zéro. Un refus préserve les deux sorties et `LastError`. Les codes NTSTATUS et
+leur ordre sont une politique documentée de ce sous-ensemble. Il n'explore ni
+les régions libres, ni les images PE, ni les piles, ni un autre processus. Une
+région mise en quarantaine reste refusée ; aucune permission incertaine n'est
+présentée comme connue.
+
+Les 633 contrôles CPU ASan/UBSan passent, ainsi que les 415 contrôles de
+`VirtualProtect`. Le harnais ci-dessous exécute cinq appels depuis un PE
+synthétique, dont les arguments cinq et six placés sur la pile, puis compare
+les résultats à vingt observations des protections Mach des régions détenues :
+
+```sh
+python3 -B research/windows_native/loader/run_memory_query_probe.py
+```
+
+Les preuves sont conservées dans `work/ntquery-memory-probe.json` et
+`work/ntquery-memory-tests-initial.log`. Aucun jeu, autre exécutable ou composant
+Apple n'est accepté par ce harnais ; toutes ses allocations et processus sont
+nettoyés après exécution.
+
+## Reconstruction bornée d'une frame x64
+
+`x64_unwind.c` calcule une seule frame appelante dans une copie de contexte. Il
+utilise une projection RVA entièrement lisible, un catalogue complet déclaré
+par l'hôte et un instantané de pile borné. Il ne déréférence jamais les adresses
+logiques RIP/RSP. Tous les enregistrements du catalogue sont validés, même ceux
+qui ne contiennent pas le PC ; l'absence d'entrée ne devient une fonction leaf
+que si l'hôte l'autorise explicitement pour du code qu'il connaît.
+
+Le contrat accepte uniquement V1, flags zéro, sans registre de frame, avec
+`PUSH_NONVOL`, `ALLOC_SMALL` et les deux formes de `ALLOC_LARGE`. Il traite le
+prologue partiel, le corps et les suffixes d'épilogue canoniques ADD RSP/POP/RET.
+À la frontière du prologue, il examine d'abord l'épilogue. Un épilogue plausible
+mais non reconnu, un préfixe inhabituel, une métadonnée invalide ou une pile
+tronquée provoque un refus. Les sorties restent inchangées, y compris si l'échec
+survient après la lecture des sauvegardes, lors de la lecture du retour.
+
+Ce module utilise l'ABI de l'hôte : il n'expose pas `RtlVirtualUnwind`, ne produit
+pas un `CONTEXT` Windows complet et ne gère pas SEH. Il reconstruit RSP/RIP et les
+registres généraux non volatils sauvegardés ; les registres volatils sont seulement
+conservés, et SIMD/RFLAGS/TEB restent absents. Aucun signal, gestionnaire, reprise
+du PC reconstruit ou chargement de DLL réelle n'est ajouté. L'hôte doit toujours
+attester du code conforme à l'ABI et d'un PC sur une frontière d'instruction.
+
+Les 863 contrôles inertes ASan/UBSan passent : prologues partiels, corps,
+épilogues, bornes, métadonnées malformées et conservation des sorties après
+échec. La sonde PE distincte capture deux frames réelles dans le corps de
+fonctions synthétiques, sous Rosetta : 64 et 320 octets de pile, allocation
+petite et grande, sauvegardes RBX/R12. L'appelant enregistre son RSP et son
+adresse de retour attendue avant CALL, puis fixe ses sentinelles ; l'oracle
+est donc indépendant du calcul d'unwind. Le résultat reconstruit est seulement
+comparé, jamais exécuté.
+
+```sh
+python3 -B research/windows_native/loader/run_unwind_probe.py
+```
+
+La copie de pile intervient dans le callback : le shadow space de 32 octets
+peut déjà avoir changé, mais les sauvegardes et le retour employés se trouvent
+au-dessus. Ce n'est pas une capture atomique de toute la pile. Les prologues et
+épilogues ont des preuves inertes ; les captures exécutées portent uniquement
+sur le corps. La sonde est instrumentée ASan/UBSan ; seul le trampoline qui
+appelle l'entrée PE générée est exempté du contrôle de métadonnées de type de
+fonction, absentes de ce code machine. Aucun contrôle n'est désactivé globalement.
+Les commandes, hashes et résultats restent dans `work/x64-unwind-tests.log`,
+`work/x64-unwind-probe-final.log` et `work/x64-unwind-source-hashes.json`.
+
 ## Ce qui manque pour Mortal Shell II
 
 Le lecteur voisin `../pe_unwind.py` décode les tables d'exception AMD64 V1
@@ -209,7 +287,7 @@ Le sous-ensemble est volontairement étroit : fichier de 16 Mio maximum, image d
 Seuls les répertoires export, import, relocalisation et IAT sont acceptés. Le
 registre ne charge que des images déjà préparées. L'initialisation opt-in des
 fixtures ne constitue pas un cycle de vie compatible avec des DLL Windows réelles.
-TLS de l'exécutable, gestion des exceptions/unwind, CRT, ressources, DLL
+TLS de l'exécutable, gestion complète des exceptions/unwind Windows, CRT, ressources, DLL
 chargées à la demande, API sets, mémoire virtuelle complète/processus/threads Windows, Win32/NT,
 audio, entrées, Steamworks et D3D12 ne sont pas implémentés. Certains sont refusés
 explicitement dès le chargement. La fixture n'a pas été qualifiée sur Windows.
@@ -231,13 +309,14 @@ distincts ; les empreintes et tables complètes sont conservées localement dans
 `VirtualProtect`, `RaiseException` et `NtQueryVirtualMemory`. Les wrappers
 `GetModuleHandleA/W` et `GetProcAddress` existent pour le registre fermé, et
 `VirtualProtect` pour les seules allocations détenues décrites ci-dessus.
-Le chargement automatique, `RaiseException`, `NtQueryVirtualMemory` et la mémoire
-virtuelle générale Windows restent absents. Les quatre DLL ont un point d'initialisation non nul et un répertoire
+`NtQueryVirtualMemory` interroge ces seules allocations connues. Le chargement
+automatique, `RaiseException` et la mémoire virtuelle générale Windows restent
+absents. Les quatre DLL ont un point d'initialisation non nul et un répertoire
 d'exceptions ; le chargeur actuel les refuse donc volontairement. DXGI dépend aussi
 des fenêtres, écrans, événements, threads, sémaphores et du registre Windows.
 
 La résolution de modules et l'initialisation synthétique ont maintenant des
-preuves CPU distinctes. Il reste notamment les exceptions/unwind, la mémoire virtuelle générale,
+preuves CPU distinctes. Il reste notamment la gestion complète des exceptions/unwind Windows, la mémoire virtuelle générale,
 les synchronisations et le pont graphique réellement utilisés par ces composants. Ces
 imports ne décrivent pas les dépendances propres de Mortal Shell II, dont aucun
 binaire n'est disponible dans ce prototype. Une table d'import ne révèle pas non
@@ -246,8 +325,8 @@ plus toutes les fonctions recherchées dynamiquement ou les exigences du pont h�
 Le décodage statique des mêmes fichiers, aux empreintes inchangées, relève 74
 entrées `RUNTIME_FUNCTION`, toutes en V1 avec flags zéro. Leurs tables déclarent
 54 `ALLOC_SMALL`, 74 `PUSH_NONVOL` et deux `ALLOC_LARGE`, sans gestionnaire ni
-chaîne déclarés. Cela précise les premières opérations à implémenter pour la
-restauration d'un contexte. Cela ne prouve pas l'absence d'exceptions ou de tables
+chaîne déclarés. Ces opérations ont guidé le sous-ensemble de reconstruction
+décrit ci-dessus ; les contextes des DLL Apple n'ont pas été reconstruits. Cela ne prouve pas l'absence d'exceptions ou de tables
 dynamiques. La preuve détaillée est `work/apple-pe-unwind-metadata.json` ; le
 décodeur est couvert par 32 tests de fichiers synthétiques inertes.
 
@@ -263,7 +342,10 @@ décodeur est couvert par 32 tests de fichiers synthétiques inertes.
 - [Microsoft : GetProcAddress](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 - [Microsoft : DllMain](https://learn.microsoft.com/en-us/windows/win32/dlls/dllmain).
 - [Microsoft : exceptions et unwind x64](https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64).
+- [Microsoft : prologues et épilogues x64](https://learn.microsoft.com/en-us/cpp/build/prolog-and-epilog).
 - [Microsoft : VirtualProtect](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect).
 - [Microsoft : constantes de protection](https://learn.microsoft.com/en-us/windows/win32/memory/memory-protection-constants).
+- [Microsoft : NtQueryVirtualMemory](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntqueryvirtualmemory).
+- [Microsoft : MEMORY_BASIC_INFORMATION](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-memory_basic_information).
 - [The Open Group : mprotect, édition consultée](https://pubs.opengroup.org/onlinepubs/7908799/xsh/mprotect.html).
 - [Apple : mprotect](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/mprotect.2.html).

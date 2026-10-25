@@ -13,6 +13,11 @@
  * https://learn.microsoft.com/en-us/windows/win32/memory/memory-protection-constants
  * https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
  * https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--500-999-
+ * https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntqueryvirtualmemory
+ * https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ne-ntifs-_memory_information_class
+ * https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-memory_basic_information
+ * https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess
+ * https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55
  * https://pubs.opengroup.org/onlinepubs/7908799/xsh/mprotect.html
  * https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/mprotect.2.html
  * POSIX permits partial protection changes on some failures: quarantine them.
@@ -223,7 +228,60 @@ fail:
     return 0;
 }
 
-static int kernel_module(const char *dll) {
+static int writable_range(pm_winapi_memory *ctx, uintptr_t at, size_t bytes) {
+    memory_region *region = find_range(ctx, at, bytes);
+    if (!region || region->quarantined) return 0;
+    size_t first = (at - (uintptr_t)region->base) / ctx->page_size;
+    size_t last = (at - (uintptr_t)region->base + bytes - 1) / ctx->page_size;
+    for (size_t i = first; i <= last; ++i)
+        if (region->pages[i] != PM_PAGE_READWRITE) return 0;
+    return 1;
+}
+
+static void little_endian(unsigned char *out, uint64_t value, size_t bytes) {
+    for (size_t i = 0; i < bytes; ++i) out[i] = (unsigned char)(value >> (8 * i));
+}
+
+int32_t PM_WINAPI pm_win_NtQueryVirtualMemory(void *process, void *address,
+    uint32_t information_class, void *information, size_t information_length,
+    void *return_length) {
+    if ((uintptr_t)process != UINTPTR_MAX) return PM_STATUS_INVALID_HANDLE;
+    if (information_class != 0) return PM_STATUS_INVALID_INFO_CLASS;
+    if (information_length < PM_MEMORY_BASIC_INFORMATION64_BYTES)
+        return PM_STATUS_INFO_LENGTH_MISMATCH;
+    pm_winapi_memory *ctx = tls_ready() ? pthread_getspecific(memory_key) : NULL;
+    if (!ctx) return PM_STATUS_INVALID_PARAMETER;
+    memory_region *target = find_range(ctx, (uintptr_t)address, 1);
+    if (!target || target->quarantined) return PM_STATUS_INVALID_PARAMETER;
+    uintptr_t out = (uintptr_t)information, length_out = (uintptr_t)return_length;
+    if (!writable_range(ctx, out, PM_MEMORY_BASIC_INFORMATION64_BYTES) ||
+        (return_length && !writable_range(ctx, length_out, 8)))
+        return PM_STATUS_ACCESS_VIOLATION;
+    /* The successful range validation above also proves these sums cannot wrap. */
+    if (return_length && out < length_out + 8 &&
+        length_out < out + PM_MEMORY_BASIC_INFORMATION64_BYTES)
+        return PM_STATUS_INVALID_PARAMETER;
+    size_t first = ((uintptr_t)address - (uintptr_t)target->base) / ctx->page_size;
+    size_t end = first + 1, page_count = target->bytes / ctx->page_size;
+    uint32_t protection = target->pages[first];
+    while (end < page_count && target->pages[end] == protection) ++end;
+    /* Byte serialization avoids alignment assumptions and uninitialized padding. */
+    unsigned char result[PM_MEMORY_BASIC_INFORMATION64_BYTES] = {0};
+    little_endian(result, (uintptr_t)target->base + first * ctx->page_size, 8);
+    little_endian(result + 8, (uintptr_t)target->base, 8);
+    little_endian(result + 16, PM_PAGE_READWRITE, 4);
+    little_endian(result + 24, (end - first) * ctx->page_size, 8);
+    little_endian(result + 32, 0x1000, 4); /* MEM_COMMIT */
+    little_endian(result + 36, protection, 4);
+    little_endian(result + 40, 0x20000, 4); /* MEM_PRIVATE */
+    unsigned char written[8];
+    little_endian(written, sizeof result, sizeof written);
+    memcpy(information, result, sizeof result);
+    if (return_length) memcpy(return_length, written, sizeof written);
+    return PM_STATUS_SUCCESS;
+}
+
+static int named_module(const char *dll, const char *expected) {
     if (!dll) return 0;
     char lower[15];
     size_t i;
@@ -232,7 +290,7 @@ static int kernel_module(const char *dll) {
         lower[i] = (char)(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
         if (!c) break;
     }
-    return i < sizeof lower && (!strcmp(lower, "kernel32.dll") || !strcmp(lower, "kernelbase.dll"));
+    return i < sizeof lower && !strcmp(lower, expected);
 }
 
 int pm_winapi_memory_resolve(void *context, const char *dll, const char *name,
@@ -240,7 +298,13 @@ int pm_winapi_memory_resolve(void *context, const char *dll, const char *name,
     (void)context;
     if (!address) return 0;
     *address = 0;
-    if (by_ordinal || !name || !kernel_module(dll)) return 0;
+    if (by_ordinal || !name) return 0;
+    if (named_module(dll, "ntdll.dll")) {
+        if (strcmp(name, "NtQueryVirtualMemory")) return 0;
+        *address = (uintptr_t)&pm_win_NtQueryVirtualMemory;
+        return 1;
+    }
+    if (!named_module(dll, "kernel32.dll") && !named_module(dll, "kernelbase.dll")) return 0;
     if (!strcmp(name, "VirtualProtect")) { *address = (uintptr_t)&pm_win_VirtualProtect; return 1; }
     return pm_winapi_resolve(NULL, dll, name, ordinal, by_ordinal, address);
 }

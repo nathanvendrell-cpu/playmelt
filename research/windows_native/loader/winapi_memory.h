@@ -23,6 +23,13 @@ enum {
 #define PM_MEMORY_MAX_REGIONS 8u
 #define PM_MEMORY_MAX_REGION_BYTES (1024u * 1024u)
 #define PM_MEMORY_MAX_TOTAL_BYTES (4u * 1024u * 1024u)
+#define PM_MEMORY_BASIC_INFORMATION64_BYTES 48u
+#define PM_STATUS_SUCCESS ((int32_t)0)
+#define PM_STATUS_INVALID_INFO_CLASS ((int32_t)UINT32_C(0xc0000003))
+#define PM_STATUS_INFO_LENGTH_MISMATCH ((int32_t)UINT32_C(0xc0000004))
+#define PM_STATUS_ACCESS_VIOLATION ((int32_t)UINT32_C(0xc0000005))
+#define PM_STATUS_INVALID_HANDLE ((int32_t)UINT32_C(0xc0000008))
+#define PM_STATUS_INVALID_PARAMETER ((int32_t)UINT32_C(0xc000000d))
 
 /* HOST ABI, not VirtualAlloc/VirtualFree. Own small anonymous allocations; no
  * imported/borrowed memory registration exists. Allocation rounds up to host
@@ -79,8 +86,39 @@ int pm_winapi_memory_destroy(pm_winapi_memory **context);
 int32_t PM_WINAPI pm_win_VirtualProtect(void *address, size_t bytes,
     uint32_t new_protection, void *old_protection);
 
-/* HOST ABI opt-in import resolver. Strict named VirtualProtect on kernel32.dll
- * and kernelbase.dll, then delegate the original seven-function base resolver.
+/* Windows x64 ABI, six arguments. Restricted NtQueryVirtualMemory:
+ * - only the current-process pseudo-handle (all pointer bits 1) and information
+ *   class 0 (MemoryBasicInformation); no real handles or other process access;
+ * - target must belong to one nonquarantined owned reservation. Query starts at
+ *   its enclosing HOST page and scans FORWARD through identical page protection,
+ *   stopping at an attribute change or that reservation's end. It never reads
+ *   target bytes, so a known NOACCESS page can be queried;
+ * - writes exactly 48 little-endian bytes of AMD64 MEMORY_BASIC_INFORMATION:
+ *   BaseAddress 0, AllocationBase 8, AllocationProtect 16, PartitionId 20 (zero),
+ *   padding 22 (zero), RegionSize 24, State 32, Protect 36, Type 40, padding 44
+ *   (zero). Owned allocations are MEM_COMMIT/MEM_PRIVATE; original protection RW;
+ * - information_length >=48; larger capacity does not cause additional writes
+ *   or require extra bytes to be mapped. Optional ReturnLength receives uint64 48;
+ * - both actual output ranges (48 / 8 bytes) must be nonquarantined owned RW
+ *   pages. Unaligned outputs and disjoint outputs in one allocation are accepted.
+ *   Output ranges overlapping each other are refused, including partial overlap;
+ * - validate everything before writing either output. Both outputs and LastError
+ *   remain unchanged on ALL errors; success also preserves LastError.
+ * Error precedence/policy: bad process => INVALID_HANDLE; class =>
+ * INVALID_INFO_CLASS; short length => INFO_LENGTH_MISMATCH; no binding, unknown
+ * or quarantined target, overlapping outputs => INVALID_PARAMETER; invalid
+ * output => ACCESS_VIOLATION. This is our restricted policy, not a promise of
+ * Windows error precedence or ReturnLength behavior on failures.
+ * No free-region discovery, PE/image/mapped-file/stack query, kernel access,
+ * Windows 4KiB granularity emulation, memory allocation or exception handling.
+ */
+int32_t PM_WINAPI pm_win_NtQueryVirtualMemory(void *process, void *address,
+    uint32_t information_class, void *information, size_t information_length,
+    void *return_length);
+
+/* HOST ABI opt-in import resolver. Strict named NtQueryVirtualMemory only on
+ * ntdll.dll; VirtualProtect on kernel32.dll and kernelbase.dll, then delegate
+ * the original seven-function base resolver. DLL case is ignored, symbols exact.
  * No dependency on module handles; no VirtualAlloc/Free or fallback stubs. */
 int pm_winapi_memory_resolve(void *context, const char *dll, const char *name,
     uint16_t ordinal, int by_ordinal, uintptr_t *address);
