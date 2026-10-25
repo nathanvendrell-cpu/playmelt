@@ -115,7 +115,7 @@ private final class EpicFlowRunner: OwnedProcessRunning {
 
         let worker = root.appendingPathComponent("worker.py"); try put(Data("# fixture never executed".utf8), at: worker)
         let runner = EpicFlowRunner(); runner.response = response(account: "first-account")
-        let connector = EpicConnector(projectRoot: root, pythonURL: URL(fileURLWithPath: "/usr/bin/true"), workerURL: worker, runner: runner)
+        let connector = EpicConnector(projectRoot: root, pythonURL: URL(fileURLWithPath: "/usr/bin/true"), workerURL: worker, runner: runner, sessionStore: EpicMemorySessionStore())
         var delivered = false, succeeded = false
         connector.authenticate(code: "fixture") { outcome in delivered = true; if case .success = outcome { succeeded = true } }
         // Keep main blocked until credentials were committed, so its callback
@@ -123,7 +123,8 @@ private final class EpicFlowRunner: OwnedProcessRunning {
         let until = Date().addingTimeInterval(3)
         while connector.availability()["authenticated"] as? Bool != true && Date() < until { Thread.sleep(forTimeInterval: 0.001) }
         check(connector.availability()["accountId"] as? String == "first-account", "worker identity known before queued completion")
-        connector.clearSession(); wait { delivered }
+        var cleared = false
+        connector.clearSession { _ in cleared = true }; wait { delivered && cleared }
         check(!succeeded && connector.availability()["authenticated"] as? Bool == false, "queued success cannot restore logged-out account")
         delivered = false
         connector.authenticate(code: "fixture") { outcome in delivered = true; if case .success = outcome { succeeded = true } }

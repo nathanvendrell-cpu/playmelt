@@ -611,6 +611,7 @@ final class LibraryModel {
         epic.merge(epicAvailability) { _, new in new }
         if let snapshot = epicSnapshot {
             let current = epicSnapshotFresh && epicAvailability["authenticated"] as? Bool == true &&
+                epicAvailability["sessionVerified"] as? Bool == true &&
                 epicAvailability["accountId"] as? String == snapshot.accountId
             epic["status"] = current ? "synced" : "snapshot"; epic["displayName"] = snapshot.displayName; epic["updatedAt"] = snapshot.updatedAt
             epic["message"] = current ? "\(snapshot.displayName) · \(snapshot.games.count) jeux dans la bibliothèque Epic." : "Dernière bibliothèque Epic de \(snapshot.displayName) : \(snapshot.games.count) jeux. Nouvelle connexion ou synchronisation à vérifier."

@@ -273,6 +273,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             authentication?.open(); result(true, "Fenêtre Steam officielle ouverte. Connectez-vous pour vérifier la bibliothèque complète.")
         case "openSteam": openSteam()
         case "connectEpic": connectEpic()
+        case "disconnectEpic": disconnectEpic()
         case "syncEpic":
             guard epicConnector.availability()["authenticated"] as? Bool == true else { connectEpic(); return }
             model.epicSnapshotFresh = false
@@ -380,17 +381,53 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         guard let runtime = model.runtimes.first(where: { $0.id == "steam-mac" && $0.available }), let app = runtime.appURL else { result(false, "Steam macOS est introuvable."); return }
         NSWorkspace.shared.openApplication(at: app, configuration: .init()) { [weak self] _, error in DispatchQueue.main.async { self?.result(error == nil, error == nil ? "Steam ouvert. Le compte actif se choisit dans Steam." : "Impossible d’ouvrir Steam.") } }
     }
+    private func disconnectEpic() {
+        guard !closing, !CommandLine.arguments.contains("--audit-read-only"),
+              epicConnector.availability()["busy"] as? Bool != true,
+              let window = webView?.window, window.attachedSheet == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = "Déconnecter Epic Games ?"
+        alert.informativeText = "La connexion mémorisée par Playmelt sur ce Mac sera supprimée, sans copie de sauvegarde. Les jeux et la bibliothèque en cache seront conservés. Une nouvelle connexion sera nécessaire."
+        alert.addButton(withTitle: "Déconnecter"); alert.addButton(withTitle: "Annuler")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, !self.closing, response == .alertFirstButtonReturn else { return }
+            self.model.epicSnapshotFresh = false
+            self.epicConnector.clearSession { [weak self] outcome in
+                guard let self, !self.closing else { return }
+                self.sendState()
+                switch outcome {
+                case .success: self.result(true, "Compte Epic déconnecté.")
+                case .failure(let error): self.result(false, error.localizedDescription)
+                }
+            }
+            self.sendState()
+        }
+    }
     func connectEpic() {
         guard epicConnector.availability()["available"] as? Bool == true else { result(false, "Le connecteur Epic optionnel n’est pas installé."); sendState(); return }
         model.epicSnapshotFresh = false
+        epicConnector.restoreSession { [weak self] restored in
+            guard let self, !self.closing else { return }
+            switch restored {
+            case .success(true): self.epicConnector.sync { [weak self] outcome in self?.receiveEpic(outcome) }
+            case .success(false): self.openEpicSignIn()
+            case .failure(let error):
+                self.sendState(); self.result(false, error.localizedDescription)
+                if case let EpicConnectorError.failed(code, _) = error, code == "cancelled" || code == "busy" { return }
+                self.openEpicSignIn()
+            }
+        }
+    }
+    private func openEpicSignIn() {
+        guard !closing else { return }
         epicConnector.requestLoginURL { [weak self] outcome in
-            guard let self else { return }
+            guard let self, !self.closing else { return }
             switch outcome {
             case .failure(let error): self.result(false, error.localizedDescription)
             case .success(let url):
                 guard NSWorkspace.shared.open(url), let window = self.webView?.window else { self.result(false, "Impossible d’ouvrir la connexion Epic officielle."); return }
                 let alert = NSAlert(); alert.messageText = "Connecter Epic Games"
-                alert.informativeText = "Connectez-vous dans la page Epic officielle, puis collez le code authorizationCode ici. La session reste en mémoire jusqu’à la fermeture de Playmelt."
+                alert.informativeText = "Connectez-vous dans la page Epic officielle, puis collez le code authorizationCode ici. Connexion mémorisée sur ce Mac lorsque le Trousseau est disponible."
                 alert.addButton(withTitle: "Connecter"); alert.addButton(withTitle: "Annuler")
                 let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 430, height: 28)); field.placeholderString = "Code de connexion Epic"
                 alert.accessoryView = field
@@ -409,10 +446,13 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         case .success(let snapshot):
             let availability = epicConnector.availability()
             guard !closing, availability["accountId"] as? String == snapshot.accountId,
-                  availability["authenticated"] as? Bool == true else {
+                  availability["authenticated"] as? Bool == true,
+                  availability["sessionVerified"] as? Bool == true else {
                 model.epicSnapshotFresh = false; sendState(); return
             }
-            model.epicSnapshot = snapshot; model.epicSnapshotFresh = true; refresh(); result(true, "Bibliothèque Epic synchronisée : \(snapshot.games.count) jeux.")
+            model.epicSnapshot = snapshot; model.epicSnapshotFresh = true; refresh()
+            let storageIssue = availability["storageError"] as? String ?? ""
+            result(true, "Bibliothèque Epic synchronisée : \(snapshot.games.count) jeux." + (storageIssue.isEmpty ? "" : " " + storageIssue))
         case .failure(let error): model.epicSnapshotFresh = false; sendState(); result(false, error.localizedDescription)
         }
     }

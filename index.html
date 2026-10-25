@@ -898,6 +898,9 @@
             ><button class="button" id="epicAction" hidden>
               Connecter Epic
             </button>
+            <button class="text-button" id="disconnectEpic" aria-label="Déconnecter Epic" hidden>
+              Déconnecter
+            </button>
           </div>
         </header>
         <div class="filters" id="filters">
@@ -1010,6 +1013,7 @@
           "openEpic",
           "connectEpic",
           "syncEpic",
+          "disconnectEpic",
           "openSteamLogin",
           "openGameFolder",
           "setupWindowsRuntime",
@@ -1234,6 +1238,10 @@
             }[state.libraryStatus.status] || "À synchroniser";
           $("accountStatus").title = state.libraryStatus.message || "";
         }
+        function epicSessionPresent() {
+          return state.epic.authenticated === true ||
+            ["delete-error", "stored", "restored"].includes(state.epic.storageStatus);
+        }
         function updateToolbar() {
           const titles = {
             library: "Bibliothèque",
@@ -1260,6 +1268,8 @@
               ? "Synchroniser Epic"
               : "Connecter Epic";
           $("epicAction").title = state.epic.message || "";
+          $("disconnectEpic").hidden = ui.view !== "epic" || !epicSessionPresent();
+          $("disconnectEpic").disabled = state.epic.busy === true;
           $("filters").hidden = ui.view === "diagnostics";
           $("libraryPane").hidden = ui.view === "diagnostics";
           $("diagnostics").hidden = ui.view !== "diagnostics";
@@ -2496,6 +2506,10 @@
         $("epicAction").addEventListener("click", () =>
           send(state.epic.authenticated ? "syncEpic" : "connectEpic"),
         );
+        $("disconnectEpic").addEventListener("click", () => {
+          if (ui.view === "epic" && epicSessionPresent() && state.epic.busy !== true)
+            send("disconnectEpic");
+        });
         $("steamLogin").addEventListener("click", () => send("openSteamLogin"));
         $("loadMore").addEventListener("click", () => {
           ui.limit += 48;

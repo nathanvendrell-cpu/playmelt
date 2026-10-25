@@ -166,12 +166,14 @@ func runSelfTests() {
     check("installed game cannot install", bad.json(runtimes: [])["canInstall"] as? Bool == false)
     model.games = [Game(id: "epic-owned:one", appId: "one", title: "Owned", store: "epic", installed: false, platform: "mac", runtimeId: "epic-mac", runtimeName: "Epic", ownership: "authenticated-library")]
     model.epicSnapshot = EpicSnapshot(accountId: "fixture", displayName: "Fixture", games: [["appName": "one"]], installed: [], source: "fixture", updatedAt: "2026-10-24T00:00:00Z")
-    model.epicAvailability = ["authenticated": true, "accountId": "fixture"]
+    model.epicAvailability = ["authenticated": true, "accountId": "fixture", "sessionVerified": true]
     check("owned Epic game not counted as installed", (model.state()["epic"] as? [String: Any])?["installedCount"] as? Int == 0)
     check("failed Epic refresh leaves snapshot status", (model.state()["epic"] as? [String: Any])?["status"] as? String == "snapshot")
     model.epicSnapshotFresh = true
     check("fresh authenticated Epic snapshot synced", (model.state()["epic"] as? [String: Any])?["status"] as? String == "synced")
-    model.epicAvailability = ["authenticated": true, "accountId": "another-account"]
+    model.epicAvailability = ["authenticated": true, "accountId": "fixture", "sessionVerified": false]
+    check("restored Epic credentials alone never verify a cached library", (model.state()["epic"] as? [String: Any])?["status"] as? String == "snapshot")
+    model.epicAvailability = ["authenticated": true, "accountId": "another-account", "sessionVerified": true]
     check("Epic snapshot from another account is never current", (model.state()["epic"] as? [String: Any])?["status"] as? String == "snapshot")
     model.epicAvailability = ["authenticated": false]
     check("expired Epic session never synced", (model.state()["epic"] as? [String: Any])?["status"] as? String == "snapshot")

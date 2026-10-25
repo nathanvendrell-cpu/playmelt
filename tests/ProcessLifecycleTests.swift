@@ -185,7 +185,7 @@ private final class NoNetworkProtocol: URLProtocol {
             if input["action"] as? String == "sync"{expect((input["session"] as? [String:Any])?["access_token"] as? String=="fixture-token","Epic session remains memory input")}
             return .init(output:try JSONSerialization.data(withJSONObject:["ok":true,"session":["account_id":"fixture-account","access_token":"fixture-token"],"snapshot":snapshot]),exitCode:0,pid:0,handedOff:false)
         }
-        let epic=EpicConnector(projectRoot:epicRoot,pythonURL:URL(fileURLWithPath:"/usr/bin/true"),workerURL:worker,runner:epicRunner)
+        let epic=EpicConnector(projectRoot:epicRoot,pythonURL:URL(fileURLWithPath:"/usr/bin/true"),workerURL:worker,runner:epicRunner,sessionStore:EpicMemorySessionStore())
         var authenticated=false;epic.authenticate(code:"fixture-code"){if case .success = $0{authenticated=true}};until{authenticated}
         expect(epic.availability()["authenticated"] as? Bool==true,"Epic memory session accepted")
         var synced=false;epic.sync{if case .success = $0{synced=true}};until{synced}
@@ -196,7 +196,7 @@ private final class NoNetworkProtocol: URLProtocol {
         expect(epicRunner.requests().count==count,"Epic closed connector cannot create worker")
         let holding=FixtureProcessRunner()
         holding.handler={_,cancelled,_ in let end=Date().addingTimeInterval(2);while !cancelled() && Date()<end{Thread.sleep(forTimeInterval:0.005)};expect(cancelled(),"Epic pending worker observes cancellation");throw OwnedProcessError.cancelled}
-        let pending=EpicConnector(projectRoot:epicRoot,pythonURL:URL(fileURLWithPath:"/usr/bin/true"),workerURL:worker,runner:holding)
+        let pending=EpicConnector(projectRoot:epicRoot,pythonURL:URL(fileURLWithPath:"/usr/bin/true"),workerURL:worker,runner:holding,sessionStore:EpicMemorySessionStore())
         var requestDone=false,shutdownDone=false
         pending.authenticate(code:"fixture-code"){_ in requestDone=true};until{!holding.requests().isEmpty}
         pending.shutdown{shutdownDone=true};until{shutdownDone}
