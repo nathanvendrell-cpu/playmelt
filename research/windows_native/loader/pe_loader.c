@@ -3,6 +3,7 @@
  * No packed-struct casts: every untrusted integer is bounded and decoded LE.
  */
 #include "pe_loader.h"
+#include "x64_unwind_internal.h"
 
 #include <limits.h>
 #include <pthread.h>
@@ -54,6 +55,20 @@ struct pm_pe_synthetic_dll_control {
     pm_pe_dll_state state;
 };
 
+typedef struct { uint32_t rva, bytes; unsigned kind; } pm_unwind_range;
+struct pm_pe_unwind_control {
+    const pm_pe_image *owner;
+    const void *mapping;
+    size_t mapping_size;
+    uint32_t entrypoint_rva;
+    pthread_t thread;
+    pm_unwind_image view;
+    uint8_t *projection;
+    pm_runtime_function functions[PM_UNWIND_MAX_FUNCTIONS];
+    pm_unwind_range ranges[1+2*PM_UNWIND_MAX_FUNCTIONS];
+    size_t range_count;
+};
+
 typedef struct {
     const uint8_t *bytes;
     size_t size, page_size, mapping_size;
@@ -63,7 +78,8 @@ typedef struct {
     pm_section sections[PM_MAX_SECTIONS];
     uint8_t *mapping, *permissions;
     struct pm_pe_export_catalog *exports;
-    int synthetic_dll;
+    struct pm_pe_unwind_control *unwind;
+    int synthetic_dll, synthetic_unwind;
     char *error;
     size_t error_cap;
 } pm_loader;
@@ -168,11 +184,15 @@ static int parse_headers(pm_loader *p) {
         return fail(p, "unsupported-alignment: invalid section/file alignment");
     p->image_base = u64(opt + 24); p->entry = u32(opt + 16);
     int is_dll = (attributes & 0x2000) != 0;
+    if (p->synthetic_unwind && (is_dll || p->entry==0))
+        return fail(p,"invalid-synthetic-unwind: EXE with nonzero entry required");
     if (p->synthetic_dll) {
         if (!is_dll || p->entry == 0)
             return fail(p, "invalid-synthetic-dll: DLL flag and nonzero initialization entry required");
     } else if (is_dll && p->entry != 0) return fail(p, "unsupported-dll: nonzero DLL initialization entry point");
     p->image_size = u32(opt + 56); p->header_size = u32(opt + 60);
+    if (p->synthetic_unwind && p->image_size>PM_UNWIND_MAX_IMAGE)
+        return fail(p,"unwind-image-limit: maximum 1 MiB");
     if (p->image_size == 0 || p->image_size > PM_MAX_IMAGE || p->image_size % section_align != 0 ||
         p->header_size == 0 || p->header_size > 1024u * 1024u || p->header_size % file_align != 0 ||
         p->header_size > p->image_size || p->header_size > p->size ||
@@ -222,11 +242,13 @@ static int parse_headers(pm_loader *p) {
         uint32_t rva = u32(opt + 112 + i * 8), size = u32(opt + 116 + i * 8);
         if ((rva == 0) != (size == 0)) return fail(p, "invalid-directory: incomplete address/size pair");
         if (rva != 0) {
-            if (unsupported[i] != NULL) return fail(p, unsupported[i]);
+            if (unsupported[i] != NULL && !(i==3 && p->synthetic_unwind)) return fail(p, unsupported[i]);
             if (raw_at(p, rva, size) == NULL) return fail(p, "invalid-directory: metadata is not file-backed in one section");
         }
         p->dirs[i][0] = rva; p->dirs[i][1] = size;
     }
+    if (p->synthetic_unwind && !p->dirs[3][0])
+        return fail(p,"invalid-synthetic-unwind: nonempty directory 3 required");
     if (!is_dll || p->synthetic_dll) {
         const pm_section *entry_section = section_for(p, p->entry, 1);
         if (p->entry == 0 || entry_section == NULL || !(entry_section->flags & PM_SCN_EXECUTE) || raw_at(p, p->entry, 1) == NULL)
@@ -249,6 +271,100 @@ static int parse_headers(pm_loader *p) {
         if (!mark_permissions(p, s->rva, s->extent, protection)) return 0;
     }
     return 1;
+}
+
+static void free_unwind(struct pm_pe_unwind_control *control) {
+    if (control) { free(control->projection); free(control); }
+}
+
+/* kind 1=.pdata, 2=recorded function code, 3=.xdata. Shared .xdata records
+ * are allowed only as an identical range; partial or cross-kind overlap fails. */
+static int add_unwind_range(pm_loader *p,uint32_t rva,uint32_t bytes,unsigned kind) {
+    struct pm_pe_unwind_control *c=p->unwind;
+    const pm_section *s=section_for(p,rva,bytes);
+    unsigned required=kind==2?(PM_SCN_READ|PM_SCN_EXECUTE):PM_SCN_READ;
+    unsigned protection=kind==2?(PROT_READ|PROT_EXEC):PROT_READ;
+    if (!bytes || !s || (s->flags&(PM_SCN_READ|PM_SCN_WRITE|PM_SCN_EXECUTE))!=required || !raw_at(p,rva,bytes))
+        return fail(p,"invalid-unwind-section: immutable file-backed code/metadata required");
+    size_t first=rva/p->page_size,last=((size_t)rva+bytes-1)/p->page_size;
+    for (size_t page=first;page<=last;++page)
+        if (p->permissions[page]!=protection)
+            return fail(p,"invalid-unwind-pages: shared host page is not immutable R/RX");
+    for (size_t i=0;i<c->range_count;++i) {
+        const pm_unwind_range *other=&c->ranges[i];
+        if (rva<(uint64_t)other->rva+other->bytes && other->rva<(uint64_t)rva+bytes) {
+            if (kind==3 && other->kind==3 && rva==other->rva && bytes==other->bytes) return 1;
+            return fail(p,"invalid-unwind-ranges: overlapping protected ranges");
+        }
+    }
+    if (c->range_count>=1+2*PM_UNWIND_MAX_FUNCTIONS) return fail(p,"unwind-range-limit");
+    c->ranges[c->range_count++]=(pm_unwind_range){rva,bytes,kind};
+    return 1;
+}
+
+static int prepare_unwind(pm_loader *p) {
+    if (!p->synthetic_unwind) return 1;
+    uint32_t table=p->dirs[3][0],bytes=p->dirs[3][1];
+    if (table%4 || !bytes || bytes%12 || bytes/12>PM_UNWIND_MAX_FUNCTIONS)
+        return fail(p,"invalid-unwind-table: aligned 12-byte records required");
+    struct pm_pe_unwind_control *c=calloc(1,sizeof *c);
+    if (!c) return fail(p,"allocation-failed: unwind control");
+    p->unwind=c;
+    c->projection=calloc(p->image_size,1);
+    if (!c->projection) return fail(p,"allocation-failed: unwind projection");
+    c->view=(pm_unwind_image){c->projection,p->image_size,p->image_base,c->functions,bytes/12,1,0};
+    if (!add_unwind_range(p,table,bytes,1)) return 0;
+    const uint8_t *raw=raw_at(p,table,bytes);
+    /* A temporary readable RVA projection lets the shared bounded validator
+     * parse records; section/protection validation follows before any mapping. */
+    for (uint32_t i=0;i<p->section_count;++i) {
+        const pm_section *s=&p->sections[i];
+        if (s->raw_size) memcpy(c->projection+s->rva,p->bytes+s->raw_offset,s->raw_size);
+    }
+    for (size_t i=0;i<c->view.function_count;++i) {
+        c->functions[i]=(pm_runtime_function){u32(raw+12*i),u32(raw+12*i+4),u32(raw+12*i+8)};
+    }
+    if (!pm_uw_validate_catalogue(&c->view,0,NULL,NULL,p->error,p->error_cap)) return 0;
+    int entry_covered=0;
+    for (size_t i=0;i<c->view.function_count;++i) {
+        const pm_runtime_function *f=&c->functions[i]; pm_uw_record record;
+        if (!pm_uw_parse_record(&c->view,f,&record,p->error,p->error_cap)) return 0;
+        if (!add_unwind_range(p,f->begin_rva,f->end_rva-f->begin_rva,2) ||
+            !add_unwind_range(p,f->unwind_rva,(uint32_t)record.encoded_size,3)) return 0;
+        if (p->entry>=f->begin_rva && p->entry<f->end_rva) entry_covered=1;
+    }
+    if (!entry_covered) return fail(p,"invalid-unwind-entry: EXE entry is not catalogued");
+    return 1;
+}
+
+static int unwind_write_allowed(pm_loader *p,uint32_t rva,size_t bytes) {
+    if (!p->unwind) return 1;
+    for (size_t i=0;i<p->unwind->range_count;++i) {
+        const pm_unwind_range *r=&p->unwind->ranges[i];
+        if (rva<(uint64_t)r->rva+r->bytes && r->rva<(uint64_t)rva+bytes)
+            return fail(p,"unsupported-unwind-fixup: write overlaps protected code/metadata");
+    }
+    return 1;
+}
+
+static int finalize_unwind(pm_loader *p) {
+    struct pm_pe_unwind_control *c=p->unwind;
+    if (!c) return 1;
+    memset(c->projection,0,c->view.size);
+    for (size_t i=0;i<c->range_count;++i) {
+        const pm_unwind_range *r=&c->ranges[i];
+        const uint8_t *raw=raw_at(p,r->rva,r->bytes);
+        if (!raw || memcmp(raw,p->mapping+r->rva,r->bytes))
+            return fail(p,"unwind-snapshot-mismatch: protected mapped bytes changed");
+        memcpy(c->projection+r->rva,p->mapping+r->rva,r->bytes);
+    }
+    /* Catalogue provenance is the ACTUAL post-fixup mapping, not a parallel
+     * source-maintained table. Protected .pdata was compared above first. */
+    const uint8_t *table=p->mapping+p->dirs[3][0];
+    for (size_t i=0;i<c->view.function_count;++i)
+        c->functions[i]=(pm_runtime_function){u32(table+12*i),u32(table+12*i+4),u32(table+12*i+8)};
+    c->view.address=(uintptr_t)p->mapping;
+    return pm_uw_validate_catalogue(&c->view,0,NULL,NULL,p->error,p->error_cap);
 }
 
 static int export_string(pm_loader *p, const char *text, uint32_t *offset) {
@@ -385,6 +501,7 @@ static int relocate(pm_loader *p) {
             if (target64 > UINT32_MAX || raw_at(p, (uint32_t)target64, 8) == NULL)
                 return fail(p, "invalid-relocations: DIR64 target outside file-backed section");
             uint32_t target = (uint32_t)target64;
+            if (!unwind_write_allowed(p,target,8)) return 0;
             for (uint32_t j = 0; j < applied; ++j)
                 if (target < (uint64_t)targets[j] + 8 && targets[j] < (uint64_t)target + 8)
                     return fail(p, "invalid-relocations: duplicate or overlapping DIR64 target");
@@ -438,6 +555,7 @@ static int bind_imports(pm_loader *p, pm_import_resolver resolver, void *context
             for (uint32_t j = 0; j < slot_count; ++j)
                 if (slots[j] == (uint32_t)iat64) return fail(p, "invalid-imports: duplicate IAT slot");
             slots[slot_count++] = (uint32_t)iat64;
+            if (!unwind_write_allowed(p,(uint32_t)iat64,8)) return 0;
             if (value == 0) { put64(p->mapping + (uint32_t)iat64, 0); break; }
             if (symbol_count >= PM_MAX_IMPORTS) return fail(p, "import-limit: more than 1024 named symbols");
             int by_ordinal = (value & (UINT64_C(1) << 63)) != 0;
@@ -477,15 +595,16 @@ static int protect_image(pm_loader *p) {
 
 static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
                        void *context, pm_pe_image *image, char *error, size_t error_cap,
-                       int synthetic_dll) {
+                       int synthetic_dll,int synthetic_unwind) {
     pm_loader p = {0};
     p.bytes = bytes; p.size = size; p.error = error; p.error_cap = error_cap;
     p.synthetic_dll = synthetic_dll;
+    p.synthetic_unwind = synthetic_unwind;
     if (error != NULL && error_cap) error[0] = '\0';
     if (image == NULL) return fail(&p, "invalid-argument: output image is null");
-    if (image->mapping != NULL || image->mapping_size != 0 || image->entrypoint_rva != 0 || image->exports != NULL || image->synthetic_dll != NULL)
+    if (image->mapping != NULL || image->mapping_size != 0 || image->entrypoint_rva != 0 || image->exports != NULL || image->synthetic_dll != NULL || image->synthetic_unwind != NULL)
         return fail(&p, "invalid-argument: unload the previous image before reuse");
-    int ok = parse_headers(&p) && parse_exports(&p);
+    int ok = parse_headers(&p) && parse_exports(&p) && prepare_unwind(&p);
     struct pm_pe_synthetic_dll_control *control = NULL;
     if (ok && synthetic_dll) {
         control = calloc(1, sizeof *control);
@@ -502,12 +621,13 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
             const pm_section *s = &p.sections[i];
             if (s->raw_size) memcpy(p.mapping + s->rva, bytes + s->raw_offset, s->raw_size);
         }
-        ok = relocate(&p) && bind_imports(&p, resolver, context) && protect_image(&p);
+        ok = relocate(&p) && bind_imports(&p, resolver, context) && finalize_unwind(&p) && protect_image(&p);
     }
     free(p.permissions);
     if (!ok) {
         free(p.exports);
         free(control);
+        free_unwind(p.unwind);
         if (p.mapping != NULL && munmap(p.mapping, p.mapping_size) != 0) {
             image->mapping = p.mapping;
             image->mapping_size = p.mapping_size;
@@ -524,6 +644,11 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
         p.exports->bound_mapping_size = p.mapping_size;
     }
     image->exports = p.exports;
+    if (p.unwind) {
+        p.unwind->owner=image; p.unwind->mapping=p.mapping;
+        p.unwind->mapping_size=p.mapping_size; p.unwind->entrypoint_rva=p.entry;
+        p.unwind->thread=pthread_self(); image->synthetic_unwind=p.unwind;
+    }
     if (control != NULL) {
         control->owner = image; control->mapping = p.mapping;
         control->mapping_size = p.mapping_size; control->entrypoint_rva = p.entry;
@@ -535,12 +660,43 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
 
 int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
                void *context, pm_pe_image *image, char *error, size_t error_cap) {
-    return load_image(bytes, size, resolver, context, image, error, error_cap, 0);
+    return load_image(bytes, size, resolver, context, image, error, error_cap, 0,0);
 }
 
 int pm_pe_load_synthetic_dll(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
                             void *context, pm_pe_image *image, char *error, size_t error_cap) {
-    return load_image(bytes, size, resolver, context, image, error, error_cap, 1);
+    return load_image(bytes, size, resolver, context, image, error, error_cap, 1,0);
+}
+
+int pm_pe_load_synthetic_unwind_exe(const uint8_t *bytes,size_t size,
+    pm_import_resolver resolver,void *context,int complete_catalogue_attested,
+    pm_pe_image *image,char *error,size_t error_cap) {
+    if (complete_catalogue_attested!=1) {
+        pm_loader p={0}; p.error=error; p.error_cap=error_cap;
+        return fail(&p,"unwind-attestation-required: complete catalogue must be explicitly attested");
+    }
+    return load_image(bytes,size,resolver,context,image,error,error_cap,0,1);
+}
+
+static struct pm_pe_unwind_control *unwind_control(const pm_pe_image *image) {
+    if (!image || !image->synthetic_unwind) return NULL;
+    struct pm_pe_unwind_control *c=image->synthetic_unwind;
+    if (c->owner!=image || c->mapping!=image->mapping || c->mapping_size!=image->mapping_size ||
+        c->entrypoint_rva!=image->entrypoint_rva || !image->mapping ||
+        !pthread_equal(c->thread,pthread_self())) return NULL;
+    return c;
+}
+
+int pm_pe_unwind_view(const pm_pe_image *image,struct pm_unwind_image *output,
+    char *error,size_t error_cap) {
+    if (error && error_cap) error[0]=0;
+    struct pm_pe_unwind_control *c=unwind_control(image);
+    if (!c || !output) {
+        pm_loader p={0}; p.error=error; p.error_cap=error_cap;
+        return fail(&p,"unwind-view-unavailable: live original handle and loading thread required");
+    }
+    *output=c->view;
+    return 1;
 }
 
 static struct pm_pe_synthetic_dll_control *dll_control(const pm_pe_image *image) {
@@ -599,6 +755,7 @@ int pm_pe_synthetic_dll_detach(pm_pe_image *image, char *error, size_t error_cap
 
 int pm_pe_unload(pm_pe_image *image) {
     if (image == NULL) return 1;
+    if (image->synthetic_unwind && !unwind_control(image)) return 0;
     if (image->synthetic_dll != NULL) {
         struct pm_pe_synthetic_dll_control *control = dll_control(image);
         if (control == NULL || (control->state != PM_PE_DLL_READY &&
@@ -608,6 +765,7 @@ int pm_pe_unload(pm_pe_image *image) {
     if (image->mapping != NULL && munmap(image->mapping, image->mapping_size) != 0) return 0;
     free(image->exports);
     free(image->synthetic_dll);
+    free_unwind(image->synthetic_unwind);
     *image = (pm_pe_image){0};
     return 1;
 }

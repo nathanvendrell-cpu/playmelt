@@ -17,7 +17,7 @@ def main():
     source = Path(__file__).resolve().parent
     products = source.parents[2] / "Products.noindex"
     products.mkdir(exist_ok=True)
-    dependencies = ("pe_loader.c", "pe_loader.h", "pe_modules.c", "pe_modules.h",
+    dependencies = ("pe_loader.c", "pe_loader.h", "x64_unwind.h", "x64_unwind_internal.h", "pe_modules.c", "pe_modules.h",
                     "winapi_subset.c", "winapi_subset.h", "winapi_modules.c", "winapi_modules.h",
                     "winapi_memory.c", "winapi_memory.h", "winapi_combined.c", "winapi_combined.h",
                     "test_winapi_combined.c", "test_winapi_combined_collisions.c",

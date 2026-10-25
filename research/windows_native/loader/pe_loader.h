@@ -23,12 +23,15 @@ typedef int (*pm_import_resolver)(void *context, const char *dll, const char *na
 
 struct pm_pe_export_catalog;
 struct pm_pe_synthetic_dll_control;
+struct pm_pe_unwind_control;
+struct pm_unwind_image;
 typedef struct pm_pe_image {
     void *mapping;
     size_t mapping_size;
     uint32_t entrypoint_rva;
     struct pm_pe_export_catalog *exports; /* Owned; never copy image ownership. */
     struct pm_pe_synthetic_dll_control *synthetic_dll; /* Explicit fixture-only opt-in. */
+    struct pm_pe_unwind_control *synthetic_unwind; /* Owned research EXE metadata. */
 } pm_pe_image;
 
 typedef enum pm_pe_dll_state {
@@ -81,6 +84,37 @@ int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
  */
 int pm_pe_load_synthetic_dll(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
                             void *context, pm_pe_image *image, char *error, size_t error_cap);
+
+/* Separate research opt-in for OUR embedded AMD64 EXE fixtures only. Requires
+ * complete_catalogue_attested==1 AND nonempty exception directory 3. This explicit
+ * host attestation is not inferred/proved from .pdata. Default pm_pe_load and
+ * synthetic_dll still reject directory 3. No handler, SEH, TLS, DLL, continuation,
+ * OS function-table registration or execution occurs while loading.
+ * Image <=1 MiB, <=4096 sorted/nonoverlapping RUNTIME_FUNCTION records. The SAME
+ * private V1/flags0/three-opcode validator as x64_unwind validates the catalogue.
+ * Code is file-backed RX; metadata is file-backed R, never W/X, including final
+ * HOST page protections. Relocations and IAT writes (including zero terminators)
+ * may not overlap any recorded code or metadata byte. Source stays unchanged.
+ * Projection is copied from the loaded mapping AFTER permitted fixups and then
+ * revalidated. Only recorded code/.pdata/.xdata ranges are populated; other RVAs
+ * are zero, not a representation of arbitrary memory or permission to read it.
+ */
+int pm_pe_load_synthetic_unwind_exe(const uint8_t *bytes, size_t size,
+    pm_import_resolver resolver, void *context, int complete_catalogue_attested,
+    pm_pe_image *image, char *error, size_t error_cap);
+
+/* Borrowed projection+catalogue, valid only until successful unload. Leaf remains
+ * disabled. output unchanged on refusal. Keep the ORIGINAL image object alive,
+ * unmodified at its original address, and use/unload it only on its loading thread.
+ * Copies/stale fields/wrong thread are refused ONLY while the original owner
+ * and its control storage remain alive. Never inspect a copied handle after
+ * owner unload. This is not a C memory-safety boundary or ABA/concurrent-unload
+ * defence. output/error must not overlap each other, image, or owned storage.
+ * Never mutate mapping protections,
+ * code/metadata or borrowed projection. No snapshot is refreshed from guest code.
+ * Caller must not retain/access any borrowed view after unload. */
+int pm_pe_unwind_view(const pm_pe_image *image, struct pm_unwind_image *output,
+    char *error, size_t error_cap);
 
 /* One-shot explicit Microsoft x64 ABI process notifications, on the loading
  * thread only. Attach calls entry(base,1,NULL); FALSE calls entry(base,0,NULL)

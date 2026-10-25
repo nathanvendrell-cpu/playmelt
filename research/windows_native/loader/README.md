@@ -312,6 +312,61 @@ fonction, absentes de ce code machine. Aucun contrôle n'est désactivé globale
 Les commandes, hashes et résultats restent dans `work/x64-unwind-tests.log`,
 `work/x64-unwind-probe-final.log` et `work/x64-unwind-source-hashes.json`.
 
+## Catalogue embarqué dans un PE synthétique
+
+`pm_pe_load_synthetic_unwind_exe` est un chemin de recherche distinct, réservé
+à nos EXE embarqués. Il exige une attestation explicite de catalogue complet et
+un répertoire d'exception non vide. Une table `.pdata` ne prouve pas à elle seule
+cette complétude. Le chargeur par défaut et le chemin DLL synthétique conservent
+leur refus du répertoire d'exception ; aucune DLL réelle n'est admise ici.
+
+Le catalogue vient des enregistrements `RUNTIME_FUNCTION` de l'image. Le même
+validateur privé sert au chargeur et au dérouleur x64, sans nouvelle dépendance
+de liaison pour les anciens utilisateurs du chargeur. Les bornes restent
+étroites : image de 1 Mio, 4 096 entrées triées et sans chevauchement, V1 sans
+flags ni registre de frame, trois opérations supportées. L'entrée de l'EXE doit
+être couverte. Les fonctions leaf sans entrée restent désactivées.
+
+Le code et les métadonnées doivent provenir du fichier et rester respectivement
+RX et R, jusqu'au niveau des pages hôtes. Cela refuse notamment une métadonnée R
+qui partagerait une page inscriptible. Les relocalisations et les écritures IAT,
+y compris leurs zéros terminaux, ne peuvent toucher les plages de code ou de
+métadonnées protégées. Le catalogue, les sections et les permissions sont validés
+avant la création du mapping. Les collisions avec une écriture sont refusées
+avant cette écriture, pendant les étapes de correction du mapping ; une collision
+IAT tardive peut donc survenir après d'autres résolutions. Le nettoyage suit alors
+le chemin d'échec normal.
+
+Après les corrections autorisées, le chargeur copie les plages protégées depuis
+le mapping réel et les revalide. Le reste de la projection est zéro ; cette vue
+ne représente pas toute la mémoire du programme. `pm_pe_unwind_view` fournit une
+vue empruntée liée au handle d'origine, au mapping et au thread de chargement.
+Elle expire lors du déchargement. Un échec de `munmap` conserve les ressources
+du handle vivant pour réessayer ; une vue déjà libérée n'est jamais réutilisable.
+
+Ce raccordement ne déclenche aucun gestionnaire d'exception, n'enregistre aucune
+table auprès d'un OS Windows et ne reprend aucun contexte reconstruit. Il fournit
+au dérouleur borné les métadonnées de notre exécutable synthétique chargé.
+
+```sh
+python3 -B research/windows_native/loader/run_embedded_unwind_probe.py
+```
+
+Ce runner séquentiel passe 1 987 contrôles du chargeur existant, 863 du dérouleur
+et 583 du nouveau chemin, sous ASan/UBSan. Les négatifs comprennent les pages
+hôtes de 16 Kio simulées, les chevauchements partiels de corrections, les zéros
+terminaux IAT, les handlers refusés, les handles copiés encore vivants, les
+threads étrangers et les échecs d'allocation, protection et déchargement.
+
+La sonde trouve trois entrées dans le répertoire d'exception intact du PE et
+reconstruit deux frames réellement capturées, avec les oracles pré-CALL décrits
+plus haut. Elle n'exécute ni contexte reconstruit ni gestionnaire. La petite
+régression DLL existante passe également ses quatre notifications synthétiques,
+dans sa configuration originale non instrumentée, distincte des suites ASan/UBSan.
+Les preuves sont `work/embedded-unwind-proof-attempt1.log` et
+`work/embedded-unwind-source-hashes.json` ; aucun jeu ou composant Apple n'est
+chargé par ce runner.
+
 ## Ce qui manque pour Mortal Shell II
 
 Le lecteur voisin `../pe_unwind.py` décode les tables d'exception AMD64 V1
@@ -330,7 +385,7 @@ ni la restauration d'un contexte, ni la gestion des exceptions Windows.
 
 Le sous-ensemble est volontairement étroit : fichier de 16 Mio maximum, image de
 64 Mio maximum, 32 sections, 1 024 symboles importés, 4 096 relocalisations.
-Seuls les répertoires export, import, relocalisation et IAT sont acceptés. Le
+Par défaut, seuls les répertoires export, import, relocalisation et IAT sont acceptés. Le
 registre ne charge que des images déjà préparées. L'initialisation opt-in des
 fixtures ne constitue pas un cycle de vie compatible avec des DLL Windows réelles.
 TLS de l'exécutable, gestion complète des exceptions/unwind Windows, CRT, ressources, DLL

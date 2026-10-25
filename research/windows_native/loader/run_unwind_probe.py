@@ -16,7 +16,7 @@ def main():
     source = Path(__file__).resolve().parent
     products = source.parents[2] / "Products.noindex"
     products.mkdir(exist_ok=True)
-    dependencies = ("pe_loader.c", "pe_loader.h", "x64_unwind.c", "x64_unwind.h",
+    dependencies = ("pe_loader.c", "pe_loader.h", "x64_unwind.c", "x64_unwind.h", "x64_unwind_internal.h",
                     "unwind_probe.c", "unwind_fixture.py", "run_unwind_probe.py",
                     "run_cpu_probe.py", "module_fixture.py", "probe_fixture.py")
     hashes = {name: hashlib.sha256((source / name).read_bytes()).hexdigest()
