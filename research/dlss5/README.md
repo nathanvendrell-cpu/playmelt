@@ -181,6 +181,82 @@ Pinned NVIDIA source evidence:
 - [Input/output texture allocations](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_resources.cpp#L1587-L1609): `VK_FORMAT_R16G16B16A16_SFLOAT`.
 - [Appearance model control](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_dlss_neural_rendering.h#L62-L76): A/B/C selection. Source hashes are recorded in `upstream-lock.json`; the importer makes no network request.
 
+## Model and reported-parameter preflight
+
+`preflight.py` addresses a concrete false-comparison risk: HT71 and Small31 model
+packages use the **same architecture string**. `prepare` deliberately does not
+open a model package, so a captured Small31 sequence could otherwise be paired
+with a planned HT71 package without detecting the mismatch.
+
+```sh
+python3 -B research/dlss5/preflight.py MODEL_PACKAGE/manifest.json BUNDLE_DIR ../MLX-DLSS
+python3 -B research/dlss5/preflight.py MODEL_PACKAGE/manifest.json BUNDLE_DIR ../MLX-DLSS --run-summaries CAPTURED_SUMMARIES_DIR
+```
+
+This tool reads **JSON declarations only**, plus the pinned source code. It never
+opens, stats, loads or hashes the weight payload, reads a runtime DLL, executes
+`mlxdlss`, or allocates a Metal/MLX device. It does not capture a runtime report;
+the optional summary directory must be supplied separately after a later authorized
+run. It contains one stdout JSON object from upstream `run-sequence` per planned
+reset segment, named `segment-0000.json`, `segment-0001.json`, and so on. Synthetic
+JSON used in tests is not evidence that any neural network ran.
+
+The preflight performs these checks:
+
+- Validates the pinned package's NHWC Float32 input `[1,height,width,16]`, output
+  `[1,height,width,4]`, and stateless head declaration. The temporal wrapper owns
+  history; the head's four channels are not the final RGB output's three channels.
+- Uses the **actual pinned, stdlib-only upstream topology module** on declared
+  tensor names and shapes. It requires every block family to be classified, a
+  complete mirrored stage layout, and a recognized 31-block or 71-block topology
+  matching the capture. It imports that one source file from verified bytes, not
+  the `mlxdlss` package or any inference backend.
+- Rejects the Python module's permissive partial-fixture fallback. The Swift
+  execution path requires complete families; a few matching markers cannot
+  qualify the remainder of an unspecified layout. Even complete families do not
+  validate every weight tensor: `fullTensorInventoryValidated` stays false.
+- Matches the manifest's **declared** weight digest against the capture, and
+  binds the exact package path, planned argv and frame/segment mapping. Matching
+  digest strings does not prove the payload exists or has that digest.
+- If summaries are supplied, checks reported backend, temporal cadence, frame
+  count, RGB and aligned-network shapes, precision, execution mode, pipeline,
+  preprocessor, style, tone, structure, intensity, automatic-mask state and output
+  directory against the plan. Controls compare in Float32, matching the Swift
+  parser. Extra or missing fields are rejected against this pinned output schema.
+
+Each JSON record is read once; its parser and SHA-256 use the same bounded bytes.
+Duplicate keys, NaN/Inf, symlinks, unsafe weight filenames, oversized inventories
+and wrong scalar types are refused. JSON inputs remain bounded to 1 MiB each and
+all run-summary files together to 8 MiB. Fixed shape dimensions distinguish `1`
+from `true` and `1.0`.
+
+The result can report `declarationsConsistent: true` and
+`reportedParametersMatch: true`. These are narrow consistency checks. It always
+leaves `weightBytesVerified`, `runtimeIdentityVerified`,
+`candidateIdentityVerified`, `inferenceExecuted`, `inferenceReady` and
+`vendor_runtime_parity_verified` false. Supplied runtime reports are not authenticated.
+Upstream does not include skin-strength, depth mode, per-frame noise counter or
+model/runtime digests in this summary; they appear in `unreportedParameters` and
+cannot be promoted to verified settings by matching the fields that are present.
+Reported timing is validated only as metadata and is not presented as a benchmark.
+
+This preflight is independent of Wine and the eventual graphics backend. It does
+not add HDR support, AMD/NVIDIA API translation, a GPU-memory allocation policy or
+a usable game feature. Those claims need separate implementation and evidence.
+
+Pinned source evidence, refreshed against GitHub without fetching model data:
+
+- [Package generation](https://github.com/iamwavecut/MLX-DLSS/blob/7870371e8bf6c03967213f1a5d40db6c5a3bee38/python/mlxdlss/tools/package_neural_rendering_transformer.py): common architecture and tensor/digest declarations.
+- [Swift model selection](https://github.com/iamwavecut/MLX-DLSS/blob/7870371e8bf6c03967213f1a5d40db6c5a3bee38/Sources/DLSSMLX/MLXNeuralRenderer.swift#L91-L105) and [strict topology](https://github.com/iamwavecut/MLX-DLSS/blob/7870371e8bf6c03967213f1a5d40db6c5a3bee38/Sources/DLSSMLX/NeuralRenderingTopology.swift#L186-L277): the network is selected by weight shapes, not the architecture label alone.
+- [CPU topology module](https://github.com/iamwavecut/MLX-DLSS/blob/7870371e8bf6c03967213f1a5d40db6c5a3bee38/python/mlxdlss/topology.py#L177-L269): classification, mirrored stages and the partial-fixture fallback that this preflight refuses.
+- [Actual run summary fields](https://github.com/iamwavecut/MLX-DLSS/blob/7870371e8bf6c03967213f1a5d40db6c5a3bee38/Sources/mlxdlss/RunSequenceCommand.swift#L243-L319): which settings can and cannot be compared from stdout.
+
+Eight additional source hashes under `mlx.preflightFiles` pin these checks and
+their dependencies. The existing checkout is read-only and is not copied. Tests
+retain negative cases for a wrong network, incomplete blocks, decoder mismatch,
+source drift, changed argv, false report settings and unsafe metadata. A FIFO
+weight filename fixture demonstrates that the preflight never opens the payload.
+
 ## Commands
 
 From the Playmelt source project, using an existing source checkout:

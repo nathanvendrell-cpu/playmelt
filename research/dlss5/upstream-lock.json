@@ -10,6 +10,16 @@
       "Tools/run_neural_rendering_golden_bundle.py": "d4e78f52d78fc1bbc22818d88c79d28db44ca13f97f45a9692ff3aab2657001b",
       "Tools/compare_f32.py": "7576647fb4eee20ac3b83a17cc00e5f5b2415b88558bbb11fa3b61b31691b23b",
       "Sources/DLSSCore/NeuralRenderingTemporalReferenceBackend.swift": "d8b481534336a9b50ab791441c0e8c603d7cfae263cfdbb8f804e0f93d9b5297"
+    },
+    "preflightFiles": {
+      "python/mlxdlss/topology.py": "ee78b2567fec098492f3a0f1bc0261eafe66d7d77b693fea18819d7c0d39aac2",
+      "Sources/DLSSMLX/NeuralRenderingTopology.swift": "3b31961e60b9991cb4b10cadd3611fac0a57236d45641aa09d42012ffd809d21",
+      "Sources/DLSSMLX/MLXNeuralRenderer.swift": "5c71286505ee314e8d65182b1024c744565505bff7f13472754690a2fb44971b",
+      "Sources/DLSSCore/ModelManifest.swift": "b28e1e3151389a73da6630e674fda2abdc1ff2b3d20ef130c84ca96df934eee6",
+      "Sources/DLSSCore/ModelPackage.swift": "39cb758570aa8bf9b9149bde527ab08ceac8206145454f3036b8bd547032a909",
+      "Sources/DLSSCore/NeuralRenderingNetworkGeometry.swift": "e6c2f048de9652577ce05c6bc1a94116f37e1ab51b3d18713d6c9f7a464a60d5",
+      "Sources/DLSSCore/NeuralRenderingFirstFramePreprocessor.swift": "3e56519359a20e82a53df4b7e9123ff3537e6715a16d36a5c11449785afd8886",
+      "python/mlxdlss/tools/package_neural_rendering_transformer.py": "49184eebd77a8f9087b3483bc1a1f3b30d7b0f4ef7b411cc28c7159bad500925"
     }
   },
   "openDLSSNR": {
@@ -38,7 +48,12 @@
     "scope": "Offline parameter names, current jitter, preset/style distinction and texture formats; not NVIDIA numerical equivalence"
   },
   "knownNetworks": {
-    "310.8.0.0": ["ht71"],
-    "310.9.16.0": ["ht71", "small31"]
+    "310.8.0.0": [
+      "ht71"
+    ],
+    "310.9.16.0": [
+      "ht71",
+      "small31"
+    ]
   }
 }

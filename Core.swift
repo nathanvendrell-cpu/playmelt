@@ -224,8 +224,11 @@ struct Game {
 }
 
 enum SteamGameLaunchProfile {
-    static func requiredRenderer(appID: String) -> String { appID == "2584270" ? "d3dmetal" : appID == "526870" ? "dxmt" : "auto" }
-    static func requiredGraphicsAPI(appID: String) -> String { appID == "2584270" ? "DirectX12" : appID == "526870" ? "DirectX11" : "unknown" }
+    // The open beta has a distinct Steam app ID; it must retain the same DX12
+    // requirement as the retail game instead of falling through to DX11.
+    private static let directX12Games: Set<String> = ["2584270", "4711740"]
+    static func requiredRenderer(appID: String) -> String { directX12Games.contains(appID) ? "d3dmetal" : appID == "526870" ? "dxmt" : "auto" }
+    static func requiredGraphicsAPI(appID: String) -> String { directX12Games.contains(appID) ? "DirectX12" : appID == "526870" ? "DirectX11" : "unknown" }
     static func supportsInstallation(appID: String, runtime: Runtime) -> Bool {
         guard runtime.platform == "windows" else { return true }
         let required = requiredRenderer(appID: appID)

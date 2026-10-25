@@ -107,6 +107,10 @@ func runSelfTests() {
     var metalRoute = dxmtRoute; metalRoute.renderer = "d3dmetal"
     check("Mortal Shell cannot install into DXMT", !SteamGameLaunchProfile.supportsInstallation(appID: "2584270", runtime: dxmtRoute))
     check("Mortal Shell installs only into its DX12 route", SteamGameLaunchProfile.supportsInstallation(appID: "2584270", runtime: metalRoute))
+    check("Mortal Shell II beta is classified as DirectX12", SteamGameLaunchProfile.requiredGraphicsAPI(appID: "4711740") == "DirectX12")
+    check("Mortal Shell II beta cannot install into DXMT", !SteamGameLaunchProfile.supportsInstallation(appID: "4711740", runtime: dxmtRoute))
+    check("Mortal Shell II beta has no DX11 fallback launch", SteamGameLaunchProfile.windowsArguments(appID: "4711740", renderer: "dxmt", graphicsValidated: true) == nil)
+    check("Mortal Shell II beta remains blocked before DX12 qualification", SteamGameLaunchProfile.windowsArguments(appID: "4711740", renderer: "d3dmetal") == nil)
     check("Satisfactory keeps its DX11 route", !SteamGameLaunchProfile.supportsInstallation(appID: "526870", runtime: metalRoute))
     check("prepared DX12 is not qualified to launch", SteamGameLaunchProfile.windowsArguments(appID: "2584270", renderer: "d3dmetal") == nil)
     check("unqualified DX12 also blocks unprofiled games", SteamGameLaunchProfile.windowsArguments(appID: "12345", renderer: "d3dmetal") == nil)
