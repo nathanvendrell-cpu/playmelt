@@ -219,6 +219,52 @@ Les preuves sont conservées dans `work/ntquery-memory-probe.json` et
 Apple n'est accepté par ce harnais ; toutes ses allocations et processus sont
 nettoyés après exécution.
 
+## Résolution commune des fonctions déjà disponibles
+
+`winapi_combined.c` rassemble les sept fonctions de base, les trois fonctions de
+modules et les deux fonctions mémoire existantes. Il n'ajoute aucune API Windows.
+Les requêtes doivent désigner un nom exact, avec ordinal zéro et sans recherche
+par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les onze
+autres fonctions appartiennent à `kernel32.dll` ou `kernelbase.dll`.
+
+Les fournisseurs existants peuvent exposer la même fonction de base. Le
+résolveur commun vérifie que leurs adresses concordent ; des réponses divergentes
+ou incohérentes sont refusées, avec adresse de sortie nulle. Les noms inconnus,
+les chemins et les API sets restent refusés. `GetProcAddress` utilise ce même
+résolveur seulement après inscription explicite des trois tables de services
+hôtes. Ces handles sont des tokens opaques, pas de fausses DLL chargées.
+
+Un PE inscrit garde priorité sur le service hôte : son export manquant ne
+déclenche aucun remplacement. Les contextes de modules et de mémoire restent
+liés séparément au thread. Chaque appelant doit suivre ses bindings réussis,
+libérer seulement ceux qu'il a acquis et préserver tout contexte antérieur.
+Le premier binding réussi d'un contexte de modules scelle ses inscriptions,
+même si un binding mémoire échoue ensuite : ce n'est pas une transaction.
+Résoudre une adresse ne suffit pas à rendre son appel opérationnel sans le
+contexte requis. Les limites de chaque API, notamment la mémoire détenue,
+restent identiques.
+
+Le runner séquentiel ci-dessous vérifie d'abord les refus de collisions avec
+des fournisseurs simulés (109 contrôles), puis le raccordement aux fournisseurs
+réels, la recherche dynamique et les bindings partiels (214 contrôles). Les
+deux suites sont instrumentées ASan/UBSan. Il exécute ensuite notre seul PE
+embarqué : imports de modules statiques, recherche de deux adresses mémoire
+par `GetProcAddress`, vérification exacte de ces adresses avant leur appel,
+deux `VirtualProtect` et deux `NtQueryVirtualMemory` à six arguments.
+
+```sh
+python3 -B research/windows_native/loader/run_combined_probe.py
+```
+
+La sonde compare six observations Mach : la première page passe de RW à RX
+puis RW, la seconde reste RW. Elle vérifie aussi les champs NT, `LastError`,
+les paddings et les canaris des sorties. Aucune de ces pages de données n'est
+exécutée. Seul l'appel à l'entrée PE générée est exempté du contrôle UBSan des
+métadonnées de type de fonction, absentes de cette entrée ; aucune exclusion
+globale. Les douze adresses sont couvertes par les tests de résolution, sans
+prétendre que la sonde a appelé les douze fonctions. Commandes, hashes, résultats
+et nettoyage sont consignés dans `work/winapi-combined-proof.log`.
+
 ## Reconstruction bornée d'une frame x64
 
 `x64_unwind.c` calcule une seule frame appelante dans une copie de contexte. Il
