@@ -141,7 +141,7 @@ final class D3DMetalStore {
             (baseLibraries + ":" + baseFrameworks).split(separator: ":").map { URL(fileURLWithPath: String($0)) }
         var unresolved = Set<String>()
         for image in report["machO"] as? [[String: Any]] ?? [] {
-            guard let path = image["path"] as? String, Self.safeRelative(path) else { continue }
+            guard let path = (image["resolvedPath"] ?? image["path"]) as? String, Self.safeRelative(path) else { continue }
             for name in image["dependencies"] as? [String] ?? [] {
                 if name.hasPrefix("/System/Library/") || name.hasPrefix("/usr/lib/") { continue }
                 let candidates: [URL]
@@ -219,22 +219,40 @@ final class D3DMetalStore {
         guard let (layout, lib) = candidates.first(where: { FileManager.default.fileExists(atPath: $0.1.appendingPathComponent("wine/x86_64-windows/d3d12.dll").path) && FileManager.default.fileExists(atPath: $0.1.appendingPathComponent("external/D3DMetal.framework").path) }) else {
             throw Self.failure("Le dossier ne contient pas les ponts Wine et le framework D3DMetal Apple attendus.")
         }
+        let external = lib.appendingPathComponent("external", isDirectory: true)
+        let resolvedExternal = external.resolvingSymlinksInPath()
         var files: [FileItem] = [], links: [LinkItem] = [], mach: [[String: Any]] = [], total: Int64 = 0
-        func add(_ file: URL, _ relative: String, parseMach: Bool = false, parsePE: Bool = false) throws {
+        func add(_ file: URL, _ relative: String, parseMach: Bool = false, parsePE: Bool = false, dereference: Bool = false) throws {
             let resolved = file.resolvingSymlinksInPath()
             guard resolved.path.hasPrefix(source.path + "/"), !Self.forbiddenPath(resolved), !Self.isDXMTOverlay(resolved.path) else { throw Self.failure("Un fichier de l’import sort du dossier Apple sélectionné.") }
-            let a = try FileManager.default.attributesOfItem(atPath: file.path)
+            let input = dereference ? resolved : file
+            let a = try FileManager.default.attributesOfItem(atPath: input.path)
             if a[.type] as? FileAttributeType == .typeSymbolicLink {
                 let target = try FileManager.default.destinationOfSymbolicLink(atPath: file.path)
-                guard !target.hasPrefix("/"), resolved.path.hasPrefix(lib.appendingPathComponent("external").resolvingSymlinksInPath().path + "/") else { throw Self.failure("Un lien du framework sort de l’import.") }
+                guard !target.hasPrefix("/"), resolved.path.hasPrefix(resolvedExternal.path + "/") else { throw Self.failure("Un lien du framework sort de l’import.") }
+                if parseMach || parsePE {
+                    let targetAttributes = try FileManager.default.attributesOfItem(atPath: resolved.path)
+                    guard targetAttributes[.type] as? FileAttributeType == .typeRegular,
+                          let size = (targetAttributes[.size] as? NSNumber)?.int64Value,
+                          size > 0, size <= 512_000_000 else { throw Self.failure("La cible d’un pont D3DMetal n’est pas un fichier régulier valide.") }
+                    if parsePE { try Self.checkPE64(resolved) }
+                    if parseMach {
+                        var info = try D3DMetalMachO.inspect(resolved)
+                        info["path"] = relative
+                        // dyld resolves @loader_path from the shared dylib, not
+                        // from the Wine bridge alias that points to it.
+                        info["resolvedPath"] = "external/" + resolved.pathComponents.dropFirst(resolvedExternal.pathComponents.count).joined(separator: "/")
+                        mach.append(info)
+                    }
+                }
                 links.append(.init(relative: relative, target: target)); return
             }
             guard a[.type] as? FileAttributeType == .typeRegular, let size = (a[.size] as? NSNumber)?.int64Value,
                   size > 0, size <= 512_000_000, files.count < 1024 else { throw Self.failure("Un fichier D3DMetal est vide, trop volumineux ou non régulier.") }
             total += size; guard total <= 1_500_000_000 else { throw Self.failure("L’import D3DMetal dépasse la limite prévue.") }
-            if parsePE { try Self.checkPE64(file) }
-            if parseMach { var info = try D3DMetalMachO.inspect(file); info["path"] = relative; mach.append(info) }
-            files.append(.init(source: file, relative: relative, hash: try Self.hash(file), bytes: size))
+            if parsePE { try Self.checkPE64(input) }
+            if parseMach { var info = try D3DMetalMachO.inspect(input); info["path"] = relative; mach.append(info) }
+            files.append(.init(source: input, relative: relative, hash: try Self.hash(input), bytes: size))
         }
         for name in ["d3d11", "d3d12", "dxgi"] {
             try add(lib.appendingPathComponent("wine/x86_64-windows/\(name).dll"), "wine/x86_64-windows/\(name).dll", parsePE: true)
@@ -246,7 +264,6 @@ final class D3DMetalStore {
                 if FileManager.default.fileExists(atPath: file.path) { try add(file, relative, parseMach: ext == "so", parsePE: ext == "dll") }
             }
         }
-        let external = lib.appendingPathComponent("external", isDirectory: true)
         guard let walker = FileManager.default.enumerator(at: external, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: []) else { throw Self.failure("Le framework Apple est illisible.") }
         var entries = 0
         while let file = walker.nextObject() as? URL {
@@ -257,7 +274,16 @@ final class D3DMetalStore {
             // Derive the relative path by its enumerated depth, not byte offsets.
             let relative = "external/" + file.pathComponents.suffix(walker.level).joined(separator: "/")
             let canonicalFramework = relative == "external/D3DMetal.framework/Versions/A/D3DMetal" || relative == "external/D3DMetal.framework/D3DMetal"
-            try add(file, relative, parseMach: canonicalFramework && attributes[.type] as? FileAttributeType != .typeSymbolicLink)
+            let externalDylib = file.pathExtension.lowercased() == "dylib"
+            try add(file, relative, parseMach: externalDylib || (canonicalFramework && attributes[.type] as? FileAttributeType != .typeSymbolicLink))
+        }
+        // Notices belong to the selected folder only. An internal alias is
+        // flattened to its checked contents; no parent-folder search occurs.
+        for name in ["License.rtf", "Acknowledgements.rtf"] {
+            let notice = source.appendingPathComponent(name)
+            if (try? FileManager.default.attributesOfItem(atPath: notice.path)) != nil {
+                try add(notice, "notices/" + name, dereference: true)
+            }
         }
         guard mach.contains(where: { ($0["path"] as? String ?? "").contains("D3DMetal.framework/") }) else { throw Self.failure("Le framework D3DMetal x86_64 n’est pas présent.") }
         var dependencies = Set<String>(), minOS = 0

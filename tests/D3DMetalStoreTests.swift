@@ -63,6 +63,17 @@ import Darwin
         return .init(engineID: "fixture-wine", wineURL: engine.appendingPathComponent("bin/wine"), wineserverURL: engine.appendingPathComponent("bin/wineserver"), prefixURL: prefix,
                      steamRoot: prefix.appendingPathComponent("drive_c/Steam"), environment: env, readyEngine: true, steamInstalled: false)
     }
+    static func sharedSource(_ root: URL, dependency: String = "@loader_path/helper.dylib") throws -> URL {
+        let lib = try source(root)
+        try put(macho(dependency: dependency), lib.appendingPathComponent("external/libd3dshared.dylib"))
+        try put(macho(), lib.appendingPathComponent("external/helper.dylib"))
+        for name in ["d3d11", "d3d12", "dxgi", "d3d12core"] {
+            let bridge = lib.appendingPathComponent("wine/x86_64-unix/\(name).so")
+            if fm.fileExists(atPath: bridge.path) { try fm.removeItem(at: bridge) }
+            try fm.createSymbolicLink(atPath: bridge.path, withDestinationPath: "../../external/libd3dshared.dylib")
+        }
+        return lib
+    }
     static func main() throws {
         let temp = URL(fileURLWithPath: fm.currentDirectoryPath).appendingPathComponent("Products.noindex/playmelt-d3dmetal-tests-" + UUID().uuidString)
         try fm.createDirectory(at: temp, withIntermediateDirectories: false)
@@ -166,6 +177,73 @@ import Darwin
         let mixedSource = temp.appendingPathComponent("renderers/dxmt/import")
         _ = try source(mixedSource)
         rejects("DXMT source") { _ = try store.inspect(sourceURL: mixedSource) }
+
+        let shared = temp.appendingPathComponent("shared-bridge-source"), sharedLib = try sharedSource(shared)
+        let license = Data("{\\rtf1 Synthetic license fixture}".utf8), acknowledgements = Data("{\\rtf1 Synthetic acknowledgements fixture}".utf8)
+        try put(license, shared.appendingPathComponent("License.rtf"))
+        try put(acknowledgements, shared.appendingPathComponent("Acknowledgements.rtf"))
+        // Unrequested NVIDIA shims are deliberately outside the Windows allowlist.
+        try put(pe(), sharedLib.appendingPathComponent("wine/x86_64-windows/nvngx.dll"))
+        try put(pe(), sharedLib.appendingPathComponent("wine/x86_64-windows/nvapi64.dll"))
+        let sharedRoot = temp.appendingPathComponent("shared/Renderers/D3DMetal"), sharedStore = D3DMetalStore(root: sharedRoot)
+        let sharedReport = try sharedStore.importLocal(sourceURL: shared)
+        let sharedMach = sharedReport["machO"] as? [[String:Any]] ?? []
+        let sharedFiles = sharedReport["files"] as? [[String:Any]] ?? []
+        let sharedPayload = sharedRoot.appendingPathComponent("payload")
+        expect(sharedMach.filter { $0["resolvedPath"] as? String == "external/libd3dshared.dylib" }.count == 4, "all shared bridge targets inspected")
+        expect(sharedMach.contains { $0["path"] as? String == "external/libd3dshared.dylib" }, "shared external dylib inspected")
+        expect(sharedMach.contains { $0["path"] as? String == "external/helper.dylib" }, "additional external dylib inspected")
+        expect((sharedReport["dependencies"] as? [String])?.contains("@loader_path/helper.dylib") == true, "shared target dependencies reported")
+        let sharedPlan = try sharedStore.launchPlan(base: descriptor)
+        expect(!sharedPlan.blockedReasons.contains { $0.contains("@loader_path/helper.dylib") }, "loader path resolves from canonical shared target")
+        expect(!sharedPlan.canExecute && sharedStore.snapshot()["loadTested"] as? Bool == false, "shared layout does not qualify runtime")
+        expect(try fm.destinationOfSymbolicLink(atPath: sharedPayload.appendingPathComponent("wine/x86_64-unix/d3d12.so").path) == "../../external/libd3dshared.dylib", "shared bridge aliases preserved")
+        expect(try Data(contentsOf: sharedPayload.appendingPathComponent("notices/License.rtf")) == license, "license contents preserved")
+        expect(try Data(contentsOf: sharedPayload.appendingPathComponent("notices/Acknowledgements.rtf")) == acknowledgements, "acknowledgements contents preserved")
+        expect(sharedFiles.filter { ($0["path"] as? String ?? "").hasPrefix("notices/") && ($0["sha256"] as? String)?.count == 64 }.count == 2, "both notices included in receipt hashes")
+        expect(!sharedFiles.contains { ($0["path"] as? String ?? "").contains("nvngx") || ($0["path"] as? String ?? "").contains("nvapi") }, "NVIDIA shims not imported")
+        let sameShared = try sharedStore.importLocal(sourceURL: shared)
+        expect(sameShared["contentHash"] as? String == sharedReport["contentHash"] as? String, "shared import remains idempotent")
+        try put(Data("changed notice".utf8), shared.appendingPathComponent("License.rtf"))
+        rejects("notice change participates in import identity") { _ = try sharedStore.importLocal(sourceURL: shared) }
+        expect(try Data(contentsOf: sharedPayload.appendingPathComponent("notices/License.rtf")) == license, "different notice cannot replace existing import")
+
+        for kind in ["arm", "truncated", "directory", "outside", "dependency", "external-arm"] {
+            let bad = temp.appendingPathComponent("shared-invalid-" + kind), badLib = try sharedSource(bad)
+            let sharedTarget = badLib.appendingPathComponent("external/libd3dshared.dylib")
+            if kind == "arm" { try macho(arm: true).write(to: sharedTarget) }
+            if kind == "truncated" { try Data(macho().prefix(40)).write(to: sharedTarget) }
+            if kind == "directory" { try fm.removeItem(at: sharedTarget); try fm.createDirectory(at: sharedTarget, withIntermediateDirectories: false) }
+            if kind == "dependency" { try macho(dependency: "/Applications/CrossOver.app/Contents/lib/bridge.dylib").write(to: sharedTarget) }
+            if kind == "external-arm" { try put(macho(arm: true), badLib.appendingPathComponent("external/additional.dylib")) }
+            if kind == "outside" {
+                try put(macho(), bad.appendingPathComponent("outside.dylib"))
+                let alias = badLib.appendingPathComponent("wine/x86_64-unix/d3d12.so")
+                try fm.removeItem(at: alias); try fm.createSymbolicLink(atPath: alias.path, withDestinationPath: "../../../../outside.dylib")
+            }
+            rejects("invalid shared bridge " + kind) { _ = try store.inspect(sourceURL: bad) }
+        }
+        let extra = temp.appendingPathComponent("external-dependency-source"), extraLib = try sharedSource(extra)
+        try put(macho(dependency: "/opt/unknown/shared-dependency.dylib"), extraLib.appendingPathComponent("external/additional.dylib"))
+        let extraStore = D3DMetalStore(root: temp.appendingPathComponent("extra/Renderers/D3DMetal"))
+        try extraStore.importLocal(sourceURL: extra)
+        expect(try extraStore.launchPlan(base: descriptor).blockedReasons.contains { $0.contains("/opt/unknown/shared-dependency.dylib") }, "unreferenced external dylib dependencies block plan")
+
+        let noticeParent = temp.appendingPathComponent("notice-parent"), selectedChild = noticeParent.appendingPathComponent("selected")
+        _ = try source(selectedChild)
+        try put(license, noticeParent.appendingPathComponent("License.rtf"))
+        let selectedReport = try store.inspect(sourceURL: selectedChild)
+        expect(!(selectedReport["files"] as? [[String:Any]] ?? []).contains { ($0["path"] as? String ?? "").hasPrefix("notices/") }, "notices never searched in parent folders")
+        try fm.createSymbolicLink(atPath: selectedChild.appendingPathComponent("License.rtf").path, withDestinationPath: "../License.rtf")
+        rejects("notice alias escapes selected folder") { _ = try store.inspect(sourceURL: selectedChild) }
+        try fm.removeItem(at: selectedChild.appendingPathComponent("License.rtf"))
+        try put(license, selectedChild.appendingPathComponent("terms/License.rtf"))
+        try fm.createSymbolicLink(atPath: selectedChild.appendingPathComponent("License.rtf").path, withDestinationPath: "terms/License.rtf")
+        let noticeStoreRoot = temp.appendingPathComponent("notice-internal/Renderers/D3DMetal")
+        _ = try D3DMetalStore(root: noticeStoreRoot).importLocal(sourceURL: selectedChild)
+        let copiedNotice = noticeStoreRoot.appendingPathComponent("payload/notices/License.rtf")
+        expect(try Data(contentsOf: copiedNotice) == license, "internal notice alias contents preserved")
+        expect(try fm.attributesOfItem(atPath: copiedNotice.path)[.type] as? FileAttributeType == .typeRegular, "internal notice aliases flattened")
         print("D3DMetalStore fixtures: \(checks) PASS; no Wine, GPU, network or proprietary binaries used.")
     }
 }
