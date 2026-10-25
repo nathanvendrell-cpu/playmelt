@@ -443,13 +443,82 @@ final class LibraryModel {
         guard let data = try? handle.read(upToCount: 2_000_000), data.count < 2_000_000,
               let m = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         let app = m.string("AppName"), namespace = m.string("CatalogNamespace"), item = m.string("CatalogItemId")
-        guard !app.isEmpty, namespace != "ue", !m.string("LaunchExecutable").isEmpty,
+        let identifiers = [app, namespace, item]
+        guard identifiers.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 512 && $0.range(of: "^[A-Za-z0-9_.-]+$", options: .regularExpression) != nil }),
+              namespace != "ue", !m.string("LaunchExecutable").isEmpty,
               m.string("InstallLocation").hasPrefix("/") else { return nil }
-        let path = URL(fileURLWithPath: m.string("InstallLocation"))
+        let path = URL(fileURLWithPath: m.string("InstallLocation")).resolvingSymlinksInPath()
+        guard (try? path.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return nil }
+        let incomplete: Bool
+        if let raw = m.value("bIsIncompleteInstall") {
+            guard let flag = raw as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID() else { return nil }
+            incomplete = flag.boolValue
+        } else { incomplete = false }
+        let complete = !incomplete && verifiedEpicMacExecutable(root: path, executable: m.string("LaunchExecutable")) != nil
         return Game(id: "epic:" + app, appId: app, title: m.string("DisplayName"), store: "epic", installed: true,
                     platform: "mac", runtimeId: "epic-mac", runtimeName: "Epic Games Launcher", ownership: "installed-only",
-                    path: path, complete: m.value("bIsIncompleteInstall") as? Bool != true,
+                    path: path, complete: complete,
                     epicLaunchID: [namespace, item, app].joined(separator: ":"))
+    }
+    /// Checks the manifest's actual launch target, not an unrelated helper in the
+    /// installation tree. A readable manifest or MZ Windows file is not a native
+    /// Mac installation. This structural check does not certify code signing,
+    /// entitlement, DRM, or successful execution by the Epic launcher.
+    /// Layouts: Apple's mach-o/loader.h and mach-o/fat.h in xnu/EXTERNAL_HEADERS.
+    static func verifiedEpicMacExecutable(root: URL, executable: String) -> URL? {
+        guard !executable.isEmpty, executable.utf8.count <= 4096, !executable.contains("\0"),
+              !executable.hasPrefix("/"), !executable.contains("\\"),
+              !executable.split(separator: "/").contains(".."),
+              (try? root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return nil }
+        let base = root.resolvingSymlinksInPath()
+        var target = base.appendingPathComponent(executable).standardizedFileURL.resolvingSymlinksInPath()
+        guard target.path.hasPrefix(base.path + "/") else { return nil }
+        if target.pathExtension.lowercased() == "app" {
+            guard let bundle = Bundle(url: target), let binary = bundle.executableURL else { return nil }
+            target = binary.resolvingSymlinksInPath()
+            guard target.path.hasPrefix(base.path + "/") else { return nil }
+        }
+        guard (try? target.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+              FileManager.default.isExecutableFile(atPath: target.path),
+              let handle = try? FileHandle(forReadingFrom: target) else { return nil }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd(), size >= 28 else { return nil }
+        func read(_ offset: UInt64, _ count: Int) -> [UInt8]? {
+            guard offset <= size, UInt64(count) <= size - offset else { return nil }
+            do { try handle.seek(toOffset: offset) } catch { return nil }
+            guard let data = try? handle.read(upToCount: count), data.count == count else { return nil }
+            return Array(data)
+        }
+        func number(_ bytes: [UInt8], _ at: Int, _ count: Int, little: Bool) -> UInt64 {
+            (0..<count).reduce(UInt64(0)) { value, index in
+                value | UInt64(bytes[at + index]) << (8 * (little ? index : count - 1 - index))
+            }
+        }
+        func thin(_ offset: UInt64, expectedCPU: UInt64? = nil) -> Bool {
+            guard let h = read(offset, 32), Array(h.prefix(4)) == [0xcf, 0xfa, 0xed, 0xfe] else { return false }
+            let cpu = number(h, 4, 4, little: true)
+            return [UInt64(0x01000007), UInt64(0x0100000c)].contains(cpu) &&
+                (expectedCPU == nil || cpu == expectedCPU) && number(h, 12, 4, little: true) == 2
+        }
+        if thin(0) { return target }
+        guard let header = read(0, 8) else { return nil }
+        let magic = Array(header.prefix(4))
+        let fat64 = magic == [0xca,0xfe,0xba,0xbf] || magic == [0xbf,0xba,0xfe,0xca]
+        guard fat64 || magic == [0xca,0xfe,0xba,0xbe] || magic == [0xbe,0xba,0xfe,0xca] else { return nil }
+        let little = magic[0] == 0xbe || magic[0] == 0xbf
+        let count = number(header, 4, 4, little: little), stride = fat64 ? 32 : 20
+        guard count > 0, count <= 16, let table = read(8, Int(count) * stride) else { return nil }
+        let tableEnd = UInt64(8 + table.count)
+        for index in 0..<Int(count) {
+            let at = index * stride, cpu = number(table, at, 4, little: little)
+            guard [UInt64(0x01000007), UInt64(0x0100000c)].contains(cpu) else { continue }
+            let width = fat64 ? 8 : 4
+            let offset = number(table, at + 8, width, little: little)
+            let length = number(table, at + 8 + width, width, little: little)
+            if offset >= tableEnd, length >= 32, offset <= size, length <= size - offset,
+               thin(offset, expectedCPU: cpu) { return target }
+        }
+        return nil
     }
     func epicGames() -> [Game] {
         let root = home.appendingPathComponent("Library/Application Support/Epic/EpicGamesLauncher/Data/Manifests")
@@ -489,11 +558,21 @@ final class LibraryModel {
             libraryMessage = "Connexion Steam en attente. Historique local disponible."
         }
     }
-    func acceptAuthenticatedLibrary(accountID: String, list: [[String: Any]], source: String = "steamcommunity-authenticated-all-games") -> Bool {
-        guard accountID == selectedAccountID, Self.validAccountID(accountID), Self.steamLibrarySources.contains(source), !list.isEmpty, list.count < 20000,
+    func acceptAuthenticatedLibrary(accountID: String, list: [[String: Any]], source: String = "steamcommunity-authenticated-all-games", allowAccountDiscovery: Bool = false) -> Bool {
+        // Discovery is explicit and only permitted while no account is selected.
+        // Validate the entire authenticated response before persisting a selection.
+        guard accountID == selectedAccountID || (allowAccountDiscovery && selectedAccountID.isEmpty),
+              Self.validAccountID(accountID), Self.steamLibrarySources.contains(source), !list.isEmpty, list.count < 20000,
               list.allSatisfy({ ($0["appid"] as? String).map(Self.validAppID) == true && !($0["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
               Set(list.compactMap { $0["appid"] as? String }).count == list.count else { return false }
         let sanitized = list.map { ["appid": $0["appid"] as! String, "name": String(($0["name"] as? String ?? "").prefix(200))] }
+        if selectedAccountID.isEmpty {
+            selectedAccountID = accountID
+            preferences.set(accountID, forKey: "selectedSteamAccount")
+            if !accounts.contains(where: { $0.id == accountID }) {
+                accounts.append(Account(id: accountID, name: "Compte Steam", source: "Session Steam vérifiée", recent: true))
+            }
+        }
         authenticatedGames[accountID] = sanitized; liveAuthenticatedAccounts.insert(accountID)
         libraryStatus = "synced"; lastSync = ISO8601DateFormatter().string(from: Date()); authenticatedDates[accountID] = lastSync
         if let data = try? JSONSerialization.data(withJSONObject: ["accountId": accountID, "games": sanitized, "source": source, "updatedAt": lastSync]) {
@@ -531,7 +610,8 @@ final class LibraryModel {
         var epic: [String: Any] = ["status": epicPresent ? "launcher-present" : "unavailable", "message": epicPresent ? "Lanceur officiel présent. \(epicCount) jeux installés détectés. Bibliothèque du compte Epic non synchronisée." : "Epic Games Launcher n’est pas installé.", "installedCount": epicCount]
         epic.merge(epicAvailability) { _, new in new }
         if let snapshot = epicSnapshot {
-            let current = epicSnapshotFresh && epicAvailability["authenticated"] as? Bool == true
+            let current = epicSnapshotFresh && epicAvailability["authenticated"] as? Bool == true &&
+                epicAvailability["accountId"] as? String == snapshot.accountId
             epic["status"] = current ? "synced" : "snapshot"; epic["displayName"] = snapshot.displayName; epic["updatedAt"] = snapshot.updatedAt
             epic["message"] = current ? "\(snapshot.displayName) · \(snapshot.games.count) jeux dans la bibliothèque Epic." : "Dernière bibliothèque Epic de \(snapshot.displayName) : \(snapshot.games.count) jeux. Nouvelle connexion ou synchronisation à vérifier."
         }

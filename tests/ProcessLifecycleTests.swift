@@ -183,7 +183,7 @@ private final class NoNetworkProtocol: URLProtocol {
             expect(!request.mergeStandardError && request.outputLimit==16*1024*1024,"Epic response bounded and stderr excluded")
             let input=try JSONSerialization.jsonObject(with:request.input) as! [String:Any]
             if input["action"] as? String == "sync"{expect((input["session"] as? [String:Any])?["access_token"] as? String=="fixture-token","Epic session remains memory input")}
-            return .init(output:try JSONSerialization.data(withJSONObject:["ok":true,"session":["access_token":"fixture-token"],"snapshot":snapshot]),exitCode:0,pid:0,handedOff:false)
+            return .init(output:try JSONSerialization.data(withJSONObject:["ok":true,"session":["account_id":"fixture-account","access_token":"fixture-token"],"snapshot":snapshot]),exitCode:0,pid:0,handedOff:false)
         }
         let epic=EpicConnector(projectRoot:epicRoot,pythonURL:URL(fileURLWithPath:"/usr/bin/true"),workerURL:worker,runner:epicRunner)
         var authenticated=false;epic.authenticate(code:"fixture-code"){if case .success = $0{authenticated=true}};until{authenticated}

@@ -10,8 +10,13 @@ return (() => {
   if (location.protocol !== "https:" || location.hostname !== "steamcommunity.com" ||
       location.username || location.password || (location.port && location.port !== "443") ||
       !/^\/(profiles\/[0-9]{17}|id\/[^/]+)\/games\/?$/.test(location.pathname) ||
+      location.searchParams.getAll("tab").length !== 1 ||
       location.searchParams.get("tab") !== "all") return failure("wrong-page");
-  if (!validAccount(expectedAccountId)) return failure("account-unselected");
+  // Discovery is a separate native opt-in for a genuinely empty selection. An
+  // invalid or changed selected account must never become implicit discovery.
+  const discovering = typeof allowAccountDiscovery !== "undefined" &&
+    allowAccountDiscovery === true && expectedAccountId === "";
+  if (!validAccount(expectedAccountId) && !discovering) return failure("account-unselected");
   let viewer = typeof window.g_steamID === "string" ? window.g_steamID : "";
   const userInfoNode = document.getElementById("application_config");
   const userInfoRaw = userInfoNode?.getAttribute("data-userinfo");
@@ -20,13 +25,12 @@ return (() => {
     let user;
     try { user = JSON.parse(userInfoRaw); } catch { return failure("identity-unverified"); }
     if (user?.logged_in !== true) return failure("signed-out");
-    if (validAccount(user.steamid)) {
-      if (viewer && viewer !== user.steamid) return failure("identity-mismatch");
-      viewer = user.steamid;
-    }
+    if (!validAccount(user.steamid)) return failure("identity-unverified");
+    if (viewer && viewer !== user.steamid) return failure("identity-mismatch");
+    viewer = user.steamid;
   }
   if (!validAccount(viewer)) return failure("identity-unverified");
-  if (viewer !== expectedAccountId) return failure("account-mismatch");
+  if (!discovering && viewer !== expectedAccountId) return failure("account-mismatch");
   const raw = document.getElementById("gameslist_config")?.getAttribute("data-profile-gameslist");
   if (!raw) return failure("embedded-library-unavailable");
   if (raw.length > 8000000) return failure("too-large");
@@ -44,7 +48,8 @@ return (() => {
   const games = [], ids = new Set();
   for (const row of data.rgGames) {
     if (!row || typeof row !== "object" || Array.isArray(row)) return failure("malformed-library");
-    const rawID = String(row.appid ?? "");
+    if (typeof row.appid !== "number" && typeof row.appid !== "string") return failure("invalid-game");
+    const rawID = String(row.appid);
     if (!/^[0-9]{1,10}$/.test(rawID)) return failure("invalid-game");
     const number = Number(rawID);
     if (!Number.isSafeInteger(number) || number < 1 || number > 4294967295) return failure("invalid-game");

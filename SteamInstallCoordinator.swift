@@ -51,7 +51,11 @@ enum SteamInstallManifest {
             }
             guard containsLaunchBinary(path, platform: platform) else { return observation("validating", "L’installation est déclarée terminée, mais le programme du jeu reste à vérifier.") }
             var result = observation("installing", "Installation vérifiée. Préparation du lancement.")
-            result.ready = true; result.signature = url.path + ":" + buildID + ":" + state.string("LastUpdated")
+            // A moved/replaced installation of the same build is a new candidate,
+            // even when Steam preserves LastUpdated. Require two matching reads.
+            result.ready = true
+            result.signature = [url.path, path.path, buildID, target, owner, state.string("LastUpdated"),
+                                String(downloaded), String(total), String(staged), String(stageTotal)].joined(separator: "\u{1f}")
             return result
         }
         if total > 0 || flags & (256 | 1024 | 1048576) != 0 { return observation("downloading", "Téléchargement géré par Steam.") }

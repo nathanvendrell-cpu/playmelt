@@ -6,14 +6,21 @@ func runSelfTests() {
     var loginLifetime = SteamAuthenticationLifetime()
     check("closed sign-in page cannot start capture", loginLifetime.beginCapture() == nil)
     check("sign-in page opens explicitly", loginLifetime.open())
+    check("opening alone cannot capture an unfinished document", loginLifetime.beginCapture() == nil)
+    let firstNavigation = loginLifetime.navigate()!
+    check("first Steam document completed", loginLifetime.navigationFinished(firstNavigation))
     let firstCapture = loginLifetime.beginCapture()!
     check("duplicate sign-in capture is coalesced", loginLifetime.beginCapture() == nil)
     loginLifetime.releasePage()
     check("closing page invalidates pending sign-in result", !loginLifetime.finishCapture(firstCapture) && !loginLifetime.isOpen)
     check("released sign-in page can be reopened", loginLifetime.open())
+    let reopenedNavigation = loginLifetime.navigate()!
+    check("reopened Steam document completed", loginLifetime.navigationFinished(reopenedNavigation))
     let beforeNavigation = loginLifetime.beginCapture()!
-    loginLifetime.navigate()
+    let nextNavigation = loginLifetime.navigate()!
     check("navigation invalidates previous capture", !loginLifetime.finishCapture(beforeNavigation))
+    check("navigation blocks premature capture", loginLifetime.beginCapture() == nil)
+    check("new Steam document completed", loginLifetime.navigationFinished(nextNavigation))
     let currentCapture = loginLifetime.beginCapture()!
     check("only current sign-in capture can finish", loginLifetime.finishCapture(currentCapture))
     check("one capture can finish only once", !loginLifetime.finishCapture(currentCapture))
@@ -159,11 +166,13 @@ func runSelfTests() {
     check("installed game cannot install", bad.json(runtimes: [])["canInstall"] as? Bool == false)
     model.games = [Game(id: "epic-owned:one", appId: "one", title: "Owned", store: "epic", installed: false, platform: "mac", runtimeId: "epic-mac", runtimeName: "Epic", ownership: "authenticated-library")]
     model.epicSnapshot = EpicSnapshot(accountId: "fixture", displayName: "Fixture", games: [["appName": "one"]], installed: [], source: "fixture", updatedAt: "2026-10-24T00:00:00Z")
-    model.epicAvailability = ["authenticated": true]
+    model.epicAvailability = ["authenticated": true, "accountId": "fixture"]
     check("owned Epic game not counted as installed", (model.state()["epic"] as? [String: Any])?["installedCount"] as? Int == 0)
     check("failed Epic refresh leaves snapshot status", (model.state()["epic"] as? [String: Any])?["status"] as? String == "snapshot")
     model.epicSnapshotFresh = true
     check("fresh authenticated Epic snapshot synced", (model.state()["epic"] as? [String: Any])?["status"] as? String == "synced")
+    model.epicAvailability = ["authenticated": true, "accountId": "another-account"]
+    check("Epic snapshot from another account is never current", (model.state()["epic"] as? [String: Any])?["status"] as? String == "snapshot")
     model.epicAvailability = ["authenticated": false]
     check("expired Epic session never synced", (model.state()["epic"] as? [String: Any])?["status"] as? String == "snapshot")
     let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("metalmax-selftest-\(UUID().uuidString)")
@@ -176,6 +185,22 @@ func runSelfTests() {
         try FileManager.default.createDirectory(at: loginConfig, withIntermediateDirectories: true)
         try "\"users\" { \"76561198000000000\" { \"PersonaName\" \"Fixture\" \"MostRecent\" \"1\" } }".write(to: loginConfig.appendingPathComponent("loginusers.vdf"), atomically: true, encoding: .utf8)
         let authenticated = LibraryModel(home: fixtureHome, preferences: prefs)
+        do {
+            let domain = "Playmelt.DiscoveryTests." + UUID().uuidString
+            let discoveryPreferences = UserDefaults(suiteName: domain)!
+            defer { discoveryPreferences.removePersistentDomain(forName: domain) }
+            let discovery = LibraryModel(home: fixtureHome, preferences: discoveryPreferences)
+            discovery.selectedAccountID = ""
+            let discoveredID = "76561198000000000"
+            let rows: [[String: Any]] = [["appid": "427520", "name": "Factorio"]]
+            check("Steam discovery requires explicit opt-in", !discovery.acceptAuthenticatedLibrary(accountID: discoveredID, list: rows))
+            check("invalid discovery leaves selection and preferences unchanged", !discovery.acceptAuthenticatedLibrary(accountID: discoveredID, list: [["appid": "bad", "name": "bad"]], allowAccountDiscovery: true) && discovery.selectedAccountID.isEmpty && discoveryPreferences.string(forKey: "selectedSteamAccount") == nil)
+            check("verified first Steam account can be discovered", discovery.acceptAuthenticatedLibrary(accountID: discoveredID, list: rows, source: "steamcommunity-profile-gameslist", allowAccountDiscovery: true))
+            check("discovered account selection persists", discovery.selectedAccountID == discoveredID && discoveryPreferences.string(forKey: "selectedSteamAccount") == discoveredID && discovery.accounts.contains(where: { $0.id == discoveredID }))
+            check("discovery cannot replace a selected account", !discovery.acceptAuthenticatedLibrary(accountID: "76561198000000001", list: rows, allowAccountDiscovery: true) && discovery.selectedAccountID == discoveredID)
+            let reopened = LibraryModel(home: fixtureHome, preferences: discoveryPreferences)
+            check("reopening remembers selection without claiming a live Steam login", reopened.selectedAccountID == discoveredID && reopened.liveAuthenticatedAccounts.isEmpty)
+        }
         authenticated.selectedAccountID = "76561198000000000"
         check("empty Steam library cannot overwrite a snapshot", !authenticated.acceptAuthenticatedLibrary(accountID: authenticated.selectedAccountID, list: []))
         check("duplicate Steam ownership entries rejected", !authenticated.acceptAuthenticatedLibrary(accountID: authenticated.selectedAccountID, list: [["appid":"427520","name":"A"],["appid":"427520","name":"B"]]))

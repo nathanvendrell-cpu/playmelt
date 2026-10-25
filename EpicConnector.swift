@@ -57,9 +57,11 @@ final class EpicConnector {
     func availability() -> [String: Any] {
         let exists = FileManager.default.isExecutableFile(atPath: pythonURL.path)
             && FileManager.default.isReadableFile(atPath: workerURL.path)
-        lock.lock(); let authenticated = session != nil; let pending = requestPending; lock.unlock()
+        lock.lock(); let authenticated = session != nil; let pending = requestPending
+        let accountId = session?["account_id"] as? String; lock.unlock()
         return ["status": exists ? (authenticated ? "sessionAvailable" : "requiresLogin") : "missingDependency",
                 "available": exists, "authenticated": authenticated, "busy": pending,
+                "accountId": accountId as Any? ?? NSNull(),
                 "credentialStorage": "memory", "sessionLifetime": "until-app-closes",
                 "versionVerified": false,
                 "message": exists
@@ -139,10 +141,30 @@ final class EpicConnector {
             let outcome: Result<[String: Any], Error>
             do {
                 var response = try self.runWorker(input, generation: requestGeneration)
+                // A token refresh must not silently replace the library owner.
+                // Validate identity before retaining new credentials or exposing
+                // a snapshot; authURL deliberately has no session/snapshot.
+                let action = payload["action"] as? String
+                let refreshed = response["session"] as? [String: Any]
+                let refreshedAccount = refreshed?["account_id"] as? String
+                let expectedAccount = (input["session"] as? [String: Any])?["account_id"] as? String
+                let reportedAccount = (response["snapshot"] as? [String: Any])?["accountId"] as? String
+                if refreshed != nil && (refreshedAccount?.isEmpty != false ||
+                    (action == "sync" && refreshedAccount != expectedAccount)) {
+                    self.lock.lock()
+                    if self.generation == requestGeneration { self.session = nil }
+                    self.lock.unlock()
+                    throw EpicConnectorError.failed(code: "accountChanged", message: "Le compte Epic a changé. Reconnectez le compte voulu avant de continuer.")
+                }
+                if response["ok"] as? Bool == true, action == "authenticate" || action == "sync" {
+                    guard let refreshedAccount, !refreshedAccount.isEmpty,
+                          reportedAccount == refreshedAccount else { throw EpicConnectorError.invalidResponse }
+                }
                 self.lock.lock()
                 let cancelled = self.generation != requestGeneration
-                if !cancelled, let refreshed = response["session"] as? [String: Any] { self.session = refreshed }
-                if !cancelled, let error = response["error"] as? [String: Any], error["code"] as? String == "authenticationFailed" { self.session = nil }
+                if !cancelled, let refreshed { self.session = refreshed }
+                if !cancelled, let error = response["error"] as? [String: Any],
+                   ["authenticationFailed", "accountChanged"].contains(error["code"] as? String ?? "") { self.session = nil }
                 self.lock.unlock()
                 // Never give the callback (and therefore WebKit) tokens.
                 response.removeValue(forKey: "session")
@@ -154,8 +176,16 @@ final class EpicConnector {
                 }
                 outcome = .success(response)
             } catch { outcome = .failure(error) }
-            self.lock.lock(); self.requestPending = false; self.lock.unlock()
-            DispatchQueue.main.async { completion(outcome) }
+            DispatchQueue.main.async {
+                self.lock.lock()
+                let stale = self.closing || self.generation != requestGeneration
+                self.requestPending = false
+                self.lock.unlock()
+                // clearSession/shutdown can happen after the worker returned but
+                // before this callback runs. Never revive that account in the UI.
+                if stale { completion(.failure(EpicConnectorError.failed(code: "cancelled", message: "Connexion Epic annulée."))) }
+                else { completion(outcome) }
+            }
         }
     }
 

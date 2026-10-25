@@ -11,12 +11,13 @@ function read(change = {}) {
   const config = {strSteamId: account, bViewingOwnProfile: true, rgGames: games, ...change.config};
   const attrs = {
     gameslist_config: {'data-profile-gameslist': change.raw ?? JSON.stringify(config)},
-    application_config: {'data-userinfo': JSON.stringify(change.user ?? {logged_in:true,steamid:account})},
+    application_config: {'data-userinfo': change.rawUser ?? JSON.stringify(change.user ?? {logged_in:true,steamid:account})},
   };
   if (change.noEmbedded) delete attrs.gameslist_config;
   if (change.noUserInfo) delete attrs.application_config;
   const context = {
     URL, expectedAccountId: change.selected ?? account,
+    ...(change.allowDiscovery === undefined ? {} : {allowAccountDiscovery:change.allowDiscovery}),
     window: {location:{href:change.url ?? `https://steamcommunity.com/profiles/${account}/games/?tab=all`}, g_steamID:change.viewer === undefined ? account : change.viewer},
     document: {getElementById: id => attrs[id] ? {getAttribute:name => attrs[id][name]} : null},
     fetch: () => {throw new Error('Reader must not request a deprecated endpoint or export credentials');},
@@ -50,6 +51,26 @@ check('invalid IDs refused', () => assert.equal(read({config:{rgGames:[{appid:'1
 check('overflow IDs refused', () => assert.equal(read({config:{rgGames:[{appid:4294967296,name:'X'}]}}).status,'invalid-game'));
 check('empty names refused', () => assert.equal(read({config:{rgGames:[{appid:1,name:' '} ]}}).status,'invalid-game'));
 check('names bounded', () => assert.equal(read({config:{rgGames:[{appid:1,name:'x'.repeat(300)}]}}).games[0].name.length,200));
+check('array app ID cannot be coerced into valid ID', () => assert.equal(read({config:{rgGames:[{appid:[427520],name:'Array'}]}}).status,'invalid-game'));
+check('boolean app ID refused', () => assert.equal(read({config:{rgGames:[{appid:true,name:'Boolean'}]}}).status,'invalid-game'));
+check('empty selection requires explicit native discovery opt-in', () => assert.equal(read({selected:''}).status,'account-unselected'));
+check('discovery only accepts fully verified own library', () => {
+  const result = read({selected:'',allowDiscovery:true});
+  assert.equal(result.status,'complete'); assert.equal(result.accountId,account);
+  assert.deepEqual(result.games,[{appid:'427520',name:'Factorio'},{appid:'526870',name:'Satisfactory'}]);
+});
+check('truthy discovery flag refused', () => assert.equal(read({selected:'',allowDiscovery:'true'}).status,'account-unselected'));
+check('malformed selected account never becomes discovery', () => assert.equal(read({selected:'invalid',allowDiscovery:true}).status,'account-unselected'));
+check('discovery cannot override an existing selected account', () => assert.equal(read({selected:other,allowDiscovery:true}).status,'account-mismatch'));
+check('discovery refuses another profile', () => assert.equal(read({selected:'',allowDiscovery:true,config:{bViewingOwnProfile:false}}).status,'identity-mismatch'));
+check('discovery refuses contradictory URL owner', () => assert.equal(read({selected:'',allowDiscovery:true,url:`https://steamcommunity.com/profiles/${other}/games/?tab=all`}).status,'identity-mismatch'));
+check('discovery refuses contradictory list owner', () => assert.equal(read({selected:'',allowDiscovery:true,config:{strSteamId:other}}).status,'identity-mismatch'));
+check('discovery refuses signed-out viewer', () => assert.equal(read({selected:'',allowDiscovery:true,user:{logged_in:false}}).status,'signed-out'));
+check('discovery cannot create an account from an empty seed', () => assert.equal(read({selected:'',allowDiscovery:true,config:{rgGames:[]}}).status,'empty-unverified'));
+check('userinfo malformed JSON refused', () => assert.equal(read({rawUser:'{broken'}).status,'identity-unverified'));
+check('userinfo present but identity missing cannot use stale global', () => assert.equal(read({user:{logged_in:true}}).status,'identity-unverified'));
+check('unsafe numeric account identity refused', () => assert.equal(read({user:{logged_in:true,steamid:Number(account)}}).status,'identity-unverified'));
+check('duplicate tab parameters refused', () => assert.equal(read({url:`https://steamcommunity.com/profiles/${account}/games/?tab=all&tab=recent`}).status,'wrong-page'));
 check('no config/credential fields exported', () => {
   const result=read({user:{logged_in:true,steamid:account,webapi_token:'fixture-secret'},config:{webapi_token:'other-secret'}});
   assert.equal(JSON.stringify(result).includes('secret'),false);

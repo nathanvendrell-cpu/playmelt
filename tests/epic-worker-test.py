@@ -187,6 +187,32 @@ class EpicTests(unittest.TestCase):
         self.assertEqual(value["error"]["code"], "networkError")
         self.assertNotIn("fixture-only-secret", json.dumps(value))
 
+    def test_changed_account_during_resume_is_never_returned(self):
+        original = FakeEPCAPI.resume_session
+        def other_account(self, session):
+            return dict(session, account_id="different-owner")
+        FakeEPCAPI.resume_session = other_account
+        try:
+            value = self.handle({"action": "sync", "session": {"account_id": "fixture-account", "access_token": "fixture-access"}})
+        finally:
+            FakeEPCAPI.resume_session = original
+        self.assertEqual(value["error"]["code"], "accountChanged")
+        self.assertNotIn("session", value)
+        self.assertNotIn("snapshot", value)
+        self.assertNotIn("different-owner", json.dumps(value))
+
+    def test_changed_account_during_refresh_is_never_returned(self):
+        value = self.handle({"action": "sync", "session": {"account_id": "old-owner", "refresh_token": "fixture-refresh"}})
+        self.assertEqual(value["error"]["code"], "accountChanged")
+        self.assertNotIn("session", value)
+
+    def test_missing_or_nonstring_account_cannot_start_sync(self):
+        before = len(FakeCore.instances)
+        for account in (None, "", 123, True):
+            value = self.handle({"action": "sync", "session": {"account_id": account, "access_token": "fixture-access"}})
+            self.assertEqual(value["error"]["code"], "invalidRequest")
+        self.assertEqual(len(FakeCore.instances), before)
+
     def test_code_rejects_shell_or_newline_and_accepts_json(self):
         for value in (None, "$(say hi)", "a" * 32 + "\nsecret", {"code": "a" * 32}):
             with self.assertRaises((ValueError, TypeError)): worker.clean_code(value)

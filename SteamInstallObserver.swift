@@ -8,10 +8,26 @@ struct SteamInstallPollingPolicy {
         let signature = "\(observation.status):\(observation.downloaded):\(observation.total):\(observation.ready):\(observation.signature)"
         unchanged = signature == previous ? unchanged + 1 : 0; previous = signature
         if observation.ready { return 2 }
-        if ["paused", "disk-space", "awaiting-steam"].contains(observation.status) {
+        if ["paused", "disk-space", "awaiting-steam", "awaiting-account"].contains(observation.status) {
             return unchanged == 0 ? 10 : 30
         }
         return unchanged == 0 ? 2 : unchanged < 3 ? 5 : 10
+    }
+}
+
+enum SteamInstallAccountContext {
+    /// Missing/partially replaced loginusers.vdf is unknown, never evidence that
+    /// the selected account is still active. Download observation may continue;
+    /// automatic launch must wait for a matching local account record.
+    static func permitsAutoLaunch(expected: String, active: String?) -> Bool {
+        LibraryModel.validAccountID(expected) && active == expected
+    }
+    static func gate(_ observation: SteamInstallObservation, expected: String, active: String?) -> SteamInstallObservation {
+        guard observation.ready, !permitsAutoLaunch(expected: expected, active: active) else { return observation }
+        var waiting = observation
+        waiting.ready = false; waiting.signature = ""; waiting.status = "awaiting-account"
+        waiting.message = "Installation vérifiée. Ouvrez Steam avec le compte sélectionné pour autoriser le lancement automatique."
+        return waiting
     }
 }
 
@@ -115,7 +131,9 @@ final class SteamInstallObserver {
             let folders = cache.read(runtime.steamRoot.appendingPathComponent("steamapps/libraryfolders.vdf")).object("libraryfolders")
             let paths = SteamInstallManifest.locations(steamRoot: runtime.steamRoot, appID: appID, platform: runtime.platform, prefix: runtime.prefixURL, libraryFolders: folders)
             if let manifest = SteamInstallManifest.latestManifest(in: paths) {
-                observation = SteamInstallManifest.inspect(manifest, appID: appID, platform: runtime.platform, accountID: accountID, cachedState: cache.read(manifest).object("AppState"))
+                observation = SteamInstallAccountContext.gate(
+                    SteamInstallManifest.inspect(manifest, appID: appID, platform: runtime.platform, accountID: accountID, cachedState: cache.read(manifest).object("AppState")),
+                    expected: accountID, active: active)
             }
             updateWatchers([runtime.steamRoot, runtime.steamRoot.appendingPathComponent("config")] + paths.map { $0.deletingLastPathComponent() })
         }

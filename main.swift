@@ -56,6 +56,7 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate, N
     let result: (Bool, String) -> Void
     private var lifetime = SteamAuthenticationLifetime()
     private var sessionStore: WKWebsiteDataStore?
+    private var navigationContext: (WKNavigation, UUID)?
     init(model: LibraryModel, result: @escaping (Bool, String) -> Void) { self.model = model; self.result = result }
     static func allowed(_ url: URL) -> Bool {
         guard url.scheme == "https", url.user == nil, url.password == nil, url.port == nil || url.port == 443, let host = url.host?.lowercased() else { return false }
@@ -65,34 +66,61 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate, N
         guard lifetime.open() else { return }
         if let window { window.makeKeyAndOrderFront(nil); return }
         let config = WKWebViewConfiguration()
-        // Keep only the in-memory session between explicit synchronizations, not
-        // a hidden page executing scripts. Nothing is persisted to disk.
-        if sessionStore == nil { sessionStore = .nonPersistent() }
+        // WebKit owns this isolated persistent Steam session. Playmelt never
+        // extracts cookies or passwords; the page is still released after sync.
+        if sessionStore == nil { sessionStore = WKWebsiteDataStore(forIdentifier: SteamAuthenticationLifetime.websiteDataStoreIdentifier) }
         config.websiteDataStore = sessionStore!
         // This web view has no privileged message handler or native bridge.
         let web = WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self; web.uiDelegate = self
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Steam officiel — connexion et bibliothèque"; window.isReleasedWhenClosed = false; window.delegate = self
         let container = NSView(); let button = NSButton(title: "Lire la bibliothèque affichée", target: self, action: #selector(readLibrary))
-        let note = NSTextField(labelWithString: "steamcommunity.com · session temporaire · aucun mot de passe transmis à Playmelt")
+        let reload = NSButton(title: "Recharger", target: self, action: #selector(reloadLibrary))
+        let note = NSTextField(labelWithString: "steamcommunity.com · Compte Steam")
         note.font = .systemFont(ofSize: 11); note.textColor = .secondaryLabelColor
-        for view in [web, button, note] { view.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(view) }
-        NSLayoutConstraint.activate([button.topAnchor.constraint(equalTo: container.topAnchor, constant: 10), button.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14), note.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14), note.centerYAnchor.constraint(equalTo: button.centerYAnchor), note.trailingAnchor.constraint(lessThanOrEqualTo: button.leadingAnchor, constant: -12), web.topAnchor.constraint(equalTo: button.bottomAnchor, constant: 10), web.leadingAnchor.constraint(equalTo: container.leadingAnchor), web.trailingAnchor.constraint(equalTo: container.trailingAnchor), web.bottomAnchor.constraint(equalTo: container.bottomAnchor)])
+        for view in [web, button, reload, note] { view.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(view) }
+        NSLayoutConstraint.activate([button.topAnchor.constraint(equalTo: container.topAnchor, constant: 10), button.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14), reload.trailingAnchor.constraint(equalTo: button.leadingAnchor, constant: -8), reload.centerYAnchor.constraint(equalTo: button.centerYAnchor), note.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14), note.centerYAnchor.constraint(equalTo: button.centerYAnchor), note.trailingAnchor.constraint(lessThanOrEqualTo: reload.leadingAnchor, constant: -12), web.topAnchor.constraint(equalTo: button.bottomAnchor, constant: 10), web.leadingAnchor.constraint(equalTo: container.leadingAnchor), web.trailingAnchor.constraint(equalTo: container.trailingAnchor), web.bottomAnchor.constraint(equalTo: container.bottomAnchor)])
         window.contentView = container; self.window = window; self.webView = web
         window.center(); window.makeKeyAndOrderFront(nil)
         web.load(URLRequest(url: URL(string: "https://steamcommunity.com/my/games/?tab=all")!))
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard let url = navigationAction.request.url, Self.allowed(url) else { decisionHandler(.cancel); return }
+        guard self.webView === webView, let url = navigationAction.request.url, Self.allowed(url) else { decisionHandler(.cancel); return }
         decisionHandler(.allow)
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = navigationAction.request.url, Self.allowed(url) { webView.load(URLRequest(url: url)) }; return nil
+        if self.webView === webView, let url = navigationAction.request.url, Self.allowed(url) { webView.load(URLRequest(url: url)) }; return nil
     }
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { lifetime.navigate() }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { capture(manual: false) }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { result(false, "Steam n’a pas chargé la bibliothèque. Réessayez dans la fenêtre officielle.") }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { result(false, "Connexion Steam indisponible. Vérifiez le réseau puis réessayez.") }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard self.webView === webView, let navigation, let token = lifetime.navigate() else { return }
+        navigationContext = (navigation, token)
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard self.webView === webView, let context = navigationContext, context.0 === navigation,
+              lifetime.navigationFinished(context.1) else { return }
+        navigationContext = nil; capture(manual: false)
+    }
+    private func navigationFailed(_ webView: WKWebView, navigation: WKNavigation?, error: Error) {
+        guard self.webView === webView, let context = navigationContext, context.0 === navigation,
+              lifetime.navigationFailed(context.1) else { return }
+        navigationContext = nil
+        let failure = error as NSError
+        if failure.domain != NSURLErrorDomain || failure.code != NSURLErrorCancelled {
+            result(false, "Steam n’a pas chargé la bibliothèque. Utilisez Recharger pour réessayer.")
+        }
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { navigationFailed(webView, navigation: navigation, error: error) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { navigationFailed(webView, navigation: navigation, error: error) }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard self.webView === webView else { return }
+        navigationContext = nil; lifetime.invalidateDocument()
+        result(false, "La page Steam a été interrompue. Utilisez Recharger pour reprendre.")
+    }
+    @objc func reloadLibrary() {
+        guard let webView else { return }
+        lifetime.invalidateDocument(); navigationContext = nil
+        webView.load(URLRequest(url: URL(string: "https://steamcommunity.com/my/games/?tab=all")!))
+    }
     @objc func readLibrary() { capture(manual: true) }
     func capture(manual: Bool) {
         guard let webView, let url = webView.url, Self.allowed(url), url.host == "steamcommunity.com", url.path.contains("/games") else {
@@ -102,9 +130,11 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate, N
               let script = try? String(contentsOf: scriptURL, encoding: .utf8) else {
             result(false, "Le lecteur de bibliothèque Steam est absent. Réinstallez Playmelt."); return
         }
-        guard let generation = lifetime.beginCapture() else { return }
+        guard let generation = lifetime.beginCapture() else {
+            if manual { result(false, "Attendez la fin du chargement ou utilisez Recharger.") }; return
+        }
         let selectedAccount = model.selectedAccountID
-        webView.callAsyncJavaScript(script, arguments: ["expectedAccountId": selectedAccount], in: nil, in: .page) { [weak self] evaluation in
+        webView.callAsyncJavaScript(script, arguments: ["expectedAccountId": selectedAccount, "allowAccountDiscovery": selectedAccount.isEmpty], in: nil, in: .page) { [weak self] evaluation in
             guard let self, self.lifetime.finishCapture(generation) else { return }
             guard self.model.selectedAccountID == selectedAccount else { return }
             guard case .success(let value) = evaluation, let data = value as? [String: Any],
@@ -127,7 +157,7 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate, N
                 }
                 return
             }
-            guard self.model.acceptAuthenticatedLibrary(accountID: id, list: rows, source: "steamcommunity-profile-gameslist") else {
+            guard self.model.acceptAuthenticatedLibrary(accountID: id, list: rows, source: "steamcommunity-profile-gameslist", allowAccountDiscovery: selectedAccount.isEmpty) else {
                 self.result(false, "Le compte Steam connecté ne correspond pas au compte sélectionné, ou la liste reçue est invalide. Aucun compte n’a été remplacé."); return
             }
             self.result(true, "Bibliothèque Steam synchronisée : \(rows.count) jeux, identité du compte vérifiée.")
@@ -137,6 +167,7 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate, N
     func windowWillClose(_ notification: Notification) { releasePage(closeWindow: false) }
     func releasePage(closeWindow: Bool = true) {
         lifetime.releasePage()
+        navigationContext = nil
         let page = webView, oldWindow = window
         webView = nil; window = nil
         page?.stopLoading(); page?.navigationDelegate = nil; page?.uiDelegate = nil
@@ -237,7 +268,6 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             guard let id = dict["gameId"] as? String, let game = model.games.first(where: { $0.id == id }) else { result(false, "Jeu introuvable. Actualisez la bibliothèque."); return }
             installAndPlay(game, runtimeID: dict["runtimeId"] as? String)
         case "syncLibrary", "openSteamLogin":
-            guard !model.selectedAccountID.isEmpty else { result(false, "Ouvrez Steam, connectez votre compte puis actualisez Playmelt."); return }
             if authentication == nil { authentication = SteamAuthentication(model: model) { [weak self] ok, message in self?.sendState(); self?.result(ok, message) } }
             model.beginSteamLibrarySync(); sendState()
             authentication?.open(); result(true, "Fenêtre Steam officielle ouverte. Connectez-vous pour vérifier la bibliothèque complète.")
@@ -377,6 +407,11 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     func receiveEpic(_ outcome: Result<EpicSnapshot, Error>) {
         switch outcome {
         case .success(let snapshot):
+            let availability = epicConnector.availability()
+            guard !closing, availability["accountId"] as? String == snapshot.accountId,
+                  availability["authenticated"] as? Bool == true else {
+                model.epicSnapshotFresh = false; sendState(); return
+            }
             model.epicSnapshot = snapshot; model.epicSnapshotFresh = true; refresh(); result(true, "Bibliothèque Epic synchronisée : \(snapshot.games.count) jeux.")
         case .failure(let error): model.epicSnapshotFresh = false; sendState(); result(false, error.localizedDescription)
         }
@@ -399,6 +434,10 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                 guard let installed = self.model.games.first(where: { $0.appId == game.appId && $0.runtimeId == runtime.id && $0.installed && $0.complete }),
                       let currentRuntime = self.validatedSteamRuntime(installed, installing: false, requestedRuntime: runtime.id) else {
                     self.installCoordinator.didRequestLaunch(id: id, success: false, message: "Installation à vérifier dans Steam."); return
+                }
+                let active = activeSteamAccount(TextVDF.read(currentRuntime.steamRoot.appendingPathComponent("config/loginusers.vdf")).object("users"))
+                guard SteamInstallAccountContext.permitsAutoLaunch(expected: account, active: active) else {
+                    self.installCoordinator.didRequestLaunch(id: id, success: false, message: "Le compte actif dans Steam doit être vérifié avant le lancement automatique."); return
                 }
                 self.dispatchSteam(installed, runtime: currentRuntime, installing: false, onFailure: { [weak self] message in self?.installCoordinator.launchFailed(id: id, message: message) }) { [weak self] ok, message in
                     self?.installCoordinator.didRequestLaunch(id: id, success: ok, message: message)

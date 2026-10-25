@@ -1243,10 +1243,10 @@
           };
           $("viewTitle").textContent = titles[ui.view];
           const syncing = state.libraryStatus.status === "syncing";
-          $("syncLibrary").disabled = syncing || !state.accounts.length;
+          $("syncLibrary").disabled = syncing;
           $("syncLibrary").textContent = syncing
             ? "Synchronisation…"
-            : "Synchroniser";
+            : state.accounts.length ? "Synchroniser" : "Connecter Steam";
           $("syncLibrary").hidden =
             ui.view === "diagnostics" || ui.view === "epic";
           $("openEpic").hidden = ui.view !== "epic";

@@ -38,9 +38,14 @@ ERRORS = {
     "invalidRequest": "Requête Epic invalide.",
     "requiresLogin": "Connectez votre compte Epic pour synchroniser sa bibliothèque.",
     "authenticationFailed": "Connexion Epic refusée ou expirée. Recommencez la connexion dans le navigateur Epic.",
+    "accountChanged": "Le compte Epic a changé. Reconnectez le compte voulu avant de continuer.",
     "networkError": "Epic est temporairement indisponible. La bibliothèque n’a pas été actualisée.",
     "adapterError": "Le connecteur Epic n’a pas pu lire la réponse. Aucune bibliothèque complète n’est annoncée.",
 }
+
+
+class AccountChangedError(Exception):
+    """Identity changed during refresh; never retain or expose that new session."""
 
 
 def failure(code):
@@ -227,8 +232,10 @@ def establish_session(core, action, session, code=None):
             raise ValueError("session unavailable")
     else:
         raise ValueError("session unavailable")
-    if not isinstance(data, dict) or not data.get("account_id"):
+    if not isinstance(data, dict) or not isinstance(data.get("account_id"), str) or not data["account_id"]:
         raise ValueError("invalid session response")
+    if action == "sync" and data["account_id"] != session.get("account_id"):
+        raise AccountChangedError()
     with core.lgd.userdata_lock as lock:
         lock.data = data
     core.logged_in = True
@@ -257,6 +264,8 @@ def handle(request, core_module=None, version_lookup=None, manifest_reader=insta
     action = request["action"]
     if action == "sync" and not session:
         return failure("requiresLogin")
+    if action == "sync" and (not isinstance(session.get("account_id"), str) or not session["account_id"]):
+        return failure("invalidRequest")
     updated_session = copy.deepcopy(session) if session else None
     try:
         with isolated_core(core_module, session) as core:
@@ -284,6 +293,8 @@ def handle(request, core_module=None, version_lookup=None, manifest_reader=insta
                                  "updatedAt": datetime.now(timezone.utc).isoformat(),
                                  "credentialStorage": "memory", "sessionLifetime": "until-app-closes"}}
     except Exception as error:
+        if isinstance(error, AccountChangedError):
+            return failure("accountChanged")
         if type(error).__name__ == "InvalidCredentialsError":
             return failure("authenticationFailed")
         if type(error).__name__ in ("HTTPError", "ConnectionError", "Timeout", "ReadTimeout", "ConnectTimeout"):
