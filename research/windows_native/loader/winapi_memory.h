@@ -169,6 +169,16 @@ int32_t PM_WINAPI pm_win_NtQueryVirtualMemory(void *process, void *address,
 int pm_winapi_memory_can_write_handle(void *output);
 int pm_winapi_memory_write_handle(void *output,uintptr_t handle);
 
+/* Narrow HOST ABI trusted-source copy, NOT a Windows export. bytes must be
+ * 1..512; source must be HOST-readable for that many bytes. Source/destination overlap
+ * is supported via memmove. No source-pointer validation is claimed. Destination must be
+ * entirely in ONE nonquarantined owned RW region of the bound memory context;
+ * all crossed pages are checked BEFORE any write. No partial copy on refusal.
+ * Preserves LastError. The same exclusive-context/no-external-mutation contract
+ * as write_handle applies. A large guest capacity must not be passed here:
+ * callers provide only the actual bounded output length. */
+int pm_winapi_memory_copy_bytes_owned(void *output, const void *source, size_t bytes);
+
 /* HOST ABI opt-in import resolver. Strict named NtQueryVirtualMemory only on
  * ntdll.dll; VirtualAlloc/VirtualFree/VirtualProtect on kernel32.dll/kernelbase.dll, then delegate
  * the original seven-function base resolver. DLL case is ignored, symbols exact.

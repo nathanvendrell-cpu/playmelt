@@ -27,7 +27,7 @@ def main():
         bounded(["nice", "-n", "15", "xcrun", "clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1",
                  "-arch", "x86_64", "-mmacosx-version-min=15.0", "-I", str(source), "-I", str(scratch),
                  *(str(source / filename) for filename in
-                   ("pe_loader.c", "pe_modules.c", "winapi_subset.c", "winapi_modules.c", "winapi_call_probe.c")),
+                   ("pe_loader.c", "pe_modules.c", "winapi_subset.c", "winapi_modules.c", "winapi_memory.c", "winapi_call_probe.c")),
                  "-o", str(binary)], 120)
         result = json.loads(bounded(["nice", "-n", "15", str(binary), "--synthetic-module-api-test"], 15))
         if not result.get("passed") or not result.get("cleanupVerified"):

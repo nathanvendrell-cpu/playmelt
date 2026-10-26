@@ -345,6 +345,14 @@ int pm_winapi_memory_write_handle(void *output,uintptr_t handle) {
     memcpy(output,bytes,sizeof bytes); return 1;
 }
 
+int pm_winapi_memory_copy_bytes_owned(void *output, const void *source, size_t bytes) {
+    if (!source || !bytes || bytes > 512) return 0;
+    pm_winapi_memory *ctx=tls_ready()?pthread_getspecific(memory_key):NULL;
+    if (!ctx || !writable_range(ctx,(uintptr_t)output,bytes)) return 0;
+    memmove(output,source,bytes);
+    return 1;
+}
+
 static void little_endian(unsigned char *out, uint64_t value, size_t bytes) {
     for (size_t i = 0; i < bytes; ++i) out[i] = (unsigned char)(value >> (8 * i));
 }

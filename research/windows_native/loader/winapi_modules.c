@@ -1,4 +1,5 @@
 #include "winapi_modules.h"
+#include "winapi_memory.h"
 
 #include <pthread.h>
 #include <stdio.h>
@@ -24,6 +25,7 @@ struct pm_winapi_modules {
     pm_pe_modules registry;
     pm_pe_module_slot main;
     host_module hosts[HOST_CAPACITY];
+    char declared_paths[PM_PE_MODULES_CAPACITY + 1][512];
     size_t host_count;
     pthread_mutex_t mutex;
     int bound;
@@ -95,6 +97,7 @@ int pm_winapi_modules_resolve(void *ctx, const char *dll, const char *name,
     RESOLVE(GetModuleHandleA)
     RESOLVE(GetModuleHandleW)
     RESOLVE(GetProcAddress)
+    RESOLVE(GetModuleFileNameA)
 #undef RESOLVE
     return pm_winapi_resolve(NULL, dll, name, ordinal, by_ordinal, address);
 }
@@ -164,6 +167,90 @@ failed_context:
 failed:
     if (error && error_capacity) snprintf(error, error_capacity, "%s", reason);
     return NULL;
+}
+
+/* Primary modern truncation/NUL contract, consulted 2026-10-26:
+ * https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulefilenamea
+ * Paths below are host declarations, not results of a filesystem loader. */
+static int valid_declared_path(const char *path, const char *basename, size_t *length) {
+    if (!path) return 0;
+    size_t n=0;
+    for (;n<512 && path[n];++n) {
+        unsigned char c=(unsigned char)path[n];
+        if (c<32 || c>126) return 0;
+    }
+    if (n<4 || n==512) return 0;
+    unsigned char drive=lower_ascii((unsigned char)path[0]);
+    if (drive<'a' || drive>'z' || path[1]!=':' || path[2]!='\\') return 0;
+    size_t start=3;
+    for (size_t i=3;i<=n;++i) {
+        if (i==n || path[i]=='\\') {
+            size_t count=i-start;
+            if (!count || (count==1 && path[start]=='.') ||
+                (count==2 && path[start]=='.' && path[start+1]=='.') ||
+                path[i-1]==' ' || path[i-1]=='.') return 0;
+            if (i==n) {
+                if (strlen(basename)!=count) return 0;
+                for (size_t j=0;j<count;++j)
+                    if (lower_ascii((unsigned char)path[start+j])!=(unsigned char)basename[j]) return 0;
+            }
+            start=i+1;
+        } else if (strchr("<>:\"/|?*",path[i])) return 0;
+    }
+    *length=n;
+    return 1;
+}
+
+int pm_winapi_modules_set_declared_path(pm_winapi_modules *ctx,
+    const pm_pe_image *image, const char *logical_path) {
+    if (!ctx || !image) return 0;
+    pthread_mutex_lock(&ctx->mutex);
+    int ok=0;
+    size_t index=0, length=0;
+    const pm_pe_module_slot *slot=NULL;
+    if (ctx->main.image==image) slot=&ctx->main;
+    else for (size_t i=0;i<ctx->registry.count;++i) {
+        if (ctx->registry.slots[i].image==image) {
+            slot=&ctx->registry.slots[i]; index=i+1; break;
+        }
+    }
+    if (ctx->sealed || !slot || !live(slot) || ctx->declared_paths[index][0] ||
+        !valid_declared_path(logical_path,slot->name,&length)) goto done;
+    memcpy(ctx->declared_paths[index],logical_path,length+1);
+    ok=1;
+done:
+    pthread_mutex_unlock(&ctx->mutex);
+    return ok;
+}
+
+uint32_t PM_WINAPI pm_win_GetModuleFileNameA(void *module, void *output, uint32_t capacity) {
+    pm_winapi_modules *ctx=current_context();
+    uint32_t failure=PM_ERROR_MOD_NOT_FOUND;
+    if (!ctx) goto failed;
+    const pm_pe_module_slot *slot=NULL;
+    size_t index=0;
+    if (!module || module==ctx->main.mapping) slot=&ctx->main;
+    else for (size_t i=0;i<ctx->registry.count;++i) {
+        if (module==ctx->registry.slots[i].mapping) {
+            slot=&ctx->registry.slots[i]; index=i+1; break;
+        }
+    }
+    if (!slot || !live(slot)) { failure=PM_ERROR_INVALID_HANDLE; goto failed; }
+    const char *path=ctx->declared_paths[index];
+    if (!path[0]) goto failed;
+    if (!capacity) { failure=122; goto failed; }
+    size_t length=strlen(path);
+    size_t bytes=capacity>length?length+1:capacity;
+    char result[512];
+    memcpy(result,path,bytes-1); result[bytes-1]=0;
+    if (!pm_winapi_memory_copy_bytes_owned(output,result,bytes)) {
+        failure=998; goto failed;
+    }
+    if (capacity<=length) { pm_win_SetLastError(122); return capacity; }
+    return (uint32_t)length;
+failed:
+    pm_win_SetLastError(failure);
+    return 0;
 }
 
 int pm_winapi_modules_add_host(pm_winapi_modules *ctx, const char *basename,

@@ -14,7 +14,7 @@ static const service services[]={
     SERVICE(GetLastError),SERVICE(SetLastError),SERVICE(GetCurrentProcessId),
     SERVICE(QueryPerformanceCounter),SERVICE(QueryPerformanceFrequency),
     SERVICE(GetTickCount64),SERVICE(GetSystemTimeAsFileTime),
-    SERVICE(GetModuleHandleA),SERVICE(GetModuleHandleW),SERVICE(GetProcAddress),
+    SERVICE(GetModuleHandleA),SERVICE(GetModuleHandleW),SERVICE(GetProcAddress),SERVICE(GetModuleFileNameA),
     SERVICE(VirtualProtect),SERVICE(VirtualAlloc),SERVICE(VirtualFree),SERVICE(NtQueryVirtualMemory),SERVICE(CreateEventExA),SERVICE(SetEvent),
     SERVICE(ResetEvent),SERVICE(WaitForSingleObject),SERVICE(CloseHandle),
     SERVICE(CreateSemaphoreExA),SERVICE(ReleaseSemaphore),SERVICE(DuplicateHandle)

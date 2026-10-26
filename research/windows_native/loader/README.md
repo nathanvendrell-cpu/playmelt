@@ -61,6 +61,47 @@ Les noms de modules sont limités aux basenames ASCII ; `W` accepte leur encodag
 UTF-16 ASCII, sans conversion Unicode générale. Aucun `LoadLibrary`, `FreeLibrary`,
 compteur de références Windows, API set ou chargement de dépendance n'est simulé.
 
+`GetModuleFileNameA` restitue seulement le chemin Windows logique déclaré par
+l'hôte pour une image PE déjà enregistrée. La déclaration est copiée une seule fois avant le
+premier binding et scellée avec le contexte. Aucun chemin n'est inventé pour
+une image sans déclaration ou une table de fonctions hôtes. Le chemin conserve
+sa casse ; il est limité à 511 octets ASCII, absolu avec lettre de lecteur et
+séparateurs Windows, et son basename doit correspondre à l'image. Les chemins
+avec préfixes UNC/device, les chemins relatifs, les traversées et le texte non
+ASCII restent refusés. Ce n'est pas un validateur complet des noms Windows.
+Cette déclaration ne prouve pas l'existence d'un fichier, son chargement depuis
+le disque ou la disponibilité d'un système de fichiers Windows.
+
+La sortie doit appartenir à une allocation RW non quarantinée du contexte mémoire
+lié au thread. Le helper de copie hôte vérifie tous les octets réellement écrits,
+au plus 512, avant toute mutation. Les sorties non alignées sont acceptées ;
+les piles et images PE ne sont pas des destinations admises. Un buffer trop court
+reçoit une chaîne tronquée terminée par NUL : retour `nSize`, erreur 122. Un buffer
+assez grand reçoit la chaîne complète et le retour exclut le NUL, sans modifier
+LastError. `nSize == 0` échoue sans écriture avec erreur 122, selon la politique
+explicite de ce sous-ensemble. Une taille annoncée gigantesque ne déclenche aucune
+allocation ni écriture supplémentaire. Les autres refus conservent la sortie.
+
+```sh
+python3 -B research/windows_native/loader/run_module_filename_probe.py
+```
+
+Le 26 octobre 2026, 1 451 contrôles ASan/UBSan ont passé : 261 chemins/copie,
+251 modules, 419 mémoire, 207 collisions et 313 résolution commune. Un PE de
+3 584 octets appelle réellement `GetModuleFileNameA` quatre fois : chemin du
+programme principal, chemin de DLL tronqué, chemin complet avec capacité
+`UINT32_MAX` au bord exact d'une allocation, puis capacité nulle. L'adresse
+dynamique est vérifiée avant appel, ainsi que NUL, LastError et les canaris sur
+toute la page de sortie. La DLL est une fixture déjà mappée ; aucun fichier
+correspondant aux chemins déclarés n'est recherché ou chargé.
+
+Les six compilations sont séquentielles à `nice 15`. Les 28 empreintes et les
+résultats sont dans `work/module-filename-proof-attempt1.log`. Le calcul RIP
+d'une instruction de la sonde a été corrigé en revue avant compilation, puis
+vérifié sur ses octets générés dans `work/module-filename-encoding-review.json`.
+Aucun test n'a échoué. Le contrôle indépendant du nettoyage et du binaire
+installé est dans `work/module-filename-root-verification.json`.
+
 Une API séparée `pm_pe_load_synthetic_dll` autorise un point d'entrée non nul
 uniquement pour nos fixtures embarquées. Elle prépare l'image sans l'appeler.
 `pm_pe_synthetic_dll_attach` et `detach` appellent explicitement ce point via l'ABI
@@ -448,11 +489,11 @@ Aucun composant Apple ni jeu n'a été exécuté ; l'application installée est 
 
 ## Résolution commune des fonctions déjà disponibles
 
-`winapi_combined.c` rassemble les sept fonctions de base, les trois fonctions de
+`winapi_combined.c` rassemble les sept fonctions de base, les quatre fonctions de
 modules, les quatre fonctions mémoire et les huit fonctions de synchronisation.
 Le résolveur ne crée aucun stub.
 Les requêtes doivent désigner un nom exact, avec ordinal zéro et sans recherche
-par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les vingt et une
+par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les vingt-deux
 autres fonctions appartiennent à `kernel32.dll` ou `kernelbase.dll`.
 
 Les fournisseurs existants peuvent exposer la même fonction de base. Le
@@ -686,6 +727,7 @@ instructions. Aucun code de cette DLL n'a été exécuté.
 - [Microsoft : QPC et mesure du temps](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps).
 - [Microsoft : format FILETIME](https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-filetime).
 - [Microsoft : GetModuleHandleA](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandlea).
+- [Microsoft : GetModuleFileNameA](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulefilenamea).
 - [Microsoft : GetProcAddress](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 - [Microsoft : DllMain](https://learn.microsoft.com/en-us/windows/win32/dlls/dllmain).
 - [Microsoft : exceptions et unwind x64](https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64).

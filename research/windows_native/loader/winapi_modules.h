@@ -13,9 +13,10 @@ typedef struct pm_winapi_modules pm_winapi_modules;
 /* Windows x64 ABI. FARPROC is an address because exports may also be data. */
 void *PM_WINAPI pm_win_GetModuleHandleA(const char *module_name);
 void *PM_WINAPI pm_win_GetModuleHandleW(const uint16_t *module_name);
+uint32_t PM_WINAPI pm_win_GetModuleFileNameA(void *module, void *output, uint32_t capacity);
 uintptr_t PM_WINAPI pm_win_GetProcAddress(void *module, const char *name_or_ordinal);
 
-/* HOST ABI import resolver: adds the three module functions for kernel32.dll /
+/* HOST ABI import resolver: adds the four module functions for kernel32.dll /
  * kernelbase.dll and delegates the original seven to pm_winapi_resolve. ctx is
  * unused; the Windows functions consult their explicitly bound thread context.
  * This opt-in resolver keeps the original seven-function library independent. */
@@ -34,6 +35,36 @@ int pm_winapi_modules_resolve(void *ctx, const char *dll, const char *name,
 pm_winapi_modules *pm_winapi_modules_create(const pm_pe_modules *registry,
     const pm_pe_image *main_image, const char *main_basename,
     char *error, size_t error_capacity);
+
+/* HOST ABI metadata declaration, exactly once per registered PE image, before
+ * first bind. Copies a HOST-readable NUL-terminated string (<=511 bytes) into
+ * this context; input must be readable through NUL or 512 bytes. Requires the
+ * exact live image object, not a copy, and basename matching its registration
+ * ignoring ASCII case. Strict subset: drive-letter colon backslash absolute
+ * DOS path, printable ASCII, nonempty components, no dot/dotdot, trailing space
+ * or dot, slash, additional colon, < > | ? * or quote. UNC/device prefixes are
+ * refused; this is NOT a complete Windows filesystem-name validator.
+ * Case is preserved. No path is inferred, normalized, searched, or claimed to
+ * exist on disk. HOST service tables have no PE path. Repeated declarations and
+ * all declarations after first successful bind (even after unbind) are refused
+ * without changing metadata. Source mutation after success has no effect.
+ * Preserves LastError. Serial ownership rules of other HOST calls apply. */
+int pm_winapi_modules_set_declared_path(pm_winapi_modules *context,
+    const pm_pe_image *image, const char *logical_path);
+
+/* GetModuleFileNameA: NULL selects the main PE. Only a live registered PE with
+ * an explicit path above is supported. Full output returns length excluding NUL
+ * and preserves LastError. Capacity 1..length writes capacity-1 chars plus NUL,
+ * returns capacity and sets ERROR_INSUFFICIENT_BUFFER (122). Capacity 0 returns
+ * 0/122 without writing (explicit subset policy). Validate only actual bytes
+ * written (<=512), not the entire advertised capacity. Output must be in ONE
+ * owned RW nonquarantined region of the current memory binding, every crossed
+ * page checked before any write. No stack/image/arbitrary-pointer output.
+ * No module context or undeclared path =>126; unknown/stale/HOST-service handle
+ * =>6; invalid output or absent memory binding =>998. Failures except successful
+ * truncation leave output unchanged. These mappings are our subset policy.
+ * No Windows codepage conversion, filesystem existence or loaded-path evidence.
+ */
 
 /* Register an explicit preloaded HOST service table (at most 8), not a PE DLL.
  * The HMODULE is an opaque token, never a synthetic claim of a mapped DLL.
