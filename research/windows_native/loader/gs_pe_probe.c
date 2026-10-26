@@ -91,6 +91,7 @@ static int mapping_valid(void) {
         protection((uintptr_t)p+DATA,0x200,VM_PROT_READ|VM_PROT_WRITE);
 }
 
+#ifndef PM_GS_TLS_PROBE
 static int units(void) {
     int passed=0; char error[200]; uint8_t bad[sizeof gs_pe_fixture];
 #define TEST(x) do { ++checks; if (!(x)) { fprintf(stderr,"GS PE host check failed at %d: %s\n",__LINE__,error); goto done; } } while(0)
@@ -117,6 +118,7 @@ done:
     return !passed;
 #undef TEST
 }
+#endif
 
 #ifndef PM_GS_PE_HOST_TESTS_ONLY
 static int prepare(pm_gs_context *c) {
@@ -144,7 +146,23 @@ static int probe(void) {
     c->guest_base=(uintptr_t)teb; c->tls_vector=(uintptr_t)vector; c->tls_block=(uintptr_t)block;
     memcpy(teb+GS_TEB_SELF,&c->guest_base,8); memcpy(teb+GS_TEB_TLS_VECTOR,&c->tls_vector,8);
     resolver_calls=0;
+#ifdef PM_GS_TLS_PROBE
+    loaded=pm_pe_load_synthetic_tls_exe(gs_pe_fixture,sizeof gs_pe_fixture,resolve,NULL,&image,error,sizeof error);
+    pm_pe_tls_state tls={0}; int tls_initialized=0;
+    if (loaded && pm_pe_tls_view(&image,&tls,error,sizeof error)) {
+        const uint8_t zero[16]={0};
+        tls_initialized=tls.index==1 && tls.index_rva==DATA+0x80 && tls.template_size==16 && tls.zero_fill==16 && tls.block_size==32 &&
+            !memcmp(tls.block,gs_pe_fixture+0xf40,16) && !memcmp((const uint8_t *)tls.block+16,zero,sizeof zero) &&
+            tls.alignment==16 && (uintptr_t)tls.block%16==0 && tls.vector[0]==0 && tls.vector[1]==(uintptr_t)tls.block &&
+            protection((uintptr_t)tls.block,tls.block_size,VM_PROT_READ|VM_PROT_WRITE) &&
+            protection((uintptr_t)tls.vector,2*sizeof *tls.vector,VM_PROT_READ|VM_PROT_WRITE);
+        c->tls_vector=(uintptr_t)tls.vector; c->tls_block=(uintptr_t)tls.block;
+        memcpy(teb+GS_TEB_TLS_VECTOR,&c->tls_vector,8);
+    }
+    if (!tls_initialized) goto cleanup;
+#else
     loaded=pm_pe_load(gs_pe_fixture,sizeof gs_pe_fixture,resolve,NULL,&image,error,sizeof error);
+#endif
     if (!loaded || !(verified=mapping_valid())) goto cleanup;
     if (sigfillset(&mask)) goto cleanup;
     const int fatal[]={SIGILL,SIGSEGV,SIGBUS,SIGFPE,SIGABRT,SIGTRAP};
@@ -167,9 +185,19 @@ static int probe(void) {
     const uint8_t *p=image.mapping; unsigned expected=inject_failure?1:2;
     int marker_ok=u32(p+DATA+0x20)==1 && u32(p+DATA+0x24)==expected &&
         u32(p+DATA+0x28)==(inject_failure?0:2) && u32(p+DATA+0x30)==(inject_failure?0:1) && u32(p+DATA+0x38)==(inject_failure?1:0);
+    const uint64_t *active_block=block;
+#ifdef PM_GS_TLS_PROBE
+    active_block=tls.block;
+    const uint8_t zero[16]={0};
+    int tls_verified=tls_initialized && u32(p+DATA+0x80)==1 && u32(p+DATA+0x44)==1 &&
+        !memcmp(p+RDATA+0x340,gs_pe_fixture+0xf40,16) && !memcmp((const uint8_t *)tls.block+16,zero,sizeof zero);
+    printf("{\"kind\":\"tls-result\",\"initializedFromPE\":%s,\"assignedIndex\":%u,\"guestReadIndex\":%u,\"templateAndZeroFillVerified\":%s,\"storageMachRWNonXVerified\":%s,\"blockBytes\":%zu}\n",
+        tls_initialized?"true":"false",u32(p+DATA+0x80),u32(p+DATA+0x44),tls_verified?"true":"false",tls_initialized?"true":"false",tls.block_size);
+    marker_ok=marker_ok && tls_verified;
+#endif
     int passed=verified && executed && restored && mask_ok && !callback_failures && status==(uint64_t)inject_failure &&
         context.entry_result==(uint64_t)inject_failure && c->callbacks==expected && c->reads==expected && c->writes==expected &&
-        block[0]==tls_value+expected && block[1]==UINT64_C(0xfeedcab00505cafe) && registers_valid(c) && marker_ok &&
+        active_block[0]==tls_value+expected && active_block[1]==UINT64_C(0xfeedcab00505cafe) && registers_valid(c) && marker_ok &&
         u32(teb+GS_TEB_LAST_ERROR)==0x76543210;
     code=passed?0:(status==77 && restored && mask_ok?77:1);
     printf("{\"kind\":\"guest-result\",\"passed\":%s,\"expectedCallbackRefusal\":%s,\"entryCalls\":%llu,\"peReturn\":%llu,"
@@ -184,7 +212,7 @@ cleanup:;
     int unloaded=pm_pe_unload(&image); int removed=unloaded && !image.mapping && (!base || absent(base,size));
     if (!removed) code=1;
     printf("{\"status\":\"%s\",\"peLoaded\":%s,\"peExecuted\":%s,\"resolutions\":%u,\"imageUnloaded\":%s,\"machMappingAbsent\":%s,"
-        "\"threadsTested\":1,\"staticTLSLoaderImplemented\":false,\"wineUsed\":false,\"gameExecuted\":false}\n",
+        "\"threadsTested\":1,\"generalWindowsTLSImplemented\":false,\"wineUsed\":false,\"gameExecuted\":false}\n",
         code==0?"PASS":code==77?"UNSUPPORTED":"FAIL",loaded?"true":"false",executed?"true":"false",resolver_calls,unloaded?"true":"false",removed?"true":"false");
     if (code==1 && error[0]) fprintf(stderr,"GS PE probe failed: %s\n",error);
     return code;
@@ -192,7 +220,11 @@ cleanup:;
 #endif
 int main(int argc,char **argv) {
     if (argc!=2) return 2;
+#ifndef PM_GS_TLS_PROBE
     if (!strcmp(argv[1],"--host-tests")) return units();
+#else
+    (void)checks;
+#endif
 #ifdef PM_GS_PE_HOST_TESTS_ONLY
     (void)checkpoint; (void)tls_value; return 2;
 #else

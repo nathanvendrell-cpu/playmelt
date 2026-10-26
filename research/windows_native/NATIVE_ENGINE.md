@@ -70,6 +70,31 @@ et `work/gs-pe-root-verification.json`. L'essai de compilation initial, arrêté
 par un avertissement sur un helper inutilisé dans la variante inerte, reste
 conservé dans `work/gs-pe-proof-attempt1.log` ; aucun PE n'y avait été exécuté.
 
+L'étape suivante, [initialisation TLS depuis le PE](loader/TLS_PROBE.md), a
+également réussi dans un mode explicite limité aux fixtures. Le chargeur conserve
+le vrai répertoire TLS, applique ses relocations, copie les 16 octets du gabarit,
+initialise 16 octets supplémentaires à zéro et écrit l'index dans l'image. Le PE
+lit cet index, accède au vecteur GS et modifie sa copie ; le gabarit d'origine
+reste intact. Le parcours normal et le refus volontaire d'un appel IAT ont
+réussi, avec restauration de Darwin et déchargement. Ce refus IAT ne teste pas
+un callback TLS : les listes non vides restent refusées.
+
+La validation comprend 1 023 contrôles TLS ASan/UBSan, 2 821 contrôles de
+régression du chargeur, des dépendances et de l'unwind, la régression du cycle
+DLL et quatre enfants PE exécutés sous Rosetta (avec/sans TLS, normal/refus).
+Les enfants qui changent GS restent sans instrumentation de signal. Les sept
+compilations ont été séquentielles à priorité réduite. Le contrôle indépendant
+confirme les 25 empreintes source, le désassemblage, les protections mémoire,
+l'absence des processus/temporaires et le binaire installé inchangé.
+Preuves : `work/tls-proof-attempt1.log`, `work/tls-pe-encoding-review.json`
+et `work/tls-root-verification.json`.
+
+Le périmètre reste un module synthétique et un thread, sans callbacks TLS,
+initialisation CRT, threads Windows ou combinaison TLS/DLL/unwind. L'opt-in
+n'ouvre pas ces capacités dans le chargeur strict ni dans l'application.
+Un échec de désallocation conserve les ressources suivies jusqu'au nettoyage
+réussi ; il n'autorise pas une nouvelle utilisation du code guest.
+
 Références : [TLS et format PE Microsoft](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#the-tls-section),
 [initialisation CRT Microsoft](https://learn.microsoft.com/en-us/cpp/c-runtime-library/crt-initialization?view=msvc-170),
 [GS dans XNU, révision fixe](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/osfmk/x86_64/idt64.s).
@@ -120,11 +145,11 @@ vérifiée dans Playmelt.
 
 ## Ordre des validations
 
-1. Initialiser un vrai template TLS déclaré par une fixture PE, son zéro initial
-   et son index, avec un opt-in distinct ; les callbacks non pris en charge
-   doivent rester des refus explicites.
-2. Construire le TLS statique et l'ordre d'initialisation des modules, avec
-   notifications, dépendances et nettoyage ; conserver les refus hors contrat.
+1. Qualifier les callbacks TLS réellement observés, leur ordre et leurs
+   transitions vers l'hôte, à partir de fixtures CPU ; conserver les refus hors
+   contrat. Le gabarit, le zéro initial et l'index d'un module sont validés.
+2. Étendre aux modules et threads nécessaires, avec notifications, dépendances,
+   durée de vie et nettoyage, puis combiner les contrats DLL/TLS/unwind.
 3. Traiter les prérequis CRT et les exceptions réellement observés. L'actuel
    calcul limité d'une trame appelante ne constitue pas SEH ni un runtime C++.
 4. Qualifier les appels D3D/COM et leurs callbacks avec un backend CPU factice

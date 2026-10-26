@@ -69,6 +69,16 @@ struct pm_pe_unwind_control {
     size_t range_count;
 };
 
+struct pm_pe_tls_control {
+    uint32_t directory, raw_rva, raw_bytes, index_rva, callbacks_rva;
+    uint32_t zero_fill, alignment, required_fixups, seen_fixups;
+    uint32_t va_rvas[4];
+    size_t block_size;
+    uint8_t *block;
+    uintptr_t vector[2];
+    uint8_t storage[4096+63];
+};
+
 struct pm_pe_lifetime {
     const pm_pe_image *owner;
     const void *mapping;
@@ -77,6 +87,7 @@ struct pm_pe_lifetime {
     const struct pm_pe_export_catalog *exports;
     const struct pm_pe_synthetic_dll_control *dll;
     const struct pm_pe_unwind_control *unwind;
+    const struct pm_pe_tls_control *tls;
     pthread_t thread;
     int ready, is_dll, declared;
     uint32_t incoming;
@@ -91,7 +102,7 @@ static struct pm_pe_lifetime *image_lifetime(const pm_pe_image *image,int owner_
     struct pm_pe_lifetime *c=image->lifetime;
     if (c->owner!=image || !image->mapping || c->mapping!=image->mapping ||
         c->mapping_size!=image->mapping_size || c->entrypoint_rva!=image->entrypoint_rva ||
-        c->exports!=image->exports || c->dll!=image->synthetic_dll || c->unwind!=image->synthetic_unwind ||
+        c->exports!=image->exports || c->dll!=image->synthetic_dll || c->unwind!=image->synthetic_unwind || c->tls!=image->synthetic_tls ||
         (owner_thread && !pthread_equal(c->thread,pthread_self()))) return NULL;
     return c;
 }
@@ -106,7 +117,8 @@ typedef struct {
     uint8_t *mapping, *permissions;
     struct pm_pe_export_catalog *exports;
     struct pm_pe_unwind_control *unwind;
-    int synthetic_dll, synthetic_unwind, is_dll;
+    struct pm_pe_tls_control *tls;
+    int synthetic_dll, synthetic_unwind, synthetic_tls, is_dll;
     char *error;
     size_t error_cap;
 } pm_loader;
@@ -214,6 +226,8 @@ static int parse_headers(pm_loader *p) {
     p->is_dll=is_dll;
     if (p->synthetic_unwind && (is_dll || p->entry==0))
         return fail(p,"invalid-synthetic-unwind: EXE with nonzero entry required");
+    if (p->synthetic_tls && (is_dll || p->entry==0))
+        return fail(p,"invalid-synthetic-tls: EXE with nonzero entry required");
     if (p->synthetic_dll) {
         if (!is_dll || p->entry == 0)
             return fail(p, "invalid-synthetic-dll: DLL flag and nonzero initialization entry required");
@@ -221,6 +235,8 @@ static int parse_headers(pm_loader *p) {
     p->image_size = u32(opt + 56); p->header_size = u32(opt + 60);
     if (p->synthetic_unwind && p->image_size>PM_UNWIND_MAX_IMAGE)
         return fail(p,"unwind-image-limit: maximum 1 MiB");
+    if (p->synthetic_tls && p->image_size>1024u*1024u)
+        return fail(p,"tls-image-limit: maximum 1 MiB");
     if (p->image_size == 0 || p->image_size > PM_MAX_IMAGE || p->image_size % section_align != 0 ||
         p->header_size == 0 || p->header_size > 1024u * 1024u || p->header_size % file_align != 0 ||
         p->header_size > p->image_size || p->header_size > p->size ||
@@ -270,13 +286,15 @@ static int parse_headers(pm_loader *p) {
         uint32_t rva = u32(opt + 112 + i * 8), size = u32(opt + 116 + i * 8);
         if ((rva == 0) != (size == 0)) return fail(p, "invalid-directory: incomplete address/size pair");
         if (rva != 0) {
-            if (unsupported[i] != NULL && !(i==3 && p->synthetic_unwind)) return fail(p, unsupported[i]);
+            if (unsupported[i] != NULL && !(i==3 && p->synthetic_unwind) && !(i==9 && p->synthetic_tls)) return fail(p, unsupported[i]);
             if (raw_at(p, rva, size) == NULL) return fail(p, "invalid-directory: metadata is not file-backed in one section");
         }
         p->dirs[i][0] = rva; p->dirs[i][1] = size;
     }
     if (p->synthetic_unwind && !p->dirs[3][0])
         return fail(p,"invalid-synthetic-unwind: nonempty directory 3 required");
+    if (p->synthetic_tls && !p->dirs[9][0])
+        return fail(p,"invalid-synthetic-tls: nonempty directory 9 required");
     if (!is_dll || p->synthetic_dll) {
         const pm_section *entry_section = section_for(p, p->entry, 1);
         if (p->entry == 0 || entry_section == NULL || !(entry_section->flags & PM_SCN_EXECUTE) || raw_at(p, p->entry, 1) == NULL)
@@ -393,6 +411,103 @@ static int finalize_unwind(pm_loader *p) {
         c->functions[i]=(pm_runtime_function){u32(table+12*i),u32(table+12*i+4),u32(table+12*i+8)};
     c->view.address=(uintptr_t)p->mapping;
     return pm_uw_validate_catalogue(&c->view,0,NULL,NULL,p->error,p->error_cap);
+}
+
+static int tls_range(pm_loader *p,uint32_t rva,size_t bytes,int writable) {
+    const pm_section *s=section_for(p,rva,bytes);
+    uint32_t flags=PM_SCN_READ|(writable?PM_SCN_WRITE:0);
+    unsigned protection=PROT_READ|(writable?PROT_WRITE:0);
+    if (!bytes || !s || (s->flags&(PM_SCN_READ|PM_SCN_WRITE|PM_SCN_EXECUTE))!=flags || !raw_at(p,rva,bytes))
+        return fail(p,"invalid-tls-section: disjoint file-backed R metadata/RW index required");
+    size_t first=rva/p->page_size,last=((size_t)rva+bytes-1)/p->page_size;
+    for (size_t page=first;page<=last;++page) if (p->permissions[page]!=protection)
+        return fail(p,"invalid-tls-pages: final host page permissions differ");
+    return 1;
+}
+
+static int prepare_tls(pm_loader *p) {
+    if (!p->synthetic_tls) return 1;
+    if (p->dirs[9][1]!=40 || p->dirs[9][0]%8)
+        return fail(p,"invalid-tls-directory: aligned40-byte TLS64 required");
+    const uint8_t *raw=raw_at(p,p->dirs[9][0],40);
+    if (!raw) return fail(p,"invalid-tls-directory: unbacked metadata");
+    struct pm_pe_tls_control *c=calloc(1,sizeof *c);
+    if (!c) return fail(p,"allocation-failed: TLS control/block/vector");
+    p->tls=c; c->directory=p->dirs[9][0];
+    for (unsigned i=0;i<4;++i) {
+        uint64_t va=u64(raw+8*i);
+        if (!va && i==3) continue;
+        if (va<p->image_base || va-p->image_base>p->image_size)
+            return fail(p,"invalid-tls-va: address outside image");
+        c->va_rvas[i]=(uint32_t)(va-p->image_base); c->required_fixups|=1u<<i;
+    }
+    if (c->va_rvas[1]<=c->va_rvas[0])
+        return fail(p,"invalid-tls-template: empty/reversed template refused");
+    c->raw_rva=c->va_rvas[0]; c->raw_bytes=c->va_rvas[1]-c->va_rvas[0];
+    c->index_rva=c->va_rvas[2]; c->callbacks_rva=c->va_rvas[3];
+    c->zero_fill=u32(raw+32); uint32_t characteristics=u32(raw+36),align=(characteristics>>20)&15;
+    if ((characteristics&~0x00f00000u) || align>7)
+        return fail(p,"unsupported-tls-characteristics: reserved bits/alignment greater than64");
+    c->alignment=align?(1u<<(align-1)):16; /* explicit subset default, not a Windows guarantee */
+    if (c->raw_bytes>4096 || c->zero_fill>4096-c->raw_bytes)
+        return fail(p,"tls-block-limit: template plus zero-fill exceeds4096");
+    c->block_size=(size_t)c->raw_bytes+c->zero_fill;
+    if (c->index_rva%4) return fail(p,"invalid-tls-index: aligned DWORD required");
+    if (!tls_range(p,c->directory,40,0) || !tls_range(p,c->raw_rva,c->raw_bytes,0) || !tls_range(p,c->index_rva,4,1)) return 0;
+    if (c->required_fixups&8) {
+        if (c->callbacks_rva%8 || !tls_range(p,c->callbacks_rva,8,0))
+            return fail(p,"invalid-tls-callbacks: aligned readable NULL qword required");
+        if (u64(raw_at(p,c->callbacks_rva,8))) return fail(p,"unsupported-tls-callbacks: nonempty callback list");
+    }
+    const uint32_t starts[]={c->directory,c->raw_rva,c->index_rva,c->callbacks_rva};
+    const size_t sizes[]={40,c->raw_bytes,4,(c->required_fixups&8)?8u:0u};
+    for (unsigned i=0;i<4;++i) for (unsigned j=0;j<i;++j)
+        if (sizes[i] && sizes[j] && starts[i]<(uint64_t)starts[j]+sizes[j] && starts[j]<(uint64_t)starts[i]+sizes[i])
+            return fail(p,"invalid-tls-overlap: template/index/directory/callback ranges intersect");
+    uintptr_t aligned=((uintptr_t)c->storage+c->alignment-1)&~(uintptr_t)(c->alignment-1);
+    c->block=(uint8_t *)aligned;
+    return 1;
+}
+
+/* Allow ONLY the exact mandatory VA relocations inside protected TLS ranges.
+ * IAT writes, including zero terminal slots, always use relocation=0. */
+static int tls_write_allowed(pm_loader *p,uint32_t target,size_t bytes,int relocation) {
+    struct pm_pe_tls_control *c=p->tls; if (!c) return 1;
+    const uint32_t starts[]={c->directory,c->raw_rva,c->index_rva,c->callbacks_rva};
+    const size_t sizes[]={40,c->raw_bytes,4,(c->required_fixups&8)?8u:0u};
+    for (unsigned i=0;i<4;++i) if (sizes[i] && target<(uint64_t)starts[i]+sizes[i] && starts[i]<(uint64_t)target+bytes) {
+        if (i==0 && relocation && bytes==8 && target>=c->directory && (target-c->directory)%8==0) {
+            unsigned field=(target-c->directory)/8;
+            if (field<4 && (c->required_fixups&(1u<<field)) && !(c->seen_fixups&(1u<<field))) {
+                c->seen_fixups|=1u<<field; return 1;
+            }
+        }
+        return fail(p,"unsupported-tls-fixup: write overlaps protected TLS range");
+    }
+    return 1;
+}
+
+static int finalize_tls(pm_loader *p) {
+    struct pm_pe_tls_control *c=p->tls; if (!c) return 1;
+    if (c->seen_fixups!=c->required_fixups)
+        return fail(p,"missing-tls-relocations: each nonzero VA needs exact DIR64");
+    uint64_t base=(uintptr_t)p->mapping;
+    for (unsigned i=0;i<4;++i) {
+        uint64_t expected=(c->required_fixups&(1u<<i))?base+c->va_rvas[i]:0;
+        if (u64(p->mapping+c->directory+8*i)!=expected)
+            return fail(p,"tls-snapshot-mismatch: relocated VA differs from validated target");
+    }
+    if (memcmp(p->mapping+c->directory+32,raw_at(p,c->directory+32,8),8) ||
+        memcmp(p->mapping+c->raw_rva,raw_at(p,c->raw_rva,c->raw_bytes),c->raw_bytes) ||
+        memcmp(p->mapping+c->index_rva,raw_at(p,c->index_rva,4),4) ||
+        ((c->required_fixups&8) && u64(p->mapping+c->callbacks_rva)!=0))
+        return fail(p,"tls-snapshot-mismatch: protected mapped bytes changed");
+    memcpy(c->block,p->mapping+c->raw_rva,c->raw_bytes);
+    memset(c->block+c->raw_bytes,0,c->zero_fill);
+    c->vector[0]=0; c->vector[1]=(uintptr_t)c->block;
+    /* The only TLS index write: an actual DWORD in the private mapped image. */
+    p->mapping[c->index_rva]=1; memset(p->mapping+c->index_rva+1,0,3);
+    return 1;
 }
 
 static int export_string(pm_loader *p, const char *text, uint32_t *offset) {
@@ -529,7 +644,7 @@ static int relocate(pm_loader *p) {
             if (target64 > UINT32_MAX || raw_at(p, (uint32_t)target64, 8) == NULL)
                 return fail(p, "invalid-relocations: DIR64 target outside file-backed section");
             uint32_t target = (uint32_t)target64;
-            if (!unwind_write_allowed(p,target,8)) return 0;
+            if (!unwind_write_allowed(p,target,8) || !tls_write_allowed(p,target,8,1)) return 0;
             for (uint32_t j = 0; j < applied; ++j)
                 if (target < (uint64_t)targets[j] + 8 && targets[j] < (uint64_t)target + 8)
                     return fail(p, "invalid-relocations: duplicate or overlapping DIR64 target");
@@ -583,7 +698,7 @@ static int bind_imports(pm_loader *p, pm_import_resolver resolver, void *context
             for (uint32_t j = 0; j < slot_count; ++j)
                 if (slots[j] == (uint32_t)iat64) return fail(p, "invalid-imports: duplicate IAT slot");
             slots[slot_count++] = (uint32_t)iat64;
-            if (!unwind_write_allowed(p,(uint32_t)iat64,8)) return 0;
+            if (!unwind_write_allowed(p,(uint32_t)iat64,8) || !tls_write_allowed(p,(uint32_t)iat64,8,0)) return 0;
             if (value == 0) { put64(p->mapping + (uint32_t)iat64, 0); break; }
             if (symbol_count >= PM_MAX_IMPORTS) return fail(p, "import-limit: more than 1024 named symbols");
             int by_ordinal = (value & (UINT64_C(1) << 63)) != 0;
@@ -623,16 +738,17 @@ static int protect_image(pm_loader *p) {
 
 static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
                        void *context, pm_pe_image *image, char *error, size_t error_cap,
-                       int synthetic_dll,int synthetic_unwind) {
+                       int synthetic_dll,int synthetic_unwind,int synthetic_tls) {
     pm_loader p = {0};
     p.bytes = bytes; p.size = size; p.error = error; p.error_cap = error_cap;
     p.synthetic_dll = synthetic_dll;
     p.synthetic_unwind = synthetic_unwind;
+    p.synthetic_tls = synthetic_tls;
     if (error != NULL && error_cap) error[0] = '\0';
     if (image == NULL) return fail(&p, "invalid-argument: output image is null");
-    if (image->mapping != NULL || image->mapping_size != 0 || image->entrypoint_rva != 0 || image->exports != NULL || image->synthetic_dll != NULL || image->synthetic_unwind != NULL || image->lifetime != NULL)
+    if (image->mapping != NULL || image->mapping_size != 0 || image->entrypoint_rva != 0 || image->exports != NULL || image->synthetic_dll != NULL || image->synthetic_unwind != NULL || image->synthetic_tls != NULL || image->lifetime != NULL)
         return fail(&p, "invalid-argument: unload the previous image before reuse");
-    int ok = parse_headers(&p) && parse_exports(&p) && prepare_unwind(&p);
+    int ok = parse_headers(&p) && parse_exports(&p) && prepare_unwind(&p) && prepare_tls(&p);
     struct pm_pe_synthetic_dll_control *control = NULL;
     if (ok && synthetic_dll) {
         control = calloc(1, sizeof *control);
@@ -654,7 +770,7 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
             const pm_section *s = &p.sections[i];
             if (s->raw_size) memcpy(p.mapping + s->rva, bytes + s->raw_offset, s->raw_size);
         }
-        ok = relocate(&p) && bind_imports(&p, resolver, context) && finalize_unwind(&p) && protect_image(&p);
+        ok = relocate(&p) && bind_imports(&p, resolver, context) && finalize_unwind(&p) && finalize_tls(&p) && protect_image(&p);
     }
     free(p.permissions);
     if (!ok) {
@@ -665,11 +781,13 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
             image->mapping = p.mapping;
             image->mapping_size = p.mapping_size;
             image->entrypoint_rva = 0;
+            image->synthetic_tls=p.tls;
             lifetime->owner=image; lifetime->mapping=p.mapping;
             lifetime->mapping_size=p.mapping_size; lifetime->thread=pthread_self();
-            lifetime->is_dll=p.is_dll; image->lifetime=lifetime;
+            lifetime->is_dll=p.is_dll; lifetime->tls=p.tls; image->lifetime=lifetime;
             return fail(&p, "cleanup-failed: partial mapping retained; retry pm_pe_unload");
         }
+        free(p.tls);
         free(lifetime);
         return 0;
     }
@@ -681,6 +799,7 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
         p.exports->bound_mapping_size = p.mapping_size;
     }
     image->exports = p.exports;
+    image->synthetic_tls=p.tls;
     if (p.unwind) {
         p.unwind->owner=image; p.unwind->mapping=p.mapping;
         p.unwind->mapping_size=p.mapping_size; p.unwind->entrypoint_rva=p.entry;
@@ -694,7 +813,7 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
     }
     lifetime->owner=image; lifetime->mapping=p.mapping; lifetime->mapping_size=p.mapping_size;
     lifetime->entrypoint_rva=p.entry; lifetime->exports=image->exports;
-    lifetime->dll=image->synthetic_dll; lifetime->unwind=image->synthetic_unwind;
+    lifetime->dll=image->synthetic_dll; lifetime->unwind=image->synthetic_unwind; lifetime->tls=image->synthetic_tls;
     lifetime->thread=pthread_self(); lifetime->ready=1; lifetime->is_dll=p.is_dll;
     image->lifetime=lifetime;
     return 1;
@@ -702,12 +821,12 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
 
 int pm_pe_load(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
                void *context, pm_pe_image *image, char *error, size_t error_cap) {
-    return load_image(bytes, size, resolver, context, image, error, error_cap, 0,0);
+    return load_image(bytes, size, resolver, context, image, error, error_cap, 0,0,0);
 }
 
 int pm_pe_load_synthetic_dll(const uint8_t *bytes, size_t size, pm_import_resolver resolver,
                             void *context, pm_pe_image *image, char *error, size_t error_cap) {
-    return load_image(bytes, size, resolver, context, image, error, error_cap, 1,0);
+    return load_image(bytes, size, resolver, context, image, error, error_cap, 1,0,0);
 }
 
 int pm_pe_load_synthetic_unwind_exe(const uint8_t *bytes,size_t size,
@@ -717,7 +836,25 @@ int pm_pe_load_synthetic_unwind_exe(const uint8_t *bytes,size_t size,
         pm_loader p={0}; p.error=error; p.error_cap=error_cap;
         return fail(&p,"unwind-attestation-required: complete catalogue must be explicitly attested");
     }
-    return load_image(bytes,size,resolver,context,image,error,error_cap,0,1);
+    return load_image(bytes,size,resolver,context,image,error,error_cap,0,1,0);
+}
+
+int pm_pe_load_synthetic_tls_exe(const uint8_t *bytes,size_t size,pm_import_resolver resolver,
+    void *context,pm_pe_image *image,char *error,size_t error_cap) {
+    return load_image(bytes,size,resolver,context,image,error,error_cap,0,0,1);
+}
+
+int pm_pe_tls_view(const pm_pe_image *image,pm_pe_tls_state *output,char *error,size_t error_cap) {
+    pm_loader report={0}; report.error=error; report.error_cap=error_cap;
+    if (error && error_cap) error[0]=0;
+    struct pm_pe_lifetime *life=image_lifetime(image,1);
+    if (!life || !life->ready || !image->synthetic_tls || !output)
+        return fail(&report,"tls-view-unavailable: original ready image/loading thread required");
+    const struct pm_pe_tls_control *c=image->synthetic_tls;
+    if (u32((const uint8_t *)image->mapping+c->index_rva)!=1 || c->vector[0] || c->vector[1]!=(uintptr_t)c->block)
+        return fail(&report,"tls-view-unavailable: assigned index/vector changed");
+    pm_pe_tls_state view={c->block,c->block_size,c->raw_bytes,c->zero_fill,c->alignment,c->vector,1,c->index_rva};
+    *output=view; return 1;
 }
 
 static struct pm_pe_unwind_control *unwind_control(const pm_pe_image *image) {
@@ -858,7 +995,7 @@ static int dependency_links_valid(const struct pm_pe_lifetime *owner) {
 int pm_pe_unload(pm_pe_image *image) {
     if (!image) return 1;
     if (!image->mapping && !image->mapping_size && !image->entrypoint_rva && !image->exports &&
-        !image->synthetic_dll && !image->synthetic_unwind && !image->lifetime) return 1;
+        !image->synthetic_dll && !image->synthetic_unwind && !image->synthetic_tls && !image->lifetime) return 1;
     struct pm_pe_lifetime *life=image_lifetime(image,1);
     if (!life || life->incoming || !dependency_links_valid(life)) return 0;
     /* Private unwind/DLL identity is already included in provenance. The raw
@@ -876,7 +1013,7 @@ int pm_pe_unload(pm_pe_image *image) {
     /* All guards were validated before the OS call; these bounded decrements
      * cannot fail and happen ONLY after the client mapping is actually gone. */
     for (size_t i=0;i<life->dependency_count;++i) --life->dependencies[i]->incoming;
-    free(image->exports); free(image->synthetic_dll); free_unwind(image->synthetic_unwind); free(life);
+    free(image->exports); free(image->synthetic_dll); free_unwind(image->synthetic_unwind); free(image->synthetic_tls); free(life);
     *image=(pm_pe_image){0};
     return 1;
 }

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-/* Experimental mapping APIs never call an entry point, TLS, Wine or GPU.
+/* Experimental mapping APIs never call an entry point, TLS callbacks, Wine or GPU.
  * Only the separate explicit synthetic lifecycle API below invokes DllMain.
  * The caller supplies immutable bytes of its OWN synthetic PE64 AMD64 fixture.
  * No filesystem access, dependency discovery, dlopen or external CLI is provided.
@@ -24,6 +24,7 @@ typedef int (*pm_import_resolver)(void *context, const char *dll, const char *na
 struct pm_pe_export_catalog;
 struct pm_pe_synthetic_dll_control;
 struct pm_pe_unwind_control;
+struct pm_pe_tls_control;
 struct pm_pe_lifetime;
 struct pm_unwind_image;
 typedef struct pm_pe_image {
@@ -33,6 +34,7 @@ typedef struct pm_pe_image {
     struct pm_pe_export_catalog *exports; /* Owned; never copy image ownership. */
     struct pm_pe_synthetic_dll_control *synthetic_dll; /* Explicit fixture-only opt-in. */
     struct pm_pe_unwind_control *synthetic_unwind; /* Owned research EXE metadata. */
+    struct pm_pe_tls_control *synthetic_tls; /* Owned single-thread fixture TLS. */
     struct pm_pe_lifetime *lifetime; /* Private provenance/explicit HOST dependencies. */
 } pm_pe_image;
 
@@ -104,6 +106,43 @@ int pm_pe_load_synthetic_dll(const uint8_t *bytes, size_t size, pm_import_resolv
 int pm_pe_load_synthetic_unwind_exe(const uint8_t *bytes, size_t size,
     pm_import_resolver resolver, void *context, int complete_catalogue_attested,
     pm_pe_image *image, char *error, size_t error_cap);
+
+typedef struct pm_pe_tls_state {
+    void *block;                 /* Mutable TLS data, owned by the image. */
+    size_t block_size, template_size, zero_fill, alignment;
+    const uintptr_t *vector;     /* Exactly two immutable slots; slot 0 NULL. */
+    uint32_t index, index_rva;   /* Assigned DWORD 1 in the loaded image. */
+} pm_pe_tls_state;
+
+/* Separate fixture-only EXE opt-in, never a general Windows TLS loader.
+ * Image <=1 MiB; real directory9 exactly40 bytes, nonempty template and total
+ * template+zero-fill <=4096 bytes. Alignment bits23:20 allow1..64; zero means16
+ * here. Other characteristics bits, empty templates, nonempty callbacks, DLL,
+ * unwind/other unsupported directories are refused. Callbacks VA0 or a single
+ * readable NULL qword only. No callback/CRT/entry/GS operation occurs in load.
+ * Directory/template/empty callback table: file-backed, disjoint, final pagesR.
+ * Index: disjoint file-backed aligned DWORD, final pageRW/nonX. Every nonzero
+ * TLS VA field MUST have one exact DIR64 relocation even at preferred base.
+ * Other relocation/IAT writes (zero terminators included) may not overlap these
+ * ranges. Actual mapped bytes are revalidated after fixups; only then the
+ * template is copied, zero-fill initialized, and index1 written in the image.
+ * One owned bounded allocation contains control+aligned block+two-slot vector.
+ * No source bytes are mutated; no directory is stripped to bypass strict load.
+ */
+int pm_pe_load_synthetic_tls_exe(const uint8_t *bytes,size_t size,
+    pm_import_resolver resolver,void *context,pm_pe_image *image,char *error,size_t error_cap);
+
+/* Borrowed initialized state, loading thread/original live image only. Output
+ * unchanged on refusal. Keep image, view/block/vector alive through the entire
+ * guest interval; restore host GS before any host call/unload. No generic active-
+ * guest detection exists: serialized dispatch and no outstanding guest use at
+ * unload are HOST preconditions. Never mutate vector/index/control/template.
+ * Block may be changed by our guest fixture. Failed OS unmap keeps all storage
+ * but enters cleanup-only; no borrowed pointer may then be used, only retry
+ * unload. Copy checks require the original control still alive; not an ABA or
+ * arbitrary-C-pointer defence. output/error/image/owned storage must not alias.
+ */
+int pm_pe_tls_view(const pm_pe_image *image,pm_pe_tls_state *output,char *error,size_t error_cap);
 
 /* Borrowed projection+catalogue, valid only until successful unload. Leaf remains
  * disabled. output unchanged on refusal. Keep the ORIGINAL image object alive,

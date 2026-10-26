@@ -8,7 +8,7 @@ IMPORT_DLL = "playmelt_fixture.dll"
 IMPORT_NAME = "GSCheckpoint"
 
 
-def make_gs_pe_fixture():
+def make_gs_pe_fixture(tls=False):
     image = bytearray(0x1400)
     image[:0x400] = make_fixture()[:0x400]
     def w(at, fmt, *values): struct.pack_into("<"+fmt, image, at, *values)
@@ -24,6 +24,14 @@ def make_gs_pe_fixture():
     for reg in range(6,16): image[0xE40+(reg-6)*16:0xE50+(reg-6)*16]=bytes([reg])*16
     w(0x1000,"QQ",IMAGE_BASE+DATA+8,MAGIC)
     w(0x1200,"IIHH",DATA,12,0xA000,0)
+    if tls:
+        w(0x98+112+9*8,"II",RDATA+0x300,40)
+        w(0xf00,"QQQQII",IMAGE_BASE+RDATA+0x340,IMAGE_BASE+RDATA+0x350,
+          IMAGE_BASE+DATA+0x80,IMAGE_BASE+RDATA+0x380,16,0x00500000)
+        w(0xf40,"QQ",0x12345678abcdef00,0xfeedcab00505cafe)
+        w(0x1080,"I",0xffffffff)
+        w(0x98+112+5*8,"II",RELOC,28)
+        w(0x120c,"IIHHHH",RDATA,16,0xa300,0xa308,0xa310,0xa318)
     code=bytearray(); failures=[]; callsites=[]; guards=[]
     def emit(s): code.extend(bytes.fromhex(s))
     def rip(op,target):
@@ -53,7 +61,17 @@ def make_gs_pe_fixture():
     for _ in range(2):
         emit("65488b042530000000 493b442408"); fail_if_ne()
         emit("65488b042558000000 493b442410"); fail_if_ne()
-        emit("488b4008 493b442418"); fail_if_ne()
+        if tls:
+            rip("8b15",DATA+0x80)  # EDX = real assigned DWORD _tls_index in PE.
+            rip("8915",DATA+0x44)  # Independent guest marker of the loaded index.
+            emit("83fa01"); fail_if_ne()  # Our bounded vector has only slots0,1.
+            emit("488b04d0")  # RAX = [TLS vector + RDX*8], NOT a fixed slot.
+        else:
+            emit("488b4008")
+        emit("493b442418"); fail_if_ne()
+        if tls:
+            emit("4883781000"); fail_if_ne()
+            emit("4883781800"); fail_if_ne()
         emit("49ff842480000000 48830001 49ff842488000000")
         emit("65c704256800000010325476")
         snapshot(); rip("ff05",DATA+0x24); emit("4c89e1")
@@ -75,4 +93,4 @@ def make_gs_pe_fixture():
     assert len(code)<=0x800, len(code)
     image[0x400:0x400+len(code)]=code
     return bytes(image),{"entryRVA":TEXT,"iatRVA":IAT,"callsiteRVAs":callsites,
-                         "failureGuardRVAs":guards,"codeSize":len(code),"tlsDirectoryPresent":False}
+                         "failureGuardRVAs":guards,"codeSize":len(code),"tlsDirectoryPresent":tls}
