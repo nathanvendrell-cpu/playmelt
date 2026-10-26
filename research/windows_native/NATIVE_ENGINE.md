@@ -53,6 +53,23 @@ Même une sonde réussie ne couvre pas les signaux asynchrones, les exceptions,
 la réentrance, les nouveaux threads d'un jeu ou toutes les versions de Rosetta.
 Elle ne doit pas lever le refus du répertoire TLS dans le chargeur strict.
 
+Le raccordement à une [fixture PE embarquée](loader/GS_PE_PROBE.md) a ensuite
+réussi : le chargeur strict prépare le PE de 5 120 octets, sa table d'import et
+ses permissions RX/R/RW. Son point d'entrée effectue deux appels IAT et deux
+écritures dans le bloc de test avant de retourner zéro. Un second processus
+vérifie le refus volontaire du premier appel : retour un, aucune seconde
+écriture, contexte restauré. Les deux images sont déchargées et leur absence
+confirmée par Mach. Le désassemblage indépendant confirme les appels IAT et les
+gardes d'erreur immédiatement après ceux-ci.
+
+Cette fixture n'a toujours pas de répertoire TLS PE : le bloc reste préparé
+par l'hôte. Les 19 contrôles de génération, 14 contrôles hôtes ASan/UBSan et
+les deux parcours exécutés sont distincts d'une initialisation Windows complète.
+Preuves : `work/gs-pe-proof-attempt2.log`, `work/gs-pe-encoding-review.json`
+et `work/gs-pe-root-verification.json`. L'essai de compilation initial, arrêté
+par un avertissement sur un helper inutilisé dans la variante inerte, reste
+conservé dans `work/gs-pe-proof-attempt1.log` ; aucun PE n'y avait été exécuté.
+
 Références : [TLS et format PE Microsoft](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#the-tls-section),
 [initialisation CRT Microsoft](https://learn.microsoft.com/en-us/cpp/c-runtime-library/crt-initialization?view=msvc-170),
 [GS dans XNU, révision fixe](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/osfmk/x86_64/idt64.s).
@@ -103,8 +120,9 @@ vérifiée dans Playmelt.
 
 ## Ordre des validations
 
-1. Intégrer le passage TEB/GS qualifié à une fixture PE embarquée contrôlée ;
-   la sonde actuelle prouve le passage assembleur, pas cette intégration.
+1. Initialiser un vrai template TLS déclaré par une fixture PE, son zéro initial
+   et son index, avec un opt-in distinct ; les callbacks non pris en charge
+   doivent rester des refus explicites.
 2. Construire le TLS statique et l'ordre d'initialisation des modules, avec
    notifications, dépendances et nettoyage ; conserver les refus hors contrat.
 3. Traiter les prérequis CRT et les exceptions réellement observés. L'actuel
