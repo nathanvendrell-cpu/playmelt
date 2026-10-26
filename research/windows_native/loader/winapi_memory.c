@@ -8,8 +8,12 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-/* Primary Microsoft contracts consulted 2026-10-25:
+/* Primary Microsoft contracts consulted 2026-10-25; VirtualAlloc/VirtualFree and
+ * allocation-granularity reference consulted 2026-10-26:
  * https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect
+ * https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc
+ * https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualfree
+ * https://learn.microsoft.com/en-us/windows/win32/memory/comparing-memory-allocation-methods
  * https://learn.microsoft.com/en-us/windows/win32/memory/memory-protection-constants
  * https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
  * https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--500-999-
@@ -29,6 +33,9 @@ typedef struct memory_region {
     size_t bytes;
     uint32_t *pages;
     int quarantined;
+    void *backing;
+    size_t backing_bytes;
+    int guest;
 } memory_region;
 
 struct pm_winapi_memory {
@@ -98,7 +105,8 @@ int pm_winapi_memory_allocate(pm_winapi_memory *ctx, size_t bytes,
     void *mapping = mmap(NULL, rounded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (mapping == MAP_FAILED) { free(pages); goto done; }
     for (size_t i = 0; i < count; ++i) pages[i] = PM_PAGE_READWRITE;
-    ctx->regions[ctx->count++] = (memory_region){mapping, rounded, pages, 0};
+    ctx->regions[ctx->count++] = (memory_region){.base=mapping,.bytes=rounded,.pages=pages,
+        .backing=mapping,.backing_bytes=rounded};
     ctx->bytes += rounded;
     *base = mapping;
     *rounded_bytes = rounded;
@@ -110,8 +118,11 @@ done:
 
 static int release_region(pm_winapi_memory *ctx, size_t index) {
     memory_region *region = &ctx->regions[index];
-    if (munmap(region->base, region->bytes)) return 0;
-    ctx->bytes -= region->bytes;
+    if (munmap(region->backing, region->backing_bytes)) {
+        region->quarantined=1;
+        return 0;
+    }
+    ctx->bytes -= region->backing_bytes;
     free(region->pages);
     if (index + 1 < ctx->count)
         memmove(region, region + 1, (ctx->count - index - 1) * sizeof *region);
@@ -183,6 +194,88 @@ static uint32_t host_error(int error) {
         case EINVAL: return PM_ERROR_INVALID_PARAMETER;
         default: return PM_ERROR_GEN_FAILURE;
     }
+}
+
+void *PM_WINAPI pm_win_VirtualAlloc(void *address,size_t bytes,
+    uint32_t allocation_type,uint32_t protection) {
+    uint32_t failure=PM_ERROR_INVALID_PARAMETER;
+    if (address || !bytes || bytes>PM_MEMORY_MAX_REGION_BYTES ||
+        allocation_type!=(PM_MEM_RESERVE|PM_MEM_COMMIT) || protection!=PM_PAGE_READWRITE) goto fail;
+    failure=PM_MEMORY_ERROR_INVALID_ADDRESS;
+    pm_winapi_memory *ctx=tls_ready()?pthread_getspecific(memory_key):NULL;
+    if (!ctx) goto fail;
+    pthread_mutex_lock(&ctx->mutex);
+    void *result=NULL;
+    failure=PM_MEMORY_ERROR_NOT_ENOUGH_MEMORY;
+    size_t padding=PM_MEMORY_ALLOCATION_GRANULARITY-ctx->page_size;
+    if (bytes>SIZE_MAX-(ctx->page_size-1)) goto done;
+    size_t rounded=(bytes+ctx->page_size-1)&~(ctx->page_size-1);
+    if (rounded>SIZE_MAX-padding) goto done;
+    size_t backing_bytes=rounded+padding;
+    if (!ctx->bound || ctx->count==PM_MEMORY_MAX_REGIONS ||
+        backing_bytes>PM_MEMORY_MAX_TOTAL_BYTES-ctx->bytes) goto done;
+    size_t page_count=rounded/ctx->page_size;
+    uint32_t *pages=calloc(page_count,sizeof *pages);
+    if (!pages) goto done;
+    void *backing=mmap(NULL,backing_bytes,PROT_NONE,MAP_PRIVATE|MAP_ANON,-1,0);
+    if (backing==MAP_FAILED) { failure=host_error(errno); free(pages); goto done; }
+    uintptr_t start=(uintptr_t)backing,mask=PM_MEMORY_ALLOCATION_GRANULARITY-1;
+    int ready=0;
+    void *base=NULL;
+    if (start<=UINTPTR_MAX-mask) {
+        uintptr_t aligned=(start+mask)&~mask;
+        if (aligned && aligned-start<=padding && rounded<=backing_bytes-(aligned-start)) {
+            base=(void *)aligned;
+            ready=mprotect(base,rounded,PROT_READ|PROT_WRITE)==0;
+            if (!ready) failure=host_error(errno);
+        } else failure=PM_ERROR_GEN_FAILURE;
+    } else failure=PM_ERROR_ARITHMETIC_OVERFLOW;
+    if (!ready) {
+        free(pages);
+        if (munmap(backing,backing_bytes)) {
+            /* No returned guest base: retain unknown OS state privately, with
+             * its entire cost and a slot, until owner cleanup can be confirmed. */
+            ctx->regions[ctx->count++]=(memory_region){.quarantined=1,.backing=backing,
+                .backing_bytes=backing_bytes,.guest=1};
+            ctx->bytes+=backing_bytes;
+            failure=PM_ERROR_GEN_FAILURE;
+        }
+        goto done;
+    }
+    for (size_t i=0;i<page_count;++i) pages[i]=PM_PAGE_READWRITE;
+    ctx->regions[ctx->count++]=(memory_region){.base=base,.bytes=rounded,.pages=pages,
+        .backing=backing,.backing_bytes=backing_bytes,.guest=1};
+    ctx->bytes+=backing_bytes;
+    result=base;
+done:
+    pthread_mutex_unlock(&ctx->mutex);
+    if (result) return result;
+fail:
+    pm_win_SetLastError(failure);
+    return NULL;
+}
+
+int32_t PM_WINAPI pm_win_VirtualFree(void *address,size_t bytes,uint32_t free_type) {
+    uint32_t failure=PM_ERROR_INVALID_PARAMETER;
+    if (bytes || free_type!=PM_MEM_RELEASE) goto fail;
+    failure=PM_MEMORY_ERROR_INVALID_ADDRESS;
+    pm_winapi_memory *ctx=tls_ready()?pthread_getspecific(memory_key):NULL;
+    if (!ctx || !address) goto fail;
+    pthread_mutex_lock(&ctx->mutex);
+    int ok=0;
+    for (size_t i=0;i<ctx->count;++i) {
+        memory_region *region=&ctx->regions[i];
+        if (region->guest && region->base==address) {
+            ok=release_region(ctx,i);
+            if (!ok) failure=host_error(errno);
+            break;
+        }
+    }
+    pthread_mutex_unlock(&ctx->mutex);
+    if (ok) return 1;
+fail:
+    pm_win_SetLastError(failure);
+    return 0;
 }
 
 int32_t PM_WINAPI pm_win_VirtualProtect(void *address, size_t bytes,
@@ -306,5 +399,7 @@ int pm_winapi_memory_resolve(void *context, const char *dll, const char *name,
     }
     if (!named_module(dll, "kernel32.dll") && !named_module(dll, "kernelbase.dll")) return 0;
     if (!strcmp(name, "VirtualProtect")) { *address = (uintptr_t)&pm_win_VirtualProtect; return 1; }
+    if (!strcmp(name, "VirtualAlloc")) { *address = (uintptr_t)&pm_win_VirtualAlloc; return 1; }
+    if (!strcmp(name, "VirtualFree")) { *address = (uintptr_t)&pm_win_VirtualFree; return 1; }
     return pm_winapi_resolve(NULL, dll, name, ordinal, by_ordinal, address);
 }

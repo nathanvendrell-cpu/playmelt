@@ -131,11 +131,12 @@ ignore SIGTERM après la sortie de son parent. Aucun GPU, modèle d'inférence o
 `winapi_memory.h/.c` ajoute un resolver optionnel pour `VirtualProtect`, sans
 modifier le chargeur PE ni les protections des jeux. L'API host crée ses propres
 allocations anonymes RW : huit régions au maximum, 1 Mio par région et 4 Mio par
-contexte. Il n'existe aucune inscription de mémoire empruntée ni implémentation
-de `VirtualAlloc`/`VirtualFree` Windows. Le contexte doit être lié explicitement
-au thread appelant ; allocation, libération et destruction sont interdites tant
-qu'il est lié. La sortie du thread libère la liaison, puis le propriétaire doit
-détruire le contexte. Une erreur de `munmap` conserve le handle pour réessayer.
+contexte, backing d'alignement guest compris. Il n'existe aucune inscription de
+mémoire empruntée. Le contexte doit être lié explicitement au thread appelant ;
+les mutations par les API hôtes restent interdites tant qu'il est lié. Les deux
+formes guest de `VirtualAlloc`/`VirtualFree` décrites plus bas ont leur propre
+contrat. La sortie du thread libère la liaison, puis le propriétaire doit détruire
+le contexte. Une erreur de `munmap` conserve la région en quarantaine pour réessayer.
 
 Chaque demande doit tenir dans une seule allocation d'origine. Les pages
 englobantes sont modifiées par le vrai `mprotect` de macOS. Les modes disponibles
@@ -155,7 +156,7 @@ doit délier puis libérer cette allocation. Aucun rollback implicite ni succès
 fondé seulement sur des métadonnées n'est annoncé. Les erreurs Win32 utilisées
 et les limites de ce sous-ensemble sont détaillées dans le header.
 
-La suite CPU compte **415 contrôles PASS** avec ASan/UBSan : protections macOS
+La validation initiale a passé **415 contrôles** avec ASan/UBSan : protections macOS
 observées, arrondis et franchissements de pages, modes antérieurs différents,
 sorties non alignées, limites, mauvais thread, refus W+X, échecs OS et nettoyage.
 Un double rend réellement une première page inaccessible puis échoue pour
@@ -205,8 +206,8 @@ les régions libres, ni les images PE, ni les piles, ni un autre processus. Une
 région mise en quarantaine reste refusée ; aucune permission incertaine n'est
 présentée comme connue.
 
-Les 633 contrôles CPU ASan/UBSan passent, ainsi que les 415 contrôles de
-`VirtualProtect`. Le harnais ci-dessous exécute cinq appels depuis un PE
+La validation initiale a passé 633 contrôles CPU ASan/UBSan, ainsi que les 415
+contrôles de `VirtualProtect`. Le harnais ci-dessous exécute cinq appels depuis un PE
 synthétique, dont les arguments cinq et six placés sur la pile, puis compare
 les résultats à vingt observations des protections Mach des régions détenues :
 
@@ -219,12 +220,69 @@ Les preuves sont conservées dans `work/ntquery-memory-probe.json` et
 Apple n'est accepté par ce harnais ; toutes ses allocations et processus sont
 nettoyés après exécution.
 
+## Allocation et libération demandées par le PE
+
+Les imports `VirtualAlloc` et `VirtualFree`, observés dans DXGI, disposent d'un
+sous-ensemble réel à quatre et trois arguments Windows x64. Seules ces formes
+sont admises, dans le contexte mémoire lié au thread appelant :
+
+```c
+VirtualAlloc(NULL, taille, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+VirtualFree(base_guest_exacte, 0, MEM_RELEASE);
+```
+
+Une demande de 1 octet à 1 Mio produit une fenêtre anonyme initialement à zéro,
+arrondie aux pages de l'hôte et alignée sur 64 Kio. Le backing complet est réservé
+en PROT_NONE, puis seule la fenêtre devient RW. Les marges restent inaccessibles
+et exclues de `VirtualProtect` et `NtQueryVirtualMemory`. Le backing est conservé
+entier jusqu'à sa libération : aucun découpage intermédiaire fragile. Le plafond
+de 4 Mio inclut les marges et les éventuels nettoyages différés, avec huit slots
+au maximum. Il s'agit de mémoire virtuelle CPU, sans réservation de VRAM ni
+promesse sur la mémoire physique résidente.
+
+`VirtualFree` ne libère que les bases guest publiées par ce même contexte. Une
+adresse intérieure, inconnue, déjà libérée ou issue de l'allocateur hôte est
+refusée. Les autres formes Windows restent refusées : adresse imposée,
+réservation seule, commit seul, décommit, reset, grandes pages et allocation
+exécutable. La granularité des pages reste celle de l'hôte ; aucune émulation
+générale des pages Windows n'est annoncée.
+
+Une allocation dont la protection échoue est nettoyée. Si ce nettoyage échoue
+aussi, elle reste comptée dans un slot interne en quarantaine, sans base publiée,
+jusqu'à la destruction du contexte après détachement. Une libération échouée
+conserve le backing, le budget et la base pour réessayer ; les autres usages de
+la région sont refusés entre-temps. Aucun succès n'est renvoyé pour une opération
+OS échouée. Les succès préservent `LastError` ; le header définit les codes de
+refus propres à ce sous-ensemble.
+
+Le runner suivant compile et exécute successivement cinq suites CPU ASan/UBSan
+à priorité réduite, puis notre seul PE embarqué :
+
+```sh
+python3 -B research/windows_native/loader/run_allocation_probe.py
+```
+
+Le 26 octobre 2026, 1 711 contrôles ont passé : 419 protection, 633 query,
+318 allocation/libération, 109 collisions et 232 résolution commune. Le compteur
+d'allocation peut varier selon les marges effectivement présentes. La sonde a
+vérifié une demande de 37 octets, 4 096 octets initialement à zéro, une base
+alignée sur 64 Kio, des écritures et lectures par le PE, puis les états Mach
+RW, R et absent après libération. `VirtualAlloc` passe par l'IAT et l'adresse
+de `VirtualFree` obtenue par `GetProcAddress` est vérifiée avant son appel.
+Les requêtes à six arguments et les canaris des sorties sont également contrôlés.
+
+Les pages allouées ne sont jamais exécutées. Le runner refuse les arguments
+externes, nettoie ses groupes de processus et son dossier temporaire, et vérifie
+les hashes des 25 sources avant/après. La preuve complète de cette exécution est
+`work/virtual-allocation-proof-attempt1.log`. Aucun jeu ni composant Apple n'a été
+chargé ; ce résultat ne valide pas le chargement de DXGI ou de DirectX 12.
+
 ## Résolution commune des fonctions déjà disponibles
 
 `winapi_combined.c` rassemble les sept fonctions de base, les trois fonctions de
-modules et les deux fonctions mémoire existantes. Il n'ajoute aucune API Windows.
+modules et les quatre fonctions mémoire existantes. Le résolveur ne crée aucun stub.
 Les requêtes doivent désigner un nom exact, avec ordinal zéro et sans recherche
-par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les onze
+par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les treize
 autres fonctions appartiennent à `kernel32.dll` ou `kernelbase.dll`.
 
 Les fournisseurs existants peuvent exposer la même fonction de base. Le
@@ -245,8 +303,8 @@ contexte requis. Les limites de chaque API, notamment la mémoire détenue,
 restent identiques.
 
 Le runner séquentiel ci-dessous vérifie d'abord les refus de collisions avec
-des fournisseurs simulés (109 contrôles), puis le raccordement aux fournisseurs
-réels, la recherche dynamique et les bindings partiels (214 contrôles). Les
+des fournisseurs simulés, puis le raccordement aux fournisseurs réels, la
+recherche dynamique et les bindings partiels. Les
 deux suites sont instrumentées ASan/UBSan. Il exécute ensuite notre seul PE
 embarqué : imports de modules statiques, recherche de deux adresses mémoire
 par `GetProcAddress`, vérification exacte de ces adresses avant leur appel,
@@ -261,8 +319,8 @@ puis RW, la seconde reste RW. Elle vérifie aussi les champs NT, `LastError`,
 les paddings et les canaris des sorties. Aucune de ces pages de données n'est
 exécutée. Seul l'appel à l'entrée PE générée est exempté du contrôle UBSan des
 métadonnées de type de fonction, absentes de cette entrée ; aucune exclusion
-globale. Les douze adresses sont couvertes par les tests de résolution, sans
-prétendre que la sonde a appelé les douze fonctions. Commandes, hashes, résultats
+globale. Les adresses disponibles sont couvertes par les tests de résolution,
+sans prétendre que la sonde a appelé toutes les fonctions. Commandes, hashes, résultats
 et nettoyage sont consignés dans `work/winapi-combined-proof.log`.
 
 ## Reconstruction bornée d'une frame x64
@@ -445,8 +503,12 @@ décodeur est couvert par 32 tests de fichiers synthétiques inertes.
 - [Microsoft : exceptions et unwind x64](https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64).
 - [Microsoft : prologues et épilogues x64](https://learn.microsoft.com/en-us/cpp/build/prolog-and-epilog).
 - [Microsoft : VirtualProtect](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect).
+- [Microsoft : VirtualAlloc](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc).
+- [Microsoft : VirtualFree](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualfree).
+- [Microsoft : pages et granularité d'allocation](https://learn.microsoft.com/en-us/windows/win32/memory/comparing-memory-allocation-methods).
 - [Microsoft : constantes de protection](https://learn.microsoft.com/en-us/windows/win32/memory/memory-protection-constants).
 - [Microsoft : NtQueryVirtualMemory](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntqueryvirtualmemory).
 - [Microsoft : MEMORY_BASIC_INFORMATION](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-memory_basic_information).
 - [The Open Group : mprotect, édition consultée](https://pubs.opengroup.org/onlinepubs/7908799/xsh/mprotect.html).
 - [Apple : mprotect](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/mprotect.2.html).
+- [Apple : munmap](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/munmap.2.html).

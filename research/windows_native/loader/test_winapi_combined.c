@@ -15,7 +15,7 @@ static const service services[]={
     SERVICE(QueryPerformanceCounter),SERVICE(QueryPerformanceFrequency),
     SERVICE(GetTickCount64),SERVICE(GetSystemTimeAsFileTime),
     SERVICE(GetModuleHandleA),SERVICE(GetModuleHandleW),SERVICE(GetProcAddress),
-    SERVICE(VirtualProtect),SERVICE(NtQueryVirtualMemory)
+    SERVICE(VirtualProtect),SERVICE(VirtualAlloc),SERVICE(VirtualFree),SERVICE(NtQueryVirtualMemory)
 #undef SERVICE
 };
 static pm_winapi_modules *modules(void) {
@@ -35,15 +35,15 @@ static void rejected(const char *dll,const char *symbol,uint16_t ordinal,int by_
 }
 static void test_resolution(void) {
     const char *hosts[]={"kernel32.dll","KernelBase.DLL","NTDLL.dll"};
-    for (unsigned h=0;h<3;++h) for (unsigned i=0;i<12;++i) {
+    for (unsigned h=0;h<3;++h) for (unsigned i=0;i<sizeof services/sizeof *services;++i) {
         uintptr_t address=123; pm_win_SetLastError(765);
-        int expected=(h==2)==(i==11);
+        int expected=(h==2)==!strcmp(services[i].name,"NtQueryVirtualMemory");
         CHECK(pm_winapi_combined_resolve(NULL,hosts[h],services[i].name,0,0,&address)==expected);
         CHECK(address==(expected?services[i].address:0) && pm_win_GetLastError()==765);
     }
     const char *bad_dlls[]={NULL,"","kernel32","kernel32.dll/","/kernel32.dll","other.dll", "api-ms-win-core-memory-l1-1-0.dll"};
     for (unsigned i=0;i<sizeof bad_dlls/sizeof *bad_dlls;++i) rejected(bad_dlls[i],"GetLastError",0,0);
-    const char *bad_names[]={NULL,"","getLastError","GetLastError ","GetLastErrorX","VirtualAlloc","FreeLibrary","LoadLibraryA","VirtualProtectEx","\xff"};
+    const char *bad_names[]={NULL,"","getLastError","GetLastError ","GetLastErrorX","VirtualAllocEx","FreeLibrary","LoadLibraryA","VirtualProtectEx","\xff"};
     for (unsigned i=0;i<sizeof bad_names/sizeof *bad_names;++i) rejected("kernel32.dll",bad_names[i],0,0);
     char long_name[257]; memset(long_name,'A',sizeof long_name); long_name[256]=0;
     rejected("kernel32.dll",long_name,0,0);
@@ -80,15 +80,16 @@ static void test_dynamic_and_bindings(void) {
     void *ntdll=pm_win_GetModuleHandleW(wide);
     CHECK(k32 && kbase && ntdll && k32!=kbase && k32!=ntdll && kbase!=ntdll);
     CHECK(pm_win_GetModuleHandleA(NULL)==main_bytes);
-    for (unsigned i=0;i<12;++i) {
+    for (unsigned i=0;i<sizeof services/sizeof *services;++i) {
         pm_win_SetLastError(123);
-        CHECK(pm_win_GetProcAddress(i==11?ntdll:k32,services[i].name)==services[i].address);
+        int isnt=!strcmp(services[i].name,"NtQueryVirtualMemory");
+        CHECK(pm_win_GetProcAddress(isnt?ntdll:k32,services[i].name)==services[i].address);
         CHECK(pm_win_GetLastError()==123);
-        if (i!=11) CHECK(pm_win_GetProcAddress(kbase,services[i].name)==services[i].address);
+        if (!isnt) CHECK(pm_win_GetProcAddress(kbase,services[i].name)==services[i].address);
     }
     CHECK(!pm_win_GetProcAddress(k32,"NtQueryVirtualMemory") && pm_win_GetLastError()==PM_ERROR_PROC_NOT_FOUND);
     CHECK(!pm_win_GetProcAddress(ntdll,"VirtualProtect") && pm_win_GetLastError()==PM_ERROR_PROC_NOT_FOUND);
-    CHECK(!pm_win_GetProcAddress(k32,"VirtualAlloc") && pm_win_GetLastError()==PM_ERROR_PROC_NOT_FOUND);
+    CHECK(!pm_win_GetProcAddress(k32,"VirtualAllocEx") && pm_win_GetLastError()==PM_ERROR_PROC_NOT_FOUND);
     CHECK(!pm_win_GetProcAddress(k32,(const char *)(uintptr_t)1) && pm_win_GetLastError()==PM_ERROR_PROC_NOT_FOUND);
     CHECK(!pm_win_GetModuleHandleA("missing") && pm_win_GetLastError()==PM_ERROR_MOD_NOT_FOUND);
     typedef int32_t (PM_WINAPI *protect_function)(void *,size_t,uint32_t,void *);

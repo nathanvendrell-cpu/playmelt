@@ -15,6 +15,9 @@ enum {
     PM_PAGE_READONLY = 0x02,
     PM_PAGE_READWRITE = 0x04,
     PM_PAGE_EXECUTE_READ = 0x20,
+    PM_MEM_COMMIT = 0x1000,
+    PM_MEM_RESERVE = 0x2000,
+    PM_MEM_RELEASE = 0x8000,
     PM_MEMORY_ERROR_ACCESS_DENIED = 5,
     PM_MEMORY_ERROR_NOT_ENOUGH_MEMORY = 8,
     PM_MEMORY_ERROR_INVALID_ADDRESS = 487,
@@ -23,6 +26,7 @@ enum {
 #define PM_MEMORY_MAX_REGIONS 8u
 #define PM_MEMORY_MAX_REGION_BYTES (1024u * 1024u)
 #define PM_MEMORY_MAX_TOTAL_BYTES (4u * 1024u * 1024u)
+#define PM_MEMORY_ALLOCATION_GRANULARITY 65536u
 #define PM_MEMORY_BASIC_INFORMATION64_BYTES 48u
 #define PM_STATUS_SUCCESS ((int32_t)0)
 #define PM_STATUS_INVALID_INFO_CLASS ((int32_t)UINT32_C(0xc0000003))
@@ -34,7 +38,9 @@ enum {
 /* HOST ABI, not VirtualAlloc/VirtualFree. Own small anonymous allocations; no
  * imported/borrowed memory registration exists. Allocation rounds up to host
  * pages and starts RW; returned rounded size is the entire owned reservation.
- * Sizes and region count are bounded above. No files, GPU or MAP_JIT are used.
+ * Sizes and region count are bounded above. The total budget includes the full
+ * backing of guest allocations, including alignment padding and retained failed
+ * cleanup slots. No files, GPU or MAP_JIT are used.
  * Caller must never externally mprotect/munmap these mappings or race access.
  * Raw addresses expire at release/destroy; this is not an untrusted-code sandbox.
  * create/add/release/destroy must be owner-serialized. Host output pointers are
@@ -51,12 +57,46 @@ int pm_winapi_memory_release(pm_winapi_memory *context, void *exact_base);
  * the allocations; owner joins then explicitly destroys. No internal thread.
  * Destroy reports munmap failures and retains context + failed mappings for a
  * retry; successfully unmapped regions are removed. It never loses a live handle.
+ * Failed host release/destroy also quarantines each failed region: no later
+ * query/protection/output use is accepted, but release/destroy can be retried.
  * All host functions preserve LastError. Destroy(NULL pointer-to-context)=0;
  * destroy(&null_context)=1. Bind/unbind are explicit, not automatically nested.
  */
 int pm_winapi_memory_bind(pm_winapi_memory *context);
 int pm_winapi_memory_unbind(void);
 int pm_winapi_memory_destroy(pm_winapi_memory **context);
+
+/* Windows x64 ABI, strictly limited guest allocation on the CURRENT bound memory
+ * context. VirtualAlloc accepts ONLY (NULL,1..1MiB,MEM_RESERVE|MEM_COMMIT,RW).
+ * Exposed size rounds to HOST pages (not emulated Windows 4KiB pages). Base is
+ * aligned to this AMD64 prototype's fixed 64KiB allocation granularity. Real
+ * anonymous zero-filled memory: reserve a PROT_NONE backing, expose its aligned
+ * RW window, keep padding PROT_NONE. Keep/release the WHOLE backing, never trim.
+ * Padding is not guest memory and cannot be queried/protected. No allocation at
+ * a specified address, reserve-only, commit-only, decommit, reset, huge pages,
+ * executable allocation, VRAM or promise about physical resident memory.
+ *
+ * VirtualFree accepts ONLY (exact published GUEST base,0,MEM_RELEASE) in that
+ * same bound context. It never releases HOST allocations or another context's
+ * memory. Interior/unknown/double-free addresses fail. Success removes the ledger
+ * entry ONLY after munmap of the full backing succeeds. Raw pointers then expire;
+ * address reuse can occur, so this is not an ABA defence against a stale caller.
+ * Success preserves LastError. Invalid form =>87; absent context/unknown address
+ * =>487; exhausted budget/calloc =>8; OS errors use the existing errno mapping.
+ *
+ * A protection setup failure triggers backing cleanup. If cleanup also fails,
+ * return NULL + GEN_FAILURE(31), retain a counted unpublished quarantined slot
+ * (no guest base) for owner destroy after unbind. Original mprotect error is used
+ * if cleanup succeeds. Failed VirtualFree keeps its slot/budget and quarantines
+ * it: queries/protection/output use fail until a successful retry Free or owner
+ * destroy. Do not assume OS failures roll back or continue using that pointer.
+ * Host allocate/release/destroy remain forbidden while bound; only these guest
+ * calls may add/remove their own guest regions from the uniquely bound context.
+ * Thread exit unbinds but does not silently free allocations; owner must destroy.
+ */
+void *PM_WINAPI pm_win_VirtualAlloc(void *address, size_t bytes,
+    uint32_t allocation_type, uint32_t protection);
+int32_t PM_WINAPI pm_win_VirtualFree(void *address, size_t bytes, uint32_t free_type);
 
 /* Windows x64 ABI, deliberately restricted VirtualProtect. The PDWORD output is
  * represented as void* in C to permit byte-safe unaligned outputs without making
@@ -117,9 +157,9 @@ int32_t PM_WINAPI pm_win_NtQueryVirtualMemory(void *process, void *address,
     void *return_length);
 
 /* HOST ABI opt-in import resolver. Strict named NtQueryVirtualMemory only on
- * ntdll.dll; VirtualProtect on kernel32.dll and kernelbase.dll, then delegate
+ * ntdll.dll; VirtualAlloc/VirtualFree/VirtualProtect on kernel32.dll/kernelbase.dll, then delegate
  * the original seven-function base resolver. DLL case is ignored, symbols exact.
- * No dependency on module handles; no VirtualAlloc/Free or fallback stubs. */
+ * No dependency on module handles; no fallback stubs or other allocation forms. */
 int pm_winapi_memory_resolve(void *context, const char *dll, const char *name,
     uint16_t ordinal, int by_ordinal, uintptr_t *address);
 

@@ -8,12 +8,12 @@
 extern "C" {
 #endif
 
-/* HOST ABI composition of the existing 7 base + 3 module + 2 memory entry
+/* HOST ABI composition of the existing 7 base + 3 module + 4 memory entry
  * points; no new Windows API, binding, module load, or memory registration.
  * Only canonical named requests (ordinal==0, by_ordinal==0), exact symbols,
  * and ASCII case-insensitive kernel32.dll/kernelbase.dll/ntdll.dll basenames.
  * Strings are trusted host-readable NUL-terminated inputs, bounded to 255 bytes
- * for symbols. NtQueryVirtualMemory belongs only to ntdll.dll; the other 11
+ * for symbols. NtQueryVirtualMemory belongs only to ntdll.dll; the other 13
  * belong only to kernel32.dll/kernelbase.dll. No API-set/path/ordinal fallback.
  * All three fixed providers are consulted. Duplicate successes MUST have the
  * same nonzero address; divergence or an inconsistent provider response fails.

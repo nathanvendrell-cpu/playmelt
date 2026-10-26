@@ -289,7 +289,11 @@ static void test_threads_and_imports(void) {
     CHECK(address==(uintptr_t)&pm_win_GetLastError);
     CHECK(!pm_winapi_memory_resolve(NULL,"ntdll.dll","VirtualProtect",0,0,&address) && !address);
     CHECK(!pm_winapi_memory_resolve(NULL,"kernel32.dll",NULL,5,1,&address) && !address);
-    const char *refused[]={"VirtualAlloc","VirtualFree","VirtualProtectEx","virtualprotect","FlushInstructionCache"};
+    CHECK(pm_winapi_memory_resolve(NULL,"kernel32.dll","VirtualAlloc",0,0,&address));
+    CHECK(address==(uintptr_t)&pm_win_VirtualAlloc);
+    CHECK(pm_winapi_memory_resolve(NULL,"kernelbase.dll","VirtualFree",0,0,&address));
+    CHECK(address==(uintptr_t)&pm_win_VirtualFree);
+    const char *refused[]={"VirtualAllocEx","VirtualFreeEx","VirtualProtectEx","virtualprotect","FlushInstructionCache"};
     for (size_t i=0;i<sizeof refused/sizeof *refused;++i)
         CHECK(!pm_winapi_memory_resolve(NULL,"kernel32.dll",refused[i],0,0,&address) && !address);
     CHECK(!mappings && !allocations && !wx_requests);

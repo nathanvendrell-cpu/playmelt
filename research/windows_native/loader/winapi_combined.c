@@ -31,7 +31,7 @@ int pm_winapi_combined_resolve(void *context, const char *dll, const char *name,
     const char *symbols[]={"GetLastError","SetLastError","GetCurrentProcessId",
         "QueryPerformanceCounter","QueryPerformanceFrequency","GetTickCount64",
         "GetSystemTimeAsFileTime","GetModuleHandleA","GetModuleHandleW",
-        "GetProcAddress","VirtualProtect","NtQueryVirtualMemory"};
+        "GetProcAddress","VirtualProtect","VirtualAlloc","VirtualFree","NtQueryVirtualMemory"};
     int allowed=0;
     for (size_t i=0;i<sizeof symbols/sizeof *symbols;++i)
         if (!strcmp(name,symbols[i])) { allowed=1; break; }
