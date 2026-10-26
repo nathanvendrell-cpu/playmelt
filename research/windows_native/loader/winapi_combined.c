@@ -33,7 +33,7 @@ int pm_winapi_combined_resolve(void *context, const char *dll, const char *name,
         "GetSystemTimeAsFileTime","GetModuleHandleA","GetModuleHandleW",
         "GetProcAddress","VirtualProtect","VirtualAlloc","VirtualFree","NtQueryVirtualMemory",
         "CreateEventExA","SetEvent","ResetEvent","WaitForSingleObject","CloseHandle",
-        "CreateSemaphoreExA","ReleaseSemaphore"};
+        "CreateSemaphoreExA","ReleaseSemaphore","DuplicateHandle"};
     int allowed=0;
     for (size_t i=0;i<sizeof symbols/sizeof *symbols;++i)
         if (!strcmp(name,symbols[i])) { allowed=1; break; }

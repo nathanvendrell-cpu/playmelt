@@ -156,6 +156,19 @@ int32_t PM_WINAPI pm_win_NtQueryVirtualMemory(void *process, void *address,
     uint32_t information_class, void *information, size_t information_length,
     void *return_length);
 
+/* Narrow HOST ABI bridge, NOT a Windows export or arbitrary-pointer writer.
+ * Validate/write exactly 8 bytes in ONE nonquarantined owned RW region of the
+ * current, exclusively thread-bound memory context. Every crossed host page is
+ * checked; padding, image/stack/unowned pointers are refused. Unaligned output
+ * is copied as bytes. Failure leaves output and LastError unchanged; success
+ * also preserves LastError. No memory operations/reentrant signal handlers may
+ * mutate this context between can_write and write; write independently rechecks.
+ * Host raw memory access must be serialized, as for the existing memory APIs.
+ * This is validation-before-copy, not an atomic 8-byte publication guarantee.
+ */
+int pm_winapi_memory_can_write_handle(void *output);
+int pm_winapi_memory_write_handle(void *output,uintptr_t handle);
+
 /* HOST ABI opt-in import resolver. Strict named NtQueryVirtualMemory only on
  * ntdll.dll; VirtualAlloc/VirtualFree/VirtualProtect on kernel32.dll/kernelbase.dll, then delegate
  * the original seven-function base resolver. DLL case is ignored, symbols exact.

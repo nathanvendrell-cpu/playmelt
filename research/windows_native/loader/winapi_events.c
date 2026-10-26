@@ -1,4 +1,5 @@
 #include "winapi_events.h"
+#include "winapi_memory.h"
 #include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -19,20 +20,25 @@
  * interval from the SAME monotone deadline, never from the original duration.
  */
 typedef struct event_slot {
-    uintptr_t token;
     pthread_cond_t condition;
-    uint32_t access;
-    unsigned waiters;
+    unsigned references,waiters;
     struct { int active,granted; } waiting[PM_EVENTS_MAX_BINDINGS];
     int manual,signaled,semaphore;
     int32_t count,maximum;
 } event_slot;
+typedef struct sync_handle {
+    uintptr_t token;
+    event_slot *object;
+    uint32_t access;
+    unsigned waiters;
+} sync_handle;
 struct pm_winapi_events {
     pthread_mutex_t mutex;
     pthread_t owner;
     unsigned bindings;
     int closing;
     event_slot slots[PM_EVENTS_MAX_EVENTS];
+    sync_handle handles[PM_EVENTS_MAX_HANDLES];
 };
 static pthread_key_t events_key;
 static pthread_once_t events_once=PTHREAD_ONCE_INIT;
@@ -96,8 +102,10 @@ int pm_winapi_events_destroy(pm_winapi_events **pointer) {
     else context->closing=1;
     for (size_t i=0;ok && i<PM_EVENTS_MAX_EVENTS;++i) {
         event_slot *slot=&context->slots[i];
-        if (!slot->token) continue;
+        if (!slot->references) continue;
         if (slot->waiters || pthread_cond_destroy(&slot->condition)!=0) { ok=0; break; }
+        for (size_t h=0;h<PM_EVENTS_MAX_HANDLES;++h)
+            if (context->handles[h].object==slot) memset(&context->handles[h],0,sizeof context->handles[h]);
         memset(slot,0,sizeof *slot);
     }
     (void)pthread_mutex_unlock(&context->mutex);
@@ -113,11 +121,16 @@ static uintptr_t issue_token(void) {
     }
     return 0;
 }
-static event_slot *find_event(pm_winapi_events *context,void *handle) {
+static sync_handle *find_handle(pm_winapi_events *context,void *handle) {
     uintptr_t token=(uintptr_t)handle;
     if (!token) return NULL;
-    for (size_t i=0;i<PM_EVENTS_MAX_EVENTS;++i)
-        if (context->slots[i].token==token) return &context->slots[i];
+    for (size_t i=0;i<PM_EVENTS_MAX_HANDLES;++i)
+        if (context->handles[i].token==token) return &context->handles[i];
+    return NULL;
+}
+static sync_handle *free_handle(pm_winapi_events *context) {
+    for (size_t i=0;i<PM_EVENTS_MAX_HANDLES;++i)
+        if (!context->handles[i].token) return &context->handles[i];
     return NULL;
 }
 static pm_winapi_events *enter(int *previous) {
@@ -139,12 +152,13 @@ void *PM_WINAPI pm_win_CreateEventExA(void *attributes,const char *name,uint32_t
     int previous; pm_winapi_events *context=enter(&previous);
     if (!context) return NULL;
     event_slot *slot=NULL;
-    for (size_t i=0;i<PM_EVENTS_MAX_EVENTS;++i) if (!context->slots[i].token) { slot=&context->slots[i]; break; }
-    uintptr_t token=slot?issue_token():0;
+    for (size_t i=0;i<PM_EVENTS_MAX_EVENTS;++i) if (!context->slots[i].references) { slot=&context->slots[i]; break; }
+    sync_handle *entry=free_handle(context);
+    uintptr_t token=slot && entry?issue_token():0;
     if (!token) pm_win_SetLastError(8);
     else if (pthread_cond_init(&slot->condition,NULL)!=0) { pm_win_SetLastError(PM_ERROR_GEN_FAILURE); token=0; }
     else {
-        slot->token=token; slot->access=access; slot->manual=(flags&1)!=0;
+        slot->references=1; *entry=(sync_handle){.token=token,.object=slot,.access=access}; slot->manual=(flags&1)!=0;
         slot->signaled=(flags&2)!=0; slot->waiters=0; slot->semaphore=0;
     }
     leave(context,previous); return (void *)token;
@@ -158,12 +172,13 @@ void *PM_WINAPI pm_win_CreateSemaphoreExA(void *attributes,int32_t initial_count
     int previous; pm_winapi_events *context=enter(&previous);
     if (!context) return NULL;
     event_slot *slot=NULL;
-    for (size_t i=0;i<PM_EVENTS_MAX_EVENTS;++i) if (!context->slots[i].token) { slot=&context->slots[i]; break; }
-    uintptr_t token=slot?issue_token():0;
+    for (size_t i=0;i<PM_EVENTS_MAX_EVENTS;++i) if (!context->slots[i].references) { slot=&context->slots[i]; break; }
+    sync_handle *entry=free_handle(context);
+    uintptr_t token=slot && entry?issue_token():0;
     if (!token) pm_win_SetLastError(8);
     else if (pthread_cond_init(&slot->condition,NULL)!=0) { pm_win_SetLastError(PM_ERROR_GEN_FAILURE); token=0; }
     else {
-        slot->token=token; slot->access=access; slot->semaphore=1;
+        slot->references=1; *entry=(sync_handle){.token=token,.object=slot,.access=access}; slot->semaphore=1;
         slot->count=initial_count; slot->maximum=maximum_count; slot->waiters=0;
     }
     leave(context,previous); return (void *)token;
@@ -173,9 +188,10 @@ int32_t PM_WINAPI pm_win_ReleaseSemaphore(void *handle,int32_t release_count,voi
     if (previous_count || release_count<=0) { pm_win_SetLastError(PM_ERROR_INVALID_PARAMETER); return 0; }
     int previous; pm_winapi_events *context=enter(&previous);
     if (!context) return 0;
-    int32_t ok=0; event_slot *slot=find_event(context,handle);
+    int32_t ok=0; sync_handle *entry=find_handle(context,handle);
+    event_slot *slot=entry?entry->object:NULL;
     if (!slot || !slot->semaphore) pm_win_SetLastError(PM_ERROR_INVALID_HANDLE);
-    else if (!(slot->access&PM_EVENT_MODIFY_STATE)) pm_win_SetLastError(5);
+    else if (!(entry->access&PM_EVENT_MODIFY_STATE)) pm_win_SetLastError(5);
     /* This check precedes grant distribution: pending waits cannot legitimize
      * an increment that would exceed the semaphore's current maximum. */
     else if (release_count>slot->maximum-slot->count) pm_win_SetLastError(298);
@@ -198,9 +214,10 @@ int32_t PM_WINAPI pm_win_ReleaseSemaphore(void *handle,int32_t release_count,voi
 static int32_t change_event(void *handle,int set) {
     int previous; pm_winapi_events *context=enter(&previous);
     if (!context) return 0;
-    int32_t ok=0; event_slot *slot=find_event(context,handle);
+    int32_t ok=0; sync_handle *entry=find_handle(context,handle);
+    event_slot *slot=entry?entry->object:NULL;
     if (!slot || slot->semaphore) pm_win_SetLastError(PM_ERROR_INVALID_HANDLE);
-    else if (!(slot->access&PM_EVENT_MODIFY_STATE)) pm_win_SetLastError(5);
+    else if (!(entry->access&PM_EVENT_MODIFY_STATE)) pm_win_SetLastError(5);
     else if (!set) { slot->signaled=0; ok=1; }
     else if (slot->signaled) ok=1;
     else {
@@ -236,9 +253,10 @@ uint32_t PM_WINAPI pm_win_WaitForSingleObject(void *handle,uint32_t milliseconds
     if (milliseconds>PM_EVENTS_MAX_WAIT_MS) { pm_win_SetLastError(PM_ERROR_INVALID_PARAMETER); return PM_WAIT_FAILED; }
     int previous; pm_winapi_events *context=enter(&previous);
     if (!context) return PM_WAIT_FAILED;
-    uint32_t result=PM_WAIT_FAILED; event_slot *slot=find_event(context,handle);
+    uint32_t result=PM_WAIT_FAILED; sync_handle *entry=find_handle(context,handle);
+    event_slot *slot=entry?entry->object:NULL;
     if (!slot) pm_win_SetLastError(PM_ERROR_INVALID_HANDLE);
-    else if (!(slot->access&PM_EVENT_SYNCHRONIZE)) pm_win_SetLastError(5);
+    else if (!(entry->access&PM_EVENT_SYNCHRONIZE)) pm_win_SetLastError(5);
     else if (slot->semaphore?slot->count>0:slot->signaled) {
         if (slot->semaphore) --slot->count; else if (!slot->manual) slot->signaled=0;
         result=PM_WAIT_OBJECT_0;
@@ -255,7 +273,7 @@ uint32_t PM_WINAPI pm_win_WaitForSingleObject(void *handle,uint32_t milliseconds
             if (waiter==PM_EVENTS_MAX_BINDINGS) {
                 pm_win_SetLastError(8); leave(context,previous); return PM_WAIT_FAILED;
             }
-            deadline=now+interval; ++slot->waiters;
+            deadline=now+interval; ++slot->waiters; ++entry->waiters;
             slot->waiting[waiter].active=1; slot->waiting[waiter].granted=0;
             for (;;) {
                 if (slot->waiting[waiter].granted) { result=PM_WAIT_OBJECT_0; break; }
@@ -269,7 +287,7 @@ uint32_t PM_WINAPI pm_win_WaitForSingleObject(void *handle,uint32_t milliseconds
                  * mutex: a concurrent Set can have won the deadline race. */
             }
             memset(&slot->waiting[waiter],0,sizeof slot->waiting[waiter]);
-            --slot->waiters;
+            --slot->waiters; --entry->waiters;
         }
     }
     leave(context,previous); return result;
@@ -277,11 +295,49 @@ uint32_t PM_WINAPI pm_win_WaitForSingleObject(void *handle,uint32_t milliseconds
 int32_t PM_WINAPI pm_win_CloseHandle(void *handle) {
     int previous; pm_winapi_events *context=enter(&previous);
     if (!context) return 0;
-    int32_t ok=0; event_slot *slot=find_event(context,handle);
+    int32_t ok=0; sync_handle *entry=find_handle(context,handle);
+    event_slot *slot=entry?entry->object:NULL;
     if (!slot) pm_win_SetLastError(PM_ERROR_INVALID_HANDLE);
-    else if (slot->waiters) pm_win_SetLastError(170);
+    else if (entry->waiters) pm_win_SetLastError(170);
+    else if (slot->references>1) {
+        --slot->references; memset(entry,0,sizeof *entry); ok=1;
+    } else if (slot->waiters) pm_win_SetLastError(170);
     else if (pthread_cond_destroy(&slot->condition)!=0) pm_win_SetLastError(PM_ERROR_GEN_FAILURE);
-    else { memset(slot,0,sizeof *slot); ok=1; }
+    else { memset(slot,0,sizeof *slot); memset(entry,0,sizeof *entry); ok=1; }
+    leave(context,previous); return ok;
+}
+int32_t PM_WINAPI pm_win_DuplicateHandle(void *source_process,void *source_handle,
+    void *target_process,void *target_handle,uint32_t desired_access,int32_t inherit,uint32_t options) {
+    if ((uintptr_t)source_process!=UINTPTR_MAX || (uintptr_t)target_process!=UINTPTR_MAX) {
+        pm_win_SetLastError(PM_ERROR_INVALID_HANDLE); return 0;
+    }
+    /* CLOSE_SOURCE is deliberately unsupported: never close on any error. */
+    if (inherit || (options!=0 && options!=PM_DUPLICATE_SAME_ACCESS)) {
+        pm_win_SetLastError(PM_ERROR_INVALID_PARAMETER); return 0;
+    }
+    int previous; pm_winapi_events *context=enter(&previous);
+    if (!context) return 0;
+    int32_t ok=0; sync_handle *source=find_handle(context,source_handle);
+    sync_handle *target=free_handle(context);
+    uint32_t access=options==PM_DUPLICATE_SAME_ACCESS && source?source->access:desired_access;
+    if (!source) pm_win_SetLastError(PM_ERROR_INVALID_HANDLE);
+    else if (access&~(PM_EVENT_MODIFY_STATE|PM_EVENT_SYNCHRONIZE)) pm_win_SetLastError(PM_ERROR_INVALID_PARAMETER);
+    else if (access&~source->access) pm_win_SetLastError(5);
+    else if (!pm_winapi_memory_can_write_handle(target_handle)) pm_win_SetLastError(998);
+    else if (!target) pm_win_SetLastError(8);
+    else {
+        uintptr_t token=issue_token();
+        if (!token) pm_win_SetLastError(8);
+        else if (!pm_winapi_memory_write_handle(target_handle,token)) pm_win_SetLastError(998);
+        else {
+            /* Output is validated/written while the sync mutex is held. The
+             * bound memory context is exclusive to this thread; no callback or
+             * cancellation point can mutate it here. No fallible operation
+             * remains between publication of output and this handle entry. */
+            *target=(sync_handle){.token=token,.object=source->object,.access=access};
+            ++source->object->references; ok=1;
+        }
+    }
     leave(context,previous); return ok;
 }
 static int module_is(const char *input,const char *expected) {
@@ -298,7 +354,7 @@ int pm_winapi_events_resolve(void *context,const char *dll,const char *name,uint
     *address=0;
     if (ordinal || by_ordinal || !name || (!module_is(dll,"kernel32.dll") && !module_is(dll,"kernelbase.dll"))) return 0;
 #define RESOLVE(symbol) if (!strcmp(name,#symbol)) { *address=(uintptr_t)&pm_win_##symbol; return 1; }
-    RESOLVE(CreateSemaphoreExA) RESOLVE(ReleaseSemaphore)
+    RESOLVE(DuplicateHandle) RESOLVE(CreateSemaphoreExA) RESOLVE(ReleaseSemaphore)
     RESOLVE(CreateEventExA) RESOLVE(SetEvent) RESOLVE(ResetEvent) RESOLVE(WaitForSingleObject) RESOLVE(CloseHandle)
 #undef RESOLVE
     return pm_winapi_resolve(context,dll,name,ordinal,by_ordinal,address);

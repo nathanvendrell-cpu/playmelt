@@ -79,6 +79,10 @@ static int wrapped_wait(pthread_cond_t *condition,pthread_mutex_t *mutex,const s
 #undef pthread_mutex_init
 #undef pthread_setspecific
 #undef clock_gettime
+/* Test observer only; not compiled into the standalone production module. */
+static event_slot *find_event(pm_winapi_events *context,void *handle) {
+    sync_handle *entry=find_handle(context,handle); return entry?entry->object:NULL;
+}
 #define RIGHTS (PM_EVENT_MODIFY_STATE|PM_EVENT_SYNCHRONIZE)
 static void *event(uint32_t flags,uint32_t rights) { void *h=pm_win_CreateEventExA(NULL,NULL,flags,rights); CHECK(h); return h; }
 static void begin_gate(int hold) {

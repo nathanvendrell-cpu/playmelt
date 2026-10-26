@@ -306,8 +306,9 @@ son propre signal de réveil : un événement automatique en libère une, un
 Reset n'efface pas un réveil déjà attribué. Un appel sans attente ne peut pas
 consommer celui d'un autre thread.
 
-Fermer un événement pendant une attente échoue avec `ERROR_BUSY` et conserve
-son handle. Les échecs OS ne deviennent pas des succès logiques ; les ressources
+Fermer le handle exact utilisé par une attente échoue avec `ERROR_BUSY` et le
+conserve. Un autre alias du même objet peut être fermé pendant cette attente.
+Les échecs OS ne deviennent pas des succès logiques ; les ressources
 dont la destruction échoue restent disponibles pour nettoyage. Une destruction
 partielle du contexte interdit toute nouvelle liaison jusqu'au nettoyage complet.
 L'annulation pthread différée est suspendue pendant les invariants puis rétablie après
@@ -386,13 +387,72 @@ capacité de 512 ; ce refus avant compilation est conservé dans
 plus courts ont corrigé la taille sans agrandir le fichier PE ni sa section.
 Ces preuves ne chargent aucun composant Apple et ne qualifient aucun jeu.
 
+## Dupliquer les handles sans dupliquer leur objet
+
+`DuplicateHandle`, également importé par DXGI, utilise sept arguments Win64.
+Le contexte distingue désormais seize objets de synchronisation et trente-deux
+handles au maximum. Chaque handle possède ses droits et ses attentes en cours ;
+l'événement ou le sémaphore partagé conserve son état, ses réveils attribués et
+son compteur de références. Fermer un alias laisse les autres utilisables.
+La dernière fermeture ne retire l'objet qu'après destruction réussie de la
+condition pthread ; un échec conserve la référence pour une nouvelle tentative.
+
+Seuls les deux pseudo-handles de processus courant `-1` sont acceptés, avec un
+événement ou sémaphore du contexte courant et `inherit = FALSE`. L'option
+`DUPLICATE_SAME_ACCESS` ignore les droits demandés et recopie ceux du handle
+source. Sans cette option, les droits peuvent seulement être réduits, jusqu'à
+zéro pour un handle uniquement fermable. L'extension de droits, les handles de
+processus ou de threads, l'héritage et les transferts entre processus restent
+hors contrat.
+
+La sortie doit désigner huit octets accessibles en écriture dans une seule
+allocation détenue par le contexte mémoire lié au thread. Les sorties non
+alignées sont acceptées ; piles, images PE, pointeurs inconnus, pages protégées
+et allocations en quarantaine sont refusés avant toute écriture. Cette exigence
+est une limite du prototype, pas une propriété de l'API Windows. Aucun contexte
+mémoire n'est lié automatiquement par l'appel.
+
+`DUPLICATE_CLOSE_SOURCE` est refusé sans fermer la source : sa sémantique Windows,
+qui ferme même en cas d'erreur, n'est pas implémentée. Les autres refus préservent
+également la sortie, les handles et les références. Les droits plus larges que
+ceux de la source sont refusés, même si Windows peut les autoriser dans certains
+cas. Les valeurs réellement utilisées par DXGI ne sont toujours pas connues.
+
+```sh
+python3 -B research/windows_native/loader/run_duplicate_probe.py
+```
+
+Le 26 octobre 2026, 1 881 contrôles ASan/UBSan ont passé : 79 sorties mémoire,
+436 duplication, 393 sémaphores, 462 événements, 207 collisions et 304 résolution
+commune. Les compteurs concurrents peuvent varier selon l'ordonnancement. Deux
+alias attendent simultanément, sur un événement automatique puis un sémaphore :
+leurs compteurs restent distincts, leurs réveils partagés ne peuvent être volés,
+et un troisième alias peut être fermé pendant ces attentes. Les tests couvrent
+aussi les quotas séparés, les droits nuls ou réduits, les sorties non alignées
+traversant une page, la quarantaine mémoire et les échecs de publication ou de
+dernière fermeture.
+
+Le PE de 3 584 octets appelle les sept arguments, avec les trois derniers sur la
+pile Win64. L'adresse dynamique est contrôlée avant appel ; la sortie se trouve
+dans une allocation détenue, avec canaris sur toute la page. L'alias partage
+l'état de l'événement et reste utilisable après fermeture de la source. Les
+sondes PE des événements et sémaphores ont également passé. Les neuf compilations
+sont séquentielles à `nice 15`. Les 36 empreintes et résultats sont conservés dans
+`work/winapi-duplicate-proof-attempt2.log` ; le contrôle des processus, temporaires
+et du binaire installé est dans `work/winapi-duplicate-root-verification.json`.
+
+Le premier essai, arrêté sur un diagnostic du bac à sable refusant `setpriority`
+avant tout test, est conservé dans `work/winapi-duplicate-proof-attempt1.log`.
+La reprise avec l'autorisation d'abaisser la priorité a terminé sans diagnostic.
+Aucun composant Apple ni jeu n'a été exécuté ; l'application installée est inchangée.
+
 ## Résolution commune des fonctions déjà disponibles
 
 `winapi_combined.c` rassemble les sept fonctions de base, les trois fonctions de
-modules, les quatre fonctions mémoire et les sept fonctions de synchronisation.
+modules, les quatre fonctions mémoire et les huit fonctions de synchronisation.
 Le résolveur ne crée aucun stub.
 Les requêtes doivent désigner un nom exact, avec ordinal zéro et sans recherche
-par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les vingt
+par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les vingt et une
 autres fonctions appartiennent à `kernel32.dll` ou `kernelbase.dll`.
 
 Les fournisseurs existants peuvent exposer la même fonction de base. Le
@@ -638,6 +698,7 @@ instructions. Aucun code de cette DLL n'a été exécuté.
 - [Microsoft : ResetEvent](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-resetevent).
 - [Microsoft : WaitForSingleObject](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject).
 - [Microsoft : CloseHandle](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle).
+- [Microsoft : DuplicateHandle](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-duplicatehandle).
 - [Microsoft : CreateSemaphoreExA](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsemaphoreexa).
 - [Microsoft : ReleaseSemaphore](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-releasesemaphore).
 - [Microsoft : droits des objets de synchronisation](https://learn.microsoft.com/en-us/windows/win32/sync/synchronization-object-security-and-access-rights).

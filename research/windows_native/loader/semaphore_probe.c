@@ -77,9 +77,10 @@ static int32_t PM_WINAPI checkpoint(void) {
          * not a public runtime/debug API. Flags/name/attributes were validated
          * by the real six-argument entry; verify count/max/access here too. */
         if (pthread_mutex_lock(&events->mutex)==0) {
-            event_slot *slot=find_event(events,handle);
+            sync_handle *binding=find_handle(events,handle);
+            event_slot *slot=binding?binding->object:NULL;
             if (!slot || !slot->semaphore || slot->count!=0 || slot->maximum!=2 ||
-                slot->access!=(PM_EVENT_MODIFY_STATE|PM_EVENT_SYNCHRONIZE)) ok=0;
+                binding->access!=(PM_EVENT_MODIFY_STATE|PM_EVENT_SYNCHRONIZE)) ok=0;
             if (pthread_mutex_unlock(&events->mutex)!=0) ok=0;
         } else ok=0;
         if (ok && pthread_mutex_lock(&gate)==0) {

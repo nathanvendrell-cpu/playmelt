@@ -10,6 +10,8 @@ extern "C" {
 typedef struct pm_winapi_events pm_winapi_events;
 #define PM_EVENTS_MAX_EVENTS 16u
 #define PM_EVENTS_MAX_BINDINGS 8u
+#define PM_EVENTS_MAX_HANDLES 32u
+#define PM_DUPLICATE_SAME_ACCESS 2u
 #define PM_EVENTS_MAX_WAIT_MS 100u
 #define PM_CREATE_EVENT_MANUAL_RESET 1u
 #define PM_CREATE_EVENT_INITIAL_SET 2u
@@ -20,7 +22,7 @@ typedef struct pm_winapi_events pm_winapi_events;
 #define PM_WAIT_FAILED UINT32_MAX
 
 /* HOST ABI. A context owns at most 16 anonymous synchronization objects TOTAL
- * (events and semaphores share those slots). It may be explicitly
+ * (events and semaphores share those slots), with at most 32 live handles. It may be explicitly
  * bound by up to 8 host pthreads at once, one context per thread. No CreateThread,
  * inherited/named events, ACLs, other handle types or Windows kernel objects.
  * The creating thread owns destroy: it must serialize context lifetime against
@@ -66,7 +68,7 @@ int pm_winapi_events_destroy(pm_winapi_events **context);
  * latency can delay return; this is not a real-time bound or Windows sleep-state
  * emulation. Only imports, not actual DXGI call arguments, have been observed.
  * Only PM_WAIT_OBJECT_0, TIMEOUT, FAILED can be returned.
- * Closing an event with a pending waiter deterministically fails BUSY(170) and
+ * Closing the exact handle with a pending waiter deterministically fails BUSY(170) and
  * preserves it (Windows leaves this race undefined; this is our stricter policy).
  * OS cond-signal failure leaves the previous logical state unchanged; waits
  * never report success just because a condvar woke. Failed cond-destroy retains
@@ -114,7 +116,38 @@ void *PM_WINAPI pm_win_CreateSemaphoreExA(void *attributes,int32_t initial_count
     int32_t maximum_count,const char *name,uint32_t flags,uint32_t access);
 int32_t PM_WINAPI pm_win_ReleaseSemaphore(void *handle,int32_t release_count,void *previous_count);
 
-/* Seven named imports on kernel32/kernelbase only, then original base resolver.
+/* Seven-argument Windows ABI, restricted DuplicateHandle. Source/target process
+ * must both equal the current-process pseudohandle (-1). Source must be an event
+ * or semaphore handle in this thread's bound sync context; process/thread/file/
+ * module handles cannot be duplicated. inherit must be FALSE. options=0 permits
+ * only a subset of the source rights (including zero: Close-only alias), while
+ * SAME_ACCESS(2) ignores desired_access and copies rights exactly. There is no
+ * rights escalation, generic mapping, ACL or cross-process support. CLOSE_SOURCE
+ * and unknown options fail BEFORE any effect: unlike full Windows semantics for
+ * CLOSE_SOURCE, even failure does NOT close the source. NULL output is refused.
+ *
+ * Each duplicate gets a distinct nonreused token and per-handle rights/waiter
+ * count, but shares the same object's state, permits/grants and condvar. Closing
+ * an alias not itself waited on is allowed while another alias waits. Closing
+ * the actual waiting handle remains BUSY. Only the final reference destroys the
+ * object; failed cond-destroy preserves the last handle/refcount/quota for retry.
+ *
+ * target_handle is void* to avoid a false C pointer-alignment promise: exactly
+ * 8 bytes must be RW in ONE nonquarantined region of the thread's bound memory
+ * context. No arbitrary host/guest stack or PE image outputs. Input/source,
+ * rights, capacity and output are checked before publication; all failures keep
+ * output/source/object references/handle quota unchanged. An internal token may
+ * be burned after a late write refusal, but it is never reused. Memory binding
+ * exclusivity and nonreentrant host serialization are required; this is not an
+ * untrusted-memory sandbox or general atomic output store. Sync lock stays held
+ * through checked write and infallible alias publication. Success preserves
+ * LastError; invalid process/source6, form87, escalation5, output998, capacity8.
+ * Actual DXGI DuplicateHandle arguments remain unknown; this is a chosen subset.
+ */
+int32_t PM_WINAPI pm_win_DuplicateHandle(void *source_process,void *source_handle,
+    void *target_process,void *target_handle,uint32_t desired_access,int32_t inherit,uint32_t options);
+
+/* Eight named imports on kernel32/kernelbase only, then original base resolver.
  * Host ABI, no binding side effect; unknown/ordinal requests clear output. */
 int pm_winapi_events_resolve(void *context,const char *dll,const char *name,
     uint16_t ordinal,int by_ordinal,uintptr_t *address);

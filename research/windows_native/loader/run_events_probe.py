@@ -50,7 +50,7 @@ def main():
                 return bounded(command, 20).decode().strip()
 
             for name, sources in (
-                ("event-tests", ("winapi_subset.c", "test_winapi_events.c")),
+                ("event-tests", ("winapi_subset.c", "winapi_memory.c", "test_winapi_events.c")),
                 ("combined-collisions", ("winapi_combined.c", "test_winapi_combined_collisions.c")),
                 ("combined-integration", (*common, "winapi_events.c", "test_winapi_combined.c")),
             ):

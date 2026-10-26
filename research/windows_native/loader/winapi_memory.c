@@ -331,6 +331,20 @@ static int writable_range(pm_winapi_memory *ctx, uintptr_t at, size_t bytes) {
     return 1;
 }
 
+/* Narrow HOST bridge for synchronization-handle publication. The TLS memory
+ * binding is exclusive to this thread; owner mutations/reentrant signal-handler
+ * use/external mprotect or munmap while bound are forbidden by its contract. */
+int pm_winapi_memory_can_write_handle(void *output) {
+    pm_winapi_memory *ctx=tls_ready()?pthread_getspecific(memory_key):NULL;
+    return ctx && writable_range(ctx,(uintptr_t)output,8);
+}
+int pm_winapi_memory_write_handle(void *output,uintptr_t handle) {
+    if (!pm_winapi_memory_can_write_handle(output)) return 0;
+    unsigned char bytes[8];
+    for (size_t i=0;i<8;++i) bytes[i]=(unsigned char)((uint64_t)handle>>(8*i));
+    memcpy(output,bytes,sizeof bytes); return 1;
+}
+
 static void little_endian(unsigned char *out, uint64_t value, size_t bytes) {
     for (size_t i = 0; i < bytes; ++i) out[i] = (unsigned char)(value >> (8 * i));
 }
