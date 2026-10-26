@@ -69,6 +69,33 @@ struct pm_pe_unwind_control {
     size_t range_count;
 };
 
+struct pm_pe_lifetime {
+    const pm_pe_image *owner;
+    const void *mapping;
+    size_t mapping_size;
+    uint32_t entrypoint_rva;
+    const struct pm_pe_export_catalog *exports;
+    const struct pm_pe_synthetic_dll_control *dll;
+    const struct pm_pe_unwind_control *unwind;
+    pthread_t thread;
+    int ready, is_dll, declared;
+    uint32_t incoming;
+    size_t dependency_count;
+    struct pm_pe_lifetime *dependencies[PM_PE_DEPENDENCY_LIMIT];
+};
+
+/* Read-only export inspection remains allowed on a different serialized HOST
+ * thread; ownership mutation explicitly requests the loading-thread guard. */
+static struct pm_pe_lifetime *image_lifetime(const pm_pe_image *image,int owner_thread) {
+    if (!image || !image->lifetime) return NULL;
+    struct pm_pe_lifetime *c=image->lifetime;
+    if (c->owner!=image || !image->mapping || c->mapping!=image->mapping ||
+        c->mapping_size!=image->mapping_size || c->entrypoint_rva!=image->entrypoint_rva ||
+        c->exports!=image->exports || c->dll!=image->synthetic_dll || c->unwind!=image->synthetic_unwind ||
+        (owner_thread && !pthread_equal(c->thread,pthread_self()))) return NULL;
+    return c;
+}
+
 typedef struct {
     const uint8_t *bytes;
     size_t size, page_size, mapping_size;
@@ -79,7 +106,7 @@ typedef struct {
     uint8_t *mapping, *permissions;
     struct pm_pe_export_catalog *exports;
     struct pm_pe_unwind_control *unwind;
-    int synthetic_dll, synthetic_unwind;
+    int synthetic_dll, synthetic_unwind, is_dll;
     char *error;
     size_t error_cap;
 } pm_loader;
@@ -184,6 +211,7 @@ static int parse_headers(pm_loader *p) {
         return fail(p, "unsupported-alignment: invalid section/file alignment");
     p->image_base = u64(opt + 24); p->entry = u32(opt + 16);
     int is_dll = (attributes & 0x2000) != 0;
+    p->is_dll=is_dll;
     if (p->synthetic_unwind && (is_dll || p->entry==0))
         return fail(p,"invalid-synthetic-unwind: EXE with nonzero entry required");
     if (p->synthetic_dll) {
@@ -602,13 +630,18 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
     p.synthetic_unwind = synthetic_unwind;
     if (error != NULL && error_cap) error[0] = '\0';
     if (image == NULL) return fail(&p, "invalid-argument: output image is null");
-    if (image->mapping != NULL || image->mapping_size != 0 || image->entrypoint_rva != 0 || image->exports != NULL || image->synthetic_dll != NULL || image->synthetic_unwind != NULL)
+    if (image->mapping != NULL || image->mapping_size != 0 || image->entrypoint_rva != 0 || image->exports != NULL || image->synthetic_dll != NULL || image->synthetic_unwind != NULL || image->lifetime != NULL)
         return fail(&p, "invalid-argument: unload the previous image before reuse");
     int ok = parse_headers(&p) && parse_exports(&p) && prepare_unwind(&p);
     struct pm_pe_synthetic_dll_control *control = NULL;
     if (ok && synthetic_dll) {
         control = calloc(1, sizeof *control);
         if (control == NULL) ok = fail(&p, "allocation-failed: synthetic DLL lifecycle");
+    }
+    struct pm_pe_lifetime *lifetime=NULL;
+    if (ok) {
+        lifetime=calloc(1,sizeof *lifetime);
+        if (!lifetime) ok=fail(&p,"allocation-failed: image lifetime control");
     }
     if (ok) {
         void *mapping = mmap(NULL, p.mapping_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -632,8 +665,12 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
             image->mapping = p.mapping;
             image->mapping_size = p.mapping_size;
             image->entrypoint_rva = 0;
+            lifetime->owner=image; lifetime->mapping=p.mapping;
+            lifetime->mapping_size=p.mapping_size; lifetime->thread=pthread_self();
+            lifetime->is_dll=p.is_dll; image->lifetime=lifetime;
             return fail(&p, "cleanup-failed: partial mapping retained; retry pm_pe_unload");
         }
+        free(lifetime);
         return 0;
     }
     image->mapping = p.mapping;
@@ -655,6 +692,11 @@ static int load_image(const uint8_t *bytes, size_t size, pm_import_resolver reso
         control->thread = pthread_self(); control->state = PM_PE_DLL_READY;
         image->synthetic_dll = control;
     }
+    lifetime->owner=image; lifetime->mapping=p.mapping; lifetime->mapping_size=p.mapping_size;
+    lifetime->entrypoint_rva=p.entry; lifetime->exports=image->exports;
+    lifetime->dll=image->synthetic_dll; lifetime->unwind=image->synthetic_unwind;
+    lifetime->thread=pthread_self(); lifetime->ready=1; lifetime->is_dll=p.is_dll;
+    image->lifetime=lifetime;
     return 1;
 }
 
@@ -679,7 +721,8 @@ int pm_pe_load_synthetic_unwind_exe(const uint8_t *bytes,size_t size,
 }
 
 static struct pm_pe_unwind_control *unwind_control(const pm_pe_image *image) {
-    if (!image || !image->synthetic_unwind) return NULL;
+    struct pm_pe_lifetime *life=image_lifetime(image,1);
+    if (!life || !life->ready || !image->synthetic_unwind) return NULL;
     struct pm_pe_unwind_control *c=image->synthetic_unwind;
     if (c->owner!=image || c->mapping!=image->mapping || c->mapping_size!=image->mapping_size ||
         c->entrypoint_rva!=image->entrypoint_rva || !image->mapping ||
@@ -711,34 +754,46 @@ static struct pm_pe_synthetic_dll_control *dll_control(const pm_pe_image *image)
 
 pm_pe_dll_state pm_pe_synthetic_dll_state(const pm_pe_image *image) {
     struct pm_pe_synthetic_dll_control *control = dll_control(image);
-    return control ? control->state : PM_PE_DLL_UNAVAILABLE;
+    struct pm_pe_lifetime *life=image_lifetime(image,1);
+    return control && life && life->ready ? control->state : PM_PE_DLL_UNAVAILABLE;
 }
 
 /* Microsoft dynamic-load DllMain semantics, consulted 2026-10-25:
  * https://learn.microsoft.com/en-us/windows/win32/dlls/dllmain
  * FALSE from PROCESS_ATTACH receives PROCESS_DETACH; detach's BOOL is ignored.
  * No Windows exception dispatcher or host fault recovery is provided here. */
+#if defined(__x86_64__)
+typedef int32_t (__attribute__((ms_abi)) *pm_synthetic_dll_entry)(void *,uint32_t,void *);
+/* Source-generated PE entries carry no Clang function-type metadata. Exempt
+ * only this trampoline call; all other ASan/UBSan host instrumentation remains. */
+__attribute__((no_sanitize("function")))
+static int32_t call_synthetic_dll_entry(pm_synthetic_dll_entry entry,void *base,uint32_t reason) {
+    return entry(base,reason,NULL);
+}
+#endif
+
 static int notify_synthetic_dll(pm_pe_image *image, int attach, char *error, size_t error_cap) {
     pm_loader report = {0}; report.error = error; report.error_cap = error_cap;
     if (error != NULL && error_cap) error[0] = '\0';
     struct pm_pe_synthetic_dll_control *control = dll_control(image);
-    if (control == NULL) return fail(&report, "invalid-synthetic-dll: live original handle and loading thread required");
+    struct pm_pe_lifetime *life=image_lifetime(image,1);
+    if (control == NULL || !life || !life->ready) return fail(&report, "invalid-synthetic-dll: live original handle and loading thread required");
+    if (life->incoming) return fail(&report,"dll-held: dependent EXE must unmap before notification");
     if (control->state != (attach ? PM_PE_DLL_READY : PM_PE_DLL_ATTACHED))
         return fail(&report, "invalid-dll-transition: duplicate, nested, or out-of-order notification");
 #if defined(__x86_64__)
-    typedef int32_t (__attribute__((ms_abi)) *dll_entry)(void *, uint32_t, void *);
-    dll_entry entry = (dll_entry)((uint8_t *)image->mapping + image->entrypoint_rva);
+    pm_synthetic_dll_entry entry = (pm_synthetic_dll_entry)((uint8_t *)image->mapping + image->entrypoint_rva);
     if (attach) {
         control->state = PM_PE_DLL_ATTACHING;
-        int32_t accepted = entry(image->mapping, 1, NULL);
+        int32_t accepted = call_synthetic_dll_entry(entry,image->mapping,1);
         if (accepted) { control->state = PM_PE_DLL_ATTACHED; return 1; }
         control->state = PM_PE_DLL_DETACHING;
-        (void)entry(image->mapping, 0, NULL);
+        (void)call_synthetic_dll_entry(entry,image->mapping,0);
         control->state = PM_PE_DLL_FAILED;
         return fail(&report, "dll-attach-failed: PROCESS_DETACH cleanup completed; unload the failed image");
     }
     control->state = PM_PE_DLL_DETACHING;
-    (void)entry(image->mapping, 0, NULL);
+    (void)call_synthetic_dll_entry(entry,image->mapping,0);
     control->state = PM_PE_DLL_DETACHED;
     return 1;
 #else
@@ -753,20 +808,76 @@ int pm_pe_synthetic_dll_detach(pm_pe_image *image, char *error, size_t error_cap
     return notify_synthetic_dll(image, 0, error, error_cap);
 }
 
-int pm_pe_unload(pm_pe_image *image) {
-    if (image == NULL) return 1;
-    if (image->synthetic_unwind && !unwind_control(image)) return 0;
-    if (image->synthetic_dll != NULL) {
-        struct pm_pe_synthetic_dll_control *control = dll_control(image);
-        if (control == NULL || (control->state != PM_PE_DLL_READY &&
-            control->state != PM_PE_DLL_DETACHED && control->state != PM_PE_DLL_FAILED)) return 0;
+/* Native ownership guards are not Windows loader reference semantics.
+ * Microsoft distinction, consulted 2026-10-26:
+ * https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-freelibrary
+ * https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandleexa
+ */
+int pm_pe_hold_dependencies(pm_pe_image *client,const pm_pe_image *const *dependencies,
+    size_t count,char *error,size_t error_cap) {
+    pm_loader report={0}; report.error=error; report.error_cap=error_cap;
+    if (error && error_cap) error[0]=0;
+    struct pm_pe_lifetime *owner=image_lifetime(client,1);
+    if (!owner || !owner->ready || owner->is_dll || owner->declared)
+        return fail(&report,"invalid-dependency-client: original ready EXE with no prior declaration required");
+    if (!dependencies || !count || count>PM_PE_DEPENDENCY_LIMIT)
+        return fail(&report,"dependency-limit: expected 1..32 explicit DLL images");
+    struct pm_pe_lifetime *validated[PM_PE_DEPENDENCY_LIMIT];
+    for (size_t i=0;i<count;++i) {
+        struct pm_pe_lifetime *dep=image_lifetime(dependencies[i],1);
+        if (!dep || !dep->ready || !dep->is_dll || dep==owner ||
+            dep->incoming>=PM_PE_CLIENT_HOLD_LIMIT)
+            return fail(&report,"invalid-dependency: live original DLL or hold capacity unavailable");
+        if (dep->dll) {
+            struct pm_pe_synthetic_dll_control *dll=dll_control(dependencies[i]);
+            if (!dll || dll->state!=PM_PE_DLL_ATTACHED)
+                return fail(&report,"dependency-not-attached: synthetic DLL must be ATTACHED");
+        }
+        for (size_t j=0;j<i;++j) if (validated[j]==dep)
+            return fail(&report,"duplicate-dependency: each DLL may occur only once");
+        validated[i]=dep;
     }
-    if ((image->mapping == NULL) != (image->mapping_size == 0)) return 0;
-    if (image->mapping != NULL && munmap(image->mapping, image->mapping_size) != 0) return 0;
-    free(image->exports);
-    free(image->synthetic_dll);
-    free_unwind(image->synthetic_unwind);
-    *image = (pm_pe_image){0};
+    for (size_t i=0;i<count;++i) { ++validated[i]->incoming; owner->dependencies[i]=validated[i]; }
+    owner->dependency_count=count; owner->declared=1;
+    return 1;
+}
+
+static int dependency_links_valid(const struct pm_pe_lifetime *owner) {
+    if (owner->dependency_count>PM_PE_DEPENDENCY_LIMIT ||
+        (owner->dependency_count && (!owner->declared || owner->is_dll))) return 0;
+    for (size_t i=0;i<owner->dependency_count;++i) {
+        struct pm_pe_lifetime *dep=owner->dependencies[i];
+        if (!dep || image_lifetime(dep->owner,1)!=dep || !dep->ready || !dep->is_dll ||
+            !dep->incoming || dep->incoming>PM_PE_CLIENT_HOLD_LIMIT) return 0;
+        if (dep->dll && dep->dll->state!=PM_PE_DLL_ATTACHED) return 0;
+        for (size_t j=0;j<i;++j) if (owner->dependencies[j]==dep) return 0;
+    }
+    return 1;
+}
+
+int pm_pe_unload(pm_pe_image *image) {
+    if (!image) return 1;
+    if (!image->mapping && !image->mapping_size && !image->entrypoint_rva && !image->exports &&
+        !image->synthetic_dll && !image->synthetic_unwind && !image->lifetime) return 1;
+    struct pm_pe_lifetime *life=image_lifetime(image,1);
+    if (!life || life->incoming || !dependency_links_valid(life)) return 0;
+    /* Private unwind/DLL identity is already included in provenance. The raw
+     * controls survive a failed unmap; ready-only public views cannot be used. */
+    if (image->synthetic_unwind) {
+        struct pm_pe_unwind_control *u=image->synthetic_unwind;
+        if (u->owner!=image || u->mapping!=image->mapping || u->mapping_size!=image->mapping_size ||
+            u->entrypoint_rva!=image->entrypoint_rva || !pthread_equal(u->thread,pthread_self())) return 0;
+    }
+    if (image->synthetic_dll) {
+        struct pm_pe_synthetic_dll_control *dll=dll_control(image);
+        if (!dll || (dll->state!=PM_PE_DLL_READY && dll->state!=PM_PE_DLL_DETACHED && dll->state!=PM_PE_DLL_FAILED)) return 0;
+    }
+    if (munmap(image->mapping,image->mapping_size)!=0) { life->ready=0; return 0; }
+    /* All guards were validated before the OS call; these bounded decrements
+     * cannot fail and happen ONLY after the client mapping is actually gone. */
+    for (size_t i=0;i<life->dependency_count;++i) --life->dependencies[i]->incoming;
+    free(image->exports); free(image->synthetic_dll); free_unwind(image->synthetic_unwind); free(life);
+    *image=(pm_pe_image){0};
     return 1;
 }
 
@@ -776,7 +887,8 @@ int pm_pe_find_export(const pm_pe_image *image, const char *name, uint32_t ordin
     if (error != NULL && error_cap) error[0] = '\0';
     if (result == NULL) return fail(&report, "invalid-argument: export result is null");
     *result = (pm_pe_export){0};
-    if (image == NULL || image->mapping == NULL || image->exports == NULL)
+    struct pm_pe_lifetime *life=image_lifetime(image,0);
+    if (!life || !life->ready || image->exports == NULL)
         return fail(&report, "exports-unavailable: no live loaded catalogue");
     const struct pm_pe_export_catalog *catalog = image->exports;
     if (catalog->bound_mapping != image->mapping || catalog->bound_mapping_size != image->mapping_size)

@@ -107,7 +107,7 @@ static void test_unwind_lifetime(void) {
     pm_pe_image image={0}; char error[192]; resolver_state state={0};
     CHECK(pm_pe_load_synthetic_unwind_exe(f.bytes,sizeof f.bytes,resolve,&state,1,&image,error,sizeof error));
     CHECK(image.synthetic_unwind && !image.synthetic_dll && !error[0]);
-    CHECK(live_mappings==1 && live_allocations==2 && !wx_requests);
+    CHECK(live_mappings==1 && live_allocations==3 && !wx_requests);
     pm_unwind_image view;
     CHECK(pm_pe_unwind_view(&image,&view,error,sizeof error));
     CHECK(view.address==(uintptr_t)image.mapping && view.size==0x14000 && view.function_count==3);
@@ -133,10 +133,10 @@ static void test_unwind_lifetime(void) {
     CHECK(!pthread_create(&thread,NULL,wrong_thread,&proof)); CHECK(!pthread_join(thread,NULL));
     CHECK(proof.refused_view && proof.refused_unload && proof.untouched);
     fail_unmapping=1; CHECK(!pm_pe_unload(&image));
-    CHECK(image.synthetic_unwind && live_allocations==2 && live_mappings==1);
-    CHECK(pm_pe_unwind_view(&image,&view,error,sizeof error));
+    CHECK(image.synthetic_unwind && live_allocations==3 && live_mappings==1);
+    CHECK(!pm_pe_unwind_view(&image,&view,error,sizeof error));
     fail_unmapping=0; CHECK(pm_pe_unload(&image));
-    CHECK(!image.mapping && !image.synthetic_unwind && !live_allocations && !live_mappings);
+    CHECK(!image.mapping && !image.synthetic_unwind && !image.lifetime && !live_allocations && !live_mappings);
     memset(&view,0xa7,sizeof view); sentinel=view;
     CHECK(!pm_pe_unwind_view(&image,&view,error,sizeof error) && !memcmp(&view,&sentinel,sizeof view));
     CHECK(!pm_pe_unwind_view(NULL,&view,error,sizeof error));
@@ -148,7 +148,7 @@ static int mutate_code_resolver(void *context,const char *dll,const char *name,u
 }
 static void test_unwind_cleanup(void) {
     fixture f=unwind_fixture(); pm_pe_image image={0}; char error[192]; resolver_state state;
-    for (unsigned at=1;at<=3;++at) {
+    for (unsigned at=1;at<=4;++at) {
         reset_tracking(); state=(resolver_state){0}; fail_allocation_at=at;
         CHECK(!pm_pe_load_synthetic_unwind_exe(f.bytes,sizeof f.bytes,resolve,&state,1,&image,error,sizeof error));
         CHECK(strstr(error,"allocation-failed") && !live_allocations && !map_calls && !state.calls);
@@ -164,7 +164,7 @@ static void test_unwind_cleanup(void) {
     CHECK(strstr(error,"snapshot-mismatch") && !live_allocations && !live_mappings);
     reset_tracking(); state=(resolver_state){0}; fail_protection_at=1; fail_unmapping=1;
     CHECK(!pm_pe_load_synthetic_unwind_exe(f.bytes,sizeof f.bytes,resolve,&state,1,&image,error,sizeof error));
-    CHECK(strstr(error,"cleanup-failed") && image.mapping && !image.synthetic_unwind && !live_allocations);
+    CHECK(strstr(error,"cleanup-failed") && image.mapping && !image.synthetic_unwind && image.lifetime && live_allocations==1);
     pm_unwind_image view;
     CHECK(!pm_pe_unwind_view(&image,&view,error,sizeof error));
     fail_unmapping=0; CHECK(pm_pe_unload(&image)); reset_tracking();

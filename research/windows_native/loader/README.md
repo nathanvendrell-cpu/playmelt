@@ -111,6 +111,62 @@ refusés. Cette expérimentation ne fournit ni verrou global de chargement Windo
 ni notifications de threads, CRT, TLS ou gestion d'exception. Un appelant C peut
 toujours fournir des octets dangereux : cette API n'est pas une sandbox.
 
+## Retenir les DLL utilisées par un exécutable
+
+`pm_pe_hold_dependencies` est une API hôte, sans export Windows. Un EXE préparé
+par le chargeur peut déclarer une seule fois une liste de 1 à 32 DLL déjà
+préparées. Toute la liste est vérifiée avant publication : identité d'origine,
+type, doublons, état et place dans les compteurs. Une DLL avec point d'entrée
+doit déjà avoir reçu un PROCESS_ATTACH réussi ; une DLL stricte sans point
+d'entrée est également admissible. La déclaration doit précéder les appels du
+programme : cette précondition n'est pas une détection automatique de son exécution.
+
+Tant qu'un client la retient, une DLL ne peut être ni détachée ni libérée. Les
+références sont retirées seulement après un `munmap` réussi du client ; il
+n'existe pas de commande permettant de les relâcher plus tôt. Plusieurs clients
+peuvent retenir la même DLL. Seules les relations EXE vers DLL sont admises :
+aucun graphe de dépendances entre DLL, cycle ou chargement automatique n'est ajouté.
+
+Le contrôle privé du chargeur conserve l'identité de chaque image et le thread
+propriétaire. Les opérations de rétention, de libération et de cycle DLL restent
+sur ce thread. Les images et leurs contrôles doivent rester vivants à leur
+adresse d'origine ; ce mécanisme n'est pas une protection contre un hôte C qui
+libère ses propres handles ou modifie les structures internes. Les lectures
+d'exports sur un autre thread gardent leur contrat de sérialisation existant.
+
+Après un échec de `munmap`, le mapping et ses références restent suivis pour une
+nouvelle tentative de nettoyage. Aucun retour arrière des permissions ou du
+mapping n'est supposé. De nouveaux emprunts, appels de cycle DLL, exports et
+vues unwind sont refusés dans cet état. L'hôte doit également cesser d'utiliser
+les anciennes adresses et les métadonnées empruntées des registres.
+
+La liste est explicite : le chargeur ne démontre pas qu'elle couvre tous les
+imports ou pointeurs conservés par le programme. Les registres historiques
+restent empruntés. Cette rétention hôte prépare la gestion de propriété ; elle
+ne fournit pas les références Windows de `LoadLibrary`/`FreeLibrary`, qui restent
+absents. `GetModuleHandle` conserve son rôle de recherche de handle.
+
+La preuve ciblée est reproductible avec :
+
+```sh
+python3 -B research/windows_native/loader/run_hold_probe.py
+```
+
+Le 26 octobre, les quatre suites ont réussi sous ASan/UBSan : 248 contrôles de
+rétention, 1 987 du chargeur, 863 de reconstruction de contexte et 586 de
+métadonnées unwind. La nouvelle sonde exécute deux EXE synthétiques avec cinq
+entrées IAT vérifiées chacun, retient leur DLL commune, constate quatre refus
+de libération/détachement puis vérifie les deux notifications réelles de DLL.
+Les sondes existantes de métadonnées unwind et de cycle DLL ont également réussi.
+Les seuls appels exclus du contrôle UBSan de type de fonction sont les petits
+trampolines vers notre code PE généré, dépourvu des métadonnées de Clang.
+
+Les sept compilations et les exécutions sont séquentielles à priorité réduite.
+Les 25 fichiers sources et les cinq fixtures générées ont été vérifiés par hash ;
+le dossier temporaire et les groupes de processus ont disparu. La preuve reste
+limitée à ces programmes synthétiques via Rosetta : aucun jeu, shader, appel GPU
+ou composant Apple n'a été exécuté, et l'application installée reste inchangée.
+
 ## Preuve CPU reproductible
 
 Depuis la racine du dépôt, sans aucun jeu :
@@ -728,6 +784,8 @@ instructions. Aucun code de cette DLL n'a été exécuté.
 - [Microsoft : format FILETIME](https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-filetime).
 - [Microsoft : GetModuleHandleA](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandlea).
 - [Microsoft : GetModuleFileNameA](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulefilenamea).
+- [Microsoft : LoadLibraryA et références de modules](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya).
+- [Microsoft : FreeLibrary](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-freelibrary).
 - [Microsoft : GetProcAddress](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 - [Microsoft : DllMain](https://learn.microsoft.com/en-us/windows/win32/dlls/dllmain).
 - [Microsoft : exceptions et unwind x64](https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64).

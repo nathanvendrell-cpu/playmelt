@@ -24,6 +24,7 @@ typedef int (*pm_import_resolver)(void *context, const char *dll, const char *na
 struct pm_pe_export_catalog;
 struct pm_pe_synthetic_dll_control;
 struct pm_pe_unwind_control;
+struct pm_pe_lifetime;
 struct pm_unwind_image;
 typedef struct pm_pe_image {
     void *mapping;
@@ -32,6 +33,7 @@ typedef struct pm_pe_image {
     struct pm_pe_export_catalog *exports; /* Owned; never copy image ownership. */
     struct pm_pe_synthetic_dll_control *synthetic_dll; /* Explicit fixture-only opt-in. */
     struct pm_pe_unwind_control *synthetic_unwind; /* Owned research EXE metadata. */
+    struct pm_pe_lifetime *lifetime; /* Private provenance/explicit HOST dependencies. */
 } pm_pe_image;
 
 typedef enum pm_pe_dll_state {
@@ -135,9 +137,46 @@ int pm_pe_synthetic_dll_attach(pm_pe_image *image, char *error, size_t error_cap
 int pm_pe_synthetic_dll_detach(pm_pe_image *image, char *error, size_t error_cap);
 pm_pe_dll_state pm_pe_synthetic_dll_state(const pm_pe_image *image);
 
+#define PM_PE_DEPENDENCY_LIMIT 32u
+#define PM_PE_CLIENT_HOLD_LIMIT 1024u
+
+/* HOST ownership only, NOT LoadLibrary/FreeLibrary/GetModuleHandleEx or a
+ * Windows reference count. Declare 1..32 explicit DLL dependencies once for a
+ * successfully loaded EXE. The entire list is validated before any retention;
+ * failure leaves all counts/client state unchanged, including one-shot state.
+ * All images must be original live objects on their loading thread. No copies,
+ * mock snapshots, cleanup-only images, duplicates, self, or EXE targets. A DLL
+ * with an initialization entry must be synthetic and ATTACHED; strict entry0
+ * DLLs need no notification. At most 1024 client holds per DLL. EXE->DLL only:
+ * no cycles, transitive dependency discovery or graph traversal is claimed.
+ *
+ * A held DLL cannot detach or unload. Successful unmap of the client releases
+ * exactly its declared holds; failure retains them for retry. There is no early
+ * release API. Existing registries/contexts remain BORROWED: only listed edges
+ * are protected, not an inferred complete set of IAT/dynamic pointers. Call this
+ * before any client EXE invocation (HOST precondition, not automatically
+ * detected); a required synthetic DLL attach necessarily precedes acquisition.
+ * No fallback-address lifetime is retained, and no DllMain is called here.
+ * Keep original C image objects alive/unmodified; no external unmap/protection
+ * changes. All ownership mutations/guest calls are serialized by the HOST.
+ * Copy checks are valid only while the original owner/control is alive; no ABA
+ * protection, arbitrary-pointer validation or concurrent C handle safety.
+ * Output error must not alias images, list, mapping, or private control storage.
+ */
+int pm_pe_hold_dependencies(pm_pe_image *client,
+    const pm_pe_image *const *dependencies, size_t count, char *error, size_t error_cap);
+
 /* Success=1, including an empty/NULL image. Failure=0 preserves the handle so the
  * caller can retry; never claim imageUnmapped when this function returns 0.
- * An opted-in DLL additionally enforces the lifecycle and thread rules above. */
+ * Every real loaded image enforces original-owner/loading-thread provenance.
+ * Incoming dependency holds refuse unload before any OS call. A failed munmap
+ * conserves mapping, controls and outgoing holds, but marks the image cleanup-
+ * only: no new holds, export/view use or lifecycle calls, only retry unload.
+ * Previously returned raw addresses must NOT be used after successful unload
+ * or a failed OS unmap attempt. A pre-OS hold/lifecycle refusal leaves readiness
+ * unchanged, so the owner may continue permitted client calls.
+ * This does not promise atomic OS rollback. An opted-in DLL also enforces its
+ * lifecycle state; live ATTACHED/busy DLLs must first detach without holds. */
 int pm_pe_unload(pm_pe_image *image);
 
 /* Exact case-sensitive name, or public (biased) uint32 ordinal. 1=found,

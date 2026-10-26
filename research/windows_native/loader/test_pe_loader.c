@@ -353,7 +353,7 @@ static void test_export_success(void) {
     fixture f = make_dll_fixture(); pm_pe_image image = {0}; char error[192]; pm_pe_export result = {0};
     reset_tracking();
     CHECK(pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error)));
-    CHECK(image.entrypoint_rva == 0 && image.exports != NULL && live_allocations == 1);
+    CHECK(image.entrypoint_rva == 0 && image.exports != NULL && live_allocations == 2);
     CHECK(pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
     CHECK(result.kind == PM_PE_EXPORT_DIRECT && result.ordinal == 17 && result.rva == 0x4000);
     CHECK(result.address == (uint8_t *)image.mapping + 0x4000 && result.executable && !result.writable && result.forwarder == NULL);
@@ -384,8 +384,8 @@ static void test_export_success(void) {
     CHECK(!pm_pe_find_export(&image, invalid_name, 0, 0, &result, error, sizeof(error)));
     CHECK(!pm_pe_find_export(NULL, "Alpha", 0, 0, &result, error, sizeof(error)));
     fail_unmapping = 1;
-    CHECK(!pm_pe_unload(&image) && live_allocations == 1);
-    CHECK(pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
+    CHECK(!pm_pe_unload(&image) && live_allocations == 2);
+    CHECK(!pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
     fail_unmapping = 0;
     CHECK(pm_pe_unload(&image) && live_allocations == 0 && live_mappings == 0);
     CHECK(!pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
@@ -458,7 +458,7 @@ static void test_export_rejections(void) {
     CHECK(live_allocations == 0 && live_mappings == 0);
     reset_tracking(); fail_protection_at = 1; fail_unmapping = 1;
     CHECK(!pm_pe_load(f.bytes, sizeof(f.bytes), NULL, NULL, &image, error, sizeof(error)));
-    CHECK(strstr(error, "cleanup-failed") && image.exports == NULL && image.mapping != NULL && live_allocations == 0);
+    CHECK(strstr(error, "cleanup-failed") && image.exports == NULL && image.mapping != NULL && live_allocations == 1);
     CHECK(!pm_pe_find_export(&image, "Alpha", 0, 0, &result, error, sizeof(error)));
     fail_unmapping = 0; CHECK(pm_pe_unload(&image));
     reset_tracking();
@@ -554,7 +554,7 @@ static void test_synthetic_dll_mapping_only(void) {
     CHECK(!pm_pe_unload(&copied));
     fail_unmapping = 1;
     CHECK(!pm_pe_unload(&image));
-    CHECK(pm_pe_synthetic_dll_state(&image) == PM_PE_DLL_READY && live_allocations == 1);
+    CHECK(pm_pe_synthetic_dll_state(&image) == PM_PE_DLL_UNAVAILABLE && live_allocations == 2);
     fail_unmapping = 0;
     CHECK(pm_pe_unload(&image));
     CHECK(image.synthetic_dll == NULL && live_allocations == 0 && live_mappings == 0);
@@ -565,7 +565,7 @@ static void test_synthetic_dll_mapping_only(void) {
     CHECK(strstr(error, "synthetic DLL lifecycle") && !map_calls && !live_allocations);
     reset_tracking(); fail_protection_at = 1; fail_unmapping = 1;
     CHECK(!pm_pe_load_synthetic_dll(f.bytes, sizeof f.bytes, resolve, &state, &image, error, sizeof error));
-    CHECK(strstr(error, "cleanup-failed") && image.mapping && !image.synthetic_dll && !live_allocations);
+    CHECK(strstr(error, "cleanup-failed") && image.mapping && !image.synthetic_dll && image.lifetime && live_allocations==1);
     fail_unmapping = 0; CHECK(pm_pe_unload(&image));
     reset_tracking();
 }
