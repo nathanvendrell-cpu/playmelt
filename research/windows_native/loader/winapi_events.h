@@ -19,7 +19,8 @@ typedef struct pm_winapi_events pm_winapi_events;
 #define PM_WAIT_TIMEOUT 258u
 #define PM_WAIT_FAILED UINT32_MAX
 
-/* HOST ABI. A context owns at most 16 anonymous events. It may be explicitly
+/* HOST ABI. A context owns at most 16 anonymous synchronization objects TOTAL
+ * (events and semaphores share those slots). It may be explicitly
  * bound by up to 8 host pthreads at once, one context per thread. No CreateThread,
  * inherited/named events, ACLs, other handle types or Windows kernel objects.
  * The creating thread owns destroy: it must serialize context lifetime against
@@ -84,7 +85,36 @@ int32_t PM_WINAPI pm_win_ResetEvent(void *handle);
 uint32_t PM_WINAPI pm_win_WaitForSingleObject(void *handle,uint32_t milliseconds);
 int32_t PM_WINAPI pm_win_CloseHandle(void *handle);
 
-/* Five named imports on kernel32/kernelbase only, then original base resolver.
+/* Six-argument Windows x64 ABI. Anonymous semaphores in the SAME closed handle
+ * context. ONLY NULL attributes/name, flags==0, nonzero subset MODIFY_STATE (2)
+ * | SYNCHRONIZE. int32 initial_count >=0; maximum_count in 1..INT32_MAX;
+ * initial_count <= maximum_count. No names, ACLs, ALL_ACCESS or generic rights.
+ * Actual DXGI argument values are unknown: only these imports were observed.
+ * These restrictions are prototype choices, not inferred renderer requirements.
+ *
+ * Release accepts positive int32 count and NULL previous_count ONLY. A nonNULL
+ * output is refused BEFORE any mutation, without dereferencing it. After type/
+ * access validation, release_count must be <= maximum-current BEFORE grants are
+ * distributed; otherwise ERROR_TOO_MANY_POSTS(298), state and grants unchanged.
+ * A grant consumes one permit immediately and is not stealable by Wait(0).
+ * Surplus permits remain in count. At most 8 tickets are considered, regardless
+ * of count; no allocation or loop per permit, including INT32_MAX. Broadcast
+ * failure publishes neither new grants nor count, even if OS woke waiters.
+ *
+ * Wait/Close accept both types. Each successful semaphore Wait consumes exactly
+ * one available permit or its already-attributed grant. Set/Reset reject semaphore
+ * handles; Release rejects event handles with INVALID_HANDLE. The same finite
+ * wait/cancellation/binding/closing/retry policies apply. Invalid create/count/
+ * output form =>87, excess release =>298, type/handle=>6, access=>5, capacity=>8,
+ * other OS failures=>31. Success and TIMEOUT preserve LastError. A wait completed
+ * before delivery of a pending pthread cancellation has already consumed its
+ * permit: there is no implicit rollback after the synchronization operation.
+ */
+void *PM_WINAPI pm_win_CreateSemaphoreExA(void *attributes,int32_t initial_count,
+    int32_t maximum_count,const char *name,uint32_t flags,uint32_t access);
+int32_t PM_WINAPI pm_win_ReleaseSemaphore(void *handle,int32_t release_count,void *previous_count);
+
+/* Seven named imports on kernel32/kernelbase only, then original base resolver.
  * Host ABI, no binding side effect; unknown/ordinal requests clear output. */
 int pm_winapi_events_resolve(void *context,const char *dll,const char *name,
     uint16_t ordinal,int by_ordinal,uintptr_t *address);

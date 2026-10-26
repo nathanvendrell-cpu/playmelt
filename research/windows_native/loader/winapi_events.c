@@ -13,6 +13,8 @@
  * https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
  * https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle
  * https://learn.microsoft.com/en-us/windows/win32/sync/synchronization-object-security-and-access-rights
+ * https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsemaphoreexa
+ * https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-releasesemaphore
  * Darwin relative cond-wait avoids realtime clock jumps; each retry derives its
  * interval from the SAME monotone deadline, never from the original duration.
  */
@@ -22,7 +24,8 @@ typedef struct event_slot {
     uint32_t access;
     unsigned waiters;
     struct { int active,granted; } waiting[PM_EVENTS_MAX_BINDINGS];
-    int manual,signaled;
+    int manual,signaled,semaphore;
+    int32_t count,maximum;
 } event_slot;
 struct pm_winapi_events {
     pthread_mutex_t mutex;
@@ -142,15 +145,61 @@ void *PM_WINAPI pm_win_CreateEventExA(void *attributes,const char *name,uint32_t
     else if (pthread_cond_init(&slot->condition,NULL)!=0) { pm_win_SetLastError(PM_ERROR_GEN_FAILURE); token=0; }
     else {
         slot->token=token; slot->access=access; slot->manual=(flags&1)!=0;
-        slot->signaled=(flags&2)!=0; slot->waiters=0;
+        slot->signaled=(flags&2)!=0; slot->waiters=0; slot->semaphore=0;
     }
     leave(context,previous); return (void *)token;
+}
+void *PM_WINAPI pm_win_CreateSemaphoreExA(void *attributes,int32_t initial_count,int32_t maximum_count,
+    const char *name,uint32_t flags,uint32_t access) {
+    if (attributes || name || flags || initial_count<0 || maximum_count<=0 || initial_count>maximum_count ||
+        !access || (access&~(PM_EVENT_MODIFY_STATE|PM_EVENT_SYNCHRONIZE))) {
+        pm_win_SetLastError(PM_ERROR_INVALID_PARAMETER); return NULL;
+    }
+    int previous; pm_winapi_events *context=enter(&previous);
+    if (!context) return NULL;
+    event_slot *slot=NULL;
+    for (size_t i=0;i<PM_EVENTS_MAX_EVENTS;++i) if (!context->slots[i].token) { slot=&context->slots[i]; break; }
+    uintptr_t token=slot?issue_token():0;
+    if (!token) pm_win_SetLastError(8);
+    else if (pthread_cond_init(&slot->condition,NULL)!=0) { pm_win_SetLastError(PM_ERROR_GEN_FAILURE); token=0; }
+    else {
+        slot->token=token; slot->access=access; slot->semaphore=1;
+        slot->count=initial_count; slot->maximum=maximum_count; slot->waiters=0;
+    }
+    leave(context,previous); return (void *)token;
+}
+int32_t PM_WINAPI pm_win_ReleaseSemaphore(void *handle,int32_t release_count,void *previous_count) {
+    /* Do not touch a caller-provided pointer: this subset accepts NULL only. */
+    if (previous_count || release_count<=0) { pm_win_SetLastError(PM_ERROR_INVALID_PARAMETER); return 0; }
+    int previous; pm_winapi_events *context=enter(&previous);
+    if (!context) return 0;
+    int32_t ok=0; event_slot *slot=find_event(context,handle);
+    if (!slot || !slot->semaphore) pm_win_SetLastError(PM_ERROR_INVALID_HANDLE);
+    else if (!(slot->access&PM_EVENT_MODIFY_STATE)) pm_win_SetLastError(5);
+    /* This check precedes grant distribution: pending waits cannot legitimize
+     * an increment that would exceed the semaphore's current maximum. */
+    else if (release_count>slot->maximum-slot->count) pm_win_SetLastError(298);
+    else {
+        int eligible=0;
+        for (size_t i=0;i<PM_EVENTS_MAX_BINDINGS;++i)
+            if (slot->waiting[i].active && !slot->waiting[i].granted) { eligible=1; break; }
+        if (eligible && pthread_cond_broadcast(&slot->condition)!=0) pm_win_SetLastError(PM_ERROR_GEN_FAILURE);
+        else {
+            int32_t available=slot->count+release_count; /* proven <= maximum <= INT32_MAX */
+            for (size_t i=0;available>0 && i<PM_EVENTS_MAX_BINDINGS;++i)
+                if (slot->waiting[i].active && !slot->waiting[i].granted) {
+                    slot->waiting[i].granted=1; --available;
+                }
+            slot->count=available; ok=1;
+        }
+    }
+    leave(context,previous); return ok;
 }
 static int32_t change_event(void *handle,int set) {
     int previous; pm_winapi_events *context=enter(&previous);
     if (!context) return 0;
     int32_t ok=0; event_slot *slot=find_event(context,handle);
-    if (!slot) pm_win_SetLastError(PM_ERROR_INVALID_HANDLE);
+    if (!slot || slot->semaphore) pm_win_SetLastError(PM_ERROR_INVALID_HANDLE);
     else if (!(slot->access&PM_EVENT_MODIFY_STATE)) pm_win_SetLastError(5);
     else if (!set) { slot->signaled=0; ok=1; }
     else if (slot->signaled) ok=1;
@@ -190,7 +239,10 @@ uint32_t PM_WINAPI pm_win_WaitForSingleObject(void *handle,uint32_t milliseconds
     uint32_t result=PM_WAIT_FAILED; event_slot *slot=find_event(context,handle);
     if (!slot) pm_win_SetLastError(PM_ERROR_INVALID_HANDLE);
     else if (!(slot->access&PM_EVENT_SYNCHRONIZE)) pm_win_SetLastError(5);
-    else if (slot->signaled) { if (!slot->manual) slot->signaled=0; result=PM_WAIT_OBJECT_0; }
+    else if (slot->semaphore?slot->count>0:slot->signaled) {
+        if (slot->semaphore) --slot->count; else if (!slot->manual) slot->signaled=0;
+        result=PM_WAIT_OBJECT_0;
+    }
     else if (!milliseconds) result=PM_WAIT_TIMEOUT;
     else {
         uint64_t now,deadline,interval=(uint64_t)milliseconds*UINT64_C(1000000);
@@ -246,6 +298,7 @@ int pm_winapi_events_resolve(void *context,const char *dll,const char *name,uint
     *address=0;
     if (ordinal || by_ordinal || !name || (!module_is(dll,"kernel32.dll") && !module_is(dll,"kernelbase.dll"))) return 0;
 #define RESOLVE(symbol) if (!strcmp(name,#symbol)) { *address=(uintptr_t)&pm_win_##symbol; return 1; }
+    RESOLVE(CreateSemaphoreExA) RESOLVE(ReleaseSemaphore)
     RESOLVE(CreateEventExA) RESOLVE(SetEvent) RESOLVE(ResetEvent) RESOLVE(WaitForSingleObject) RESOLVE(CloseHandle)
 #undef RESOLVE
     return pm_winapi_resolve(context,dll,name,ordinal,by_ordinal,address);

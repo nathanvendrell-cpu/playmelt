@@ -16,7 +16,8 @@ static const service services[]={
     SERVICE(GetTickCount64),SERVICE(GetSystemTimeAsFileTime),
     SERVICE(GetModuleHandleA),SERVICE(GetModuleHandleW),SERVICE(GetProcAddress),
     SERVICE(VirtualProtect),SERVICE(VirtualAlloc),SERVICE(VirtualFree),SERVICE(NtQueryVirtualMemory),SERVICE(CreateEventExA),SERVICE(SetEvent),
-    SERVICE(ResetEvent),SERVICE(WaitForSingleObject),SERVICE(CloseHandle)
+    SERVICE(ResetEvent),SERVICE(WaitForSingleObject),SERVICE(CloseHandle),
+    SERVICE(CreateSemaphoreExA),SERVICE(ReleaseSemaphore)
 #undef SERVICE
 };
 static pm_winapi_modules *modules(void) {

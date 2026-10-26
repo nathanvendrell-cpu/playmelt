@@ -284,7 +284,8 @@ chargé ; ce résultat ne valide pas le chargement de DXGI ou de DirectX 12.
 DXGI. Les arguments réellement employés par cette DLL restent à inspecter ;
 ces imports seuls ne prouvent pas qu'elle peut utiliser ce sous-ensemble.
 
-Le contexte possède au plus seize événements et accepte huit threads hôtes
+Le contexte possède au plus seize objets anonymes, événements et sémaphores
+confondus, et accepte huit threads hôtes
 explicitement liés. Aucun thread Windows n'est créé. Les handles sont des
 jetons opaques non déréférencés et non réutilisés pendant la vie du module hôte.
 Les handles périmés, étrangers au contexte ou d'un autre type sont refusés.
@@ -335,13 +336,63 @@ réduite ; les 29 empreintes, résultats, temporaires et groupes de processus so
 consignés dans `work/winapi-events-proof-attempt1.log`. Ces preuves restent CPU
 et synthétiques, sans qualification d'un composant graphique ou d'un jeu.
 
+## Sémaphores anonymes dans le même contexte
+
+`CreateSemaphoreExA` et `ReleaseSemaphore` utilisent le même registre de handles
+que les événements. Le premier reçoit ses six arguments selon l'ABI Windows x64.
+La création accepte seulement des attributs et un nom nuls, des flags nuls,
+les droits MODIFY_STATE/SYNCHRONIZE et des compteurs signés 32 bits : maximum
+strictement positif, compteur initial compris entre zéro et ce maximum.
+Ces formes sont des choix du prototype ; les paramètres employés par DXGI ne
+sont pas connus.
+
+Une attente réussie consomme un permis. Release exige un incrément positif et
+vérifie d'abord qu'il ne dépasse pas `maximum - compteur`, même si des threads
+attendent déjà. Un dépassement échoue avec `ERROR_TOO_MANY_POSTS` sans mutation.
+Les permis sont ensuite attribués aux attentes, puis le surplus reste disponible.
+Un permis attribué ne peut pas être pris par un nouvel appel sans attente. Le
+travail est borné aux huit tickets, y compris pour un compteur `INT32_MAX` :
+aucune allocation ni boucle proportionnelle au nombre de permis.
+
+La sortie facultative `previousCount` doit être nulle ; toute autre adresse est
+refusée sans déréférence ni modification. Set/Reset refusent les handles de
+sémaphore ; Release refuse ceux d'événement. Wait et Close acceptent les deux
+types. Les limites de délai, droits, annulation différée, fermeture pendant une
+attente et nettoyage après échec restent celles du contexte existant. Un échec
+de broadcast ne publie ni permis ni réveil. Aucun droit supplémentaire ni attente
+infinie n'est activé.
+
+```sh
+python3 -B research/windows_native/loader/run_semaphore_probe.py
+```
+
+Le 26 octobre 2026, 1 352 contrôles ASan/UBSan ont passé : 393 sémaphores,
+457 événements en régression, 207 collisions et 295 résolution commune. Les
+compteurs des tests concurrents peuvent varier selon leur ordonnancement.
+La suite vérifie notamment Release(3) avec deux attentes : deux permis attribués
+et un seul permis disponible à un autre appel, sans vol des réveils déjà accordés.
+
+La sonde PE appelle réellement la création à six arguments, vérifie trois
+adresses dynamiques avant appel et attend un permis libéré par un pthread hôte.
+Elle contrôle ensuite la consommation des permis, le dépassement refusé et la
+fermeture. La sonde d'événements est également repassée. Les six compilations
+sont séquentielles, à priorité réduite ; les deux threads de signalisation sont
+joints dans leurs sondes respectives. Les trente empreintes et résultats sont
+dans `work/winapi-semaphore-proof-attempt1.log`.
+
+Le générateur avait d'abord refusé une fixture de 532 octets de code pour une
+capacité de 512 ; ce refus avant compilation est conservé dans
+`work/semaphore-fixture-negative-attempt1.json`. Des encodages x64 équivalents
+plus courts ont corrigé la taille sans agrandir le fichier PE ni sa section.
+Ces preuves ne chargent aucun composant Apple et ne qualifient aucun jeu.
+
 ## Résolution commune des fonctions déjà disponibles
 
 `winapi_combined.c` rassemble les sept fonctions de base, les trois fonctions de
-modules, les quatre fonctions mémoire et les cinq fonctions d'événements.
+modules, les quatre fonctions mémoire et les sept fonctions de synchronisation.
 Le résolveur ne crée aucun stub.
 Les requêtes doivent désigner un nom exact, avec ordinal zéro et sans recherche
-par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les dix-huit
+par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les vingt
 autres fonctions appartiennent à `kernel32.dll` ou `kernelbase.dll`.
 
 Les fournisseurs existants peuvent exposer la même fonction de base. Le
@@ -548,6 +599,24 @@ décrit ci-dessus ; les contextes des DLL Apple n'ont pas été reconstruits. Ce
 dynamiques. La preuve détaillée est `work/apple-pe-unwind-metadata.json` ; le
 décodeur est couvert par 32 tests de fichiers synthétiques inertes.
 
+Le 26 octobre, une lecture statique supplémentaire de DXGI avec Apple LLVM
+21.0.0 a relevé onze références IAT ciblées : deux appels à VirtualAlloc/Free
+et neuf sauts vers des imports. Dans les deux wrappers mémoire observés, les
+arguments sont chargés depuis un enregistrement fourni ; les valeurs de cet
+enregistrement restent inconnues. Les adresses des relais d'événements et de
+sémaphores figurent dans une table de données, sans établir les valeurs des
+droits, délais ou compteurs. Rien ne justifie donc d'élargir automatiquement les
+formes mémoire, les droits ou les délais du prototype.
+
+Les octets et les cibles IAT des onze instructions ont été comparés au fichier
+réhaché. Les fenêtres de désassemblage servent de preuves locales ; elles ne
+constituent pas une analyse complète des fonctions ou du flot de contrôle.
+`work/dxgi-iat-callsite-evidence.json` et
+`work/dxgi-static-argument-assessment.json` conservent les adresses, octets,
+empreintes, commandes et limites. La première extraction vide est conservée
+séparément ; elle a été corrigée en décodant directement les déplacements des
+instructions. Aucun code de cette DLL n'a été exécuté.
+
 ## Références primaires
 
 - [Microsoft : format PE](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format).
@@ -569,6 +638,8 @@ décodeur est couvert par 32 tests de fichiers synthétiques inertes.
 - [Microsoft : ResetEvent](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-resetevent).
 - [Microsoft : WaitForSingleObject](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject).
 - [Microsoft : CloseHandle](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle).
+- [Microsoft : CreateSemaphoreExA](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsemaphoreexa).
+- [Microsoft : ReleaseSemaphore](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-releasesemaphore).
 - [Microsoft : droits des objets de synchronisation](https://learn.microsoft.com/en-us/windows/win32/sync/synchronization-object-security-and-access-rights).
 - [Microsoft : pages et granularité d'allocation](https://learn.microsoft.com/en-us/windows/win32/memory/comparing-memory-allocation-methods).
 - [Microsoft : constantes de protection](https://learn.microsoft.com/en-us/windows/win32/memory/memory-protection-constants).
