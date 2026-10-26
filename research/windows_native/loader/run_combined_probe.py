@@ -19,7 +19,7 @@ def main():
     products.mkdir(exist_ok=True)
     dependencies = ("pe_loader.c", "pe_loader.h", "x64_unwind.h", "x64_unwind_internal.h", "pe_modules.c", "pe_modules.h",
                     "winapi_subset.c", "winapi_subset.h", "winapi_modules.c", "winapi_modules.h",
-                    "winapi_memory.c", "winapi_memory.h", "winapi_combined.c", "winapi_combined.h",
+                    "winapi_memory.c", "winapi_memory.h", "winapi_events.c", "winapi_events.h", "winapi_combined.c", "winapi_combined.h",
                     "test_winapi_combined.c", "test_winapi_combined_collisions.c",
                     "combined_probe.c", "combined_fixture.py", "run_combined_probe.py",
                     "run_cpu_probe.py", "module_fixture.py", "probe_fixture.py")
@@ -34,7 +34,7 @@ def main():
                      "-mmacosx-version-min=15.0", "-fsanitize=address,undefined",
                      "-fno-omit-frame-pointer", "-I", str(source), "-I", str(scratch)]
             common = ("pe_loader.c", "pe_modules.c", "winapi_subset.c", "winapi_modules.c",
-                      "winapi_memory.c", "winapi_combined.c")
+                      "winapi_memory.c", "winapi_events.c", "winapi_combined.c")
             for name, sources in (
                 ("collisions", ("winapi_combined.c", "test_winapi_combined_collisions.c")),
                 ("integrated", (*common, "test_winapi_combined.c")),

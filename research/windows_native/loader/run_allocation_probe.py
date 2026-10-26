@@ -19,7 +19,7 @@ def main():
     products.mkdir(exist_ok=True)
     dependencies = ("pe_loader.c", "pe_loader.h", "x64_unwind.h", "x64_unwind_internal.h",
                     "pe_modules.c", "pe_modules.h", "winapi_subset.c", "winapi_subset.h",
-                    "winapi_modules.c", "winapi_modules.h", "winapi_memory.c", "winapi_memory.h",
+                    "winapi_modules.c", "winapi_modules.h", "winapi_memory.c", "winapi_memory.h", "winapi_events.c", "winapi_events.h",
                     "winapi_combined.c", "winapi_combined.h", "test_winapi_memory.c",
                     "test_winapi_memory_query.c", "test_winapi_memory_alloc.c",
                     "test_winapi_combined.c", "test_winapi_combined_collisions.c",
@@ -35,7 +35,7 @@ def main():
                      "-Wstrict-prototypes", "-O1", "-g", "-arch", "x86_64", "-mmacosx-version-min=15.0",
                      "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                      "-I", str(source), "-I", str(scratch)]
-            common = ("pe_loader.c", "pe_modules.c", "winapi_subset.c", "winapi_modules.c", "winapi_memory.c", "winapi_combined.c")
+            common = ("pe_loader.c", "pe_modules.c", "winapi_subset.c", "winapi_modules.c", "winapi_memory.c", "winapi_events.c", "winapi_combined.c")
 
             def build(name, sources):
                 binary = scratch / name

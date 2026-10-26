@@ -31,7 +31,8 @@ int pm_winapi_combined_resolve(void *context, const char *dll, const char *name,
     const char *symbols[]={"GetLastError","SetLastError","GetCurrentProcessId",
         "QueryPerformanceCounter","QueryPerformanceFrequency","GetTickCount64",
         "GetSystemTimeAsFileTime","GetModuleHandleA","GetModuleHandleW",
-        "GetProcAddress","VirtualProtect","VirtualAlloc","VirtualFree","NtQueryVirtualMemory"};
+        "GetProcAddress","VirtualProtect","VirtualAlloc","VirtualFree","NtQueryVirtualMemory",
+        "CreateEventExA","SetEvent","ResetEvent","WaitForSingleObject","CloseHandle"};
     int allowed=0;
     for (size_t i=0;i<sizeof symbols/sizeof *symbols;++i)
         if (!strcmp(name,symbols[i])) { allowed=1; break; }
@@ -40,7 +41,7 @@ int pm_winapi_combined_resolve(void *context, const char *dll, const char *name,
      * a kernel symbol from ntdll (or NtQuery from kernel32). */
     if (module_is(dll,"ntdll.dll") != !strcmp(name,"NtQueryVirtualMemory")) return 0;
     const pm_import_resolver providers[]={pm_winapi_resolve,
-        pm_winapi_modules_resolve,pm_winapi_memory_resolve};
+        pm_winapi_modules_resolve,pm_winapi_memory_resolve,pm_winapi_events_resolve};
     uintptr_t selected=0;
     for (size_t i=0;i<sizeof providers/sizeof *providers;++i) {
         uintptr_t candidate=0;

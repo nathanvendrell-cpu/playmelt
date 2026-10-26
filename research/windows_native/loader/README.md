@@ -277,12 +277,71 @@ les hashes des 25 sources avant/après. La preuve complète de cette exécution 
 `work/virtual-allocation-proof-attempt1.log`. Aucun jeu ni composant Apple n'a été
 chargé ; ce résultat ne valide pas le chargement de DXGI ou de DirectX 12.
 
+## Événements Windows anonymes sur CPU
+
+`winapi_events.c` fournit un sous-ensemble de `CreateEventExA`, `SetEvent`,
+`ResetEvent`, `WaitForSingleObject` et `CloseHandle`, cinq imports observés dans
+DXGI. Les arguments réellement employés par cette DLL restent à inspecter ;
+ces imports seuls ne prouvent pas qu'elle peut utiliser ce sous-ensemble.
+
+Le contexte possède au plus seize événements et accepte huit threads hôtes
+explicitement liés. Aucun thread Windows n'est créé. Les handles sont des
+jetons opaques non déréférencés et non réutilisés pendant la vie du module hôte.
+Les handles périmés, étrangers au contexte ou d'un autre type sont refusés.
+Le propriétaire doit joindre ses threads et sérialiser la destruction avec
+toute tentative de liaison ; les pointeurs C du contexte doivent rester valides.
+
+Seuls les événements sans nom ni attributs de sécurité sont acceptés. Les flags
+permettent l'état initial signalé et le réarmement manuel. Les droits sont limités
+à `EVENT_MODIFY_STATE` et `SYNCHRONIZE`, vérifiés pour chaque opération ;
+`EVENT_ALL_ACCESS`, les ACL et les autres formes restent refusés.
+
+L'attente utilise une condition pthread et une échéance monotone fixe, sans
+polling. Le délai admis va de zéro à 100 ms ; les valeurs supérieures et
+`INFINITE` échouent explicitement. L'ordonnanceur peut retarder la reprise :
+ce plafond ne constitue pas une garantie de temps réel. Chaque attente reçoit
+son propre signal de réveil : un événement automatique en libère une, un
+événement manuel libère les attentes en cours et reste signalé jusqu'à Reset.
+Reset n'efface pas un réveil déjà attribué. Un appel sans attente ne peut pas
+consommer celui d'un autre thread.
+
+Fermer un événement pendant une attente échoue avec `ERROR_BUSY` et conserve
+son handle. Les échecs OS ne deviennent pas des succès logiques ; les ressources
+dont la destruction échoue restent disponibles pour nettoyage. Une destruction
+partielle du contexte interdit toute nouvelle liaison jusqu'au nettoyage complet.
+L'annulation pthread différée est suspendue pendant les invariants puis rétablie après
+retrait du waiter et déverrouillage. L'annulation asynchrone reste hors contrat.
+La sortie du thread retire sa liaison, sans détruire les événements du contexte.
+
+```sh
+python3 -B research/windows_native/loader/run_events_probe.py
+```
+
+Le 26 octobre 2026, ce runner a passé 944 contrôles ASan/UBSan : 460 sur les
+événements, 207 sur les collisions entre fournisseurs et 277 sur la résolution
+commune. Le compteur des événements peut varier selon l'ordonnancement du harnais.
+Les tests couvrent notamment les signaux attribués avant Reset, deux signaux
+successifs, les réveils parasites, les droits, les limites, l'annulation différée
+et les échecs OS. Un broadcast de test réveille réellement les threads puis
+renvoie une erreur pour vérifier qu'aucun signal logique n'a été publié.
+
+Le PE synthétique appelle les cinq fonctions ; les quatre adresses obtenues par
+`GetProcAddress` sont vérifiées avant appel. Une observation autour de la vraie
+attente Darwin confirme qu'un pthread hôte ne peut émettre le signal qu'après
+la libération atomique du mutex par cette attente. Le thread est joint avant
+destruction du contexte. La sonde mémoire précédente est également repassée,
+avec six observations Mach. Les cinq compilations sont séquentielles, à priorité
+réduite ; les 29 empreintes, résultats, temporaires et groupes de processus sont
+consignés dans `work/winapi-events-proof-attempt1.log`. Ces preuves restent CPU
+et synthétiques, sans qualification d'un composant graphique ou d'un jeu.
+
 ## Résolution commune des fonctions déjà disponibles
 
 `winapi_combined.c` rassemble les sept fonctions de base, les trois fonctions de
-modules et les quatre fonctions mémoire existantes. Le résolveur ne crée aucun stub.
+modules, les quatre fonctions mémoire et les cinq fonctions d'événements.
+Le résolveur ne crée aucun stub.
 Les requêtes doivent désigner un nom exact, avec ordinal zéro et sans recherche
-par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les treize
+par ordinal. `NtQueryVirtualMemory` appartient seulement à `ntdll.dll` ; les dix-huit
 autres fonctions appartiennent à `kernel32.dll` ou `kernelbase.dll`.
 
 Les fournisseurs existants peuvent exposer la même fonction de base. Le
@@ -293,7 +352,7 @@ résolveur seulement après inscription explicite des trois tables de services
 hôtes. Ces handles sont des tokens opaques, pas de fausses DLL chargées.
 
 Un PE inscrit garde priorité sur le service hôte : son export manquant ne
-déclenche aucun remplacement. Les contextes de modules et de mémoire restent
+déclenche aucun remplacement. Les contextes de modules, de mémoire et d'événements restent
 liés séparément au thread. Chaque appelant doit suivre ses bindings réussis,
 libérer seulement ceux qu'il a acquis et préserver tout contexte antérieur.
 Le premier binding réussi d'un contexte de modules scelle ses inscriptions,
@@ -505,6 +564,12 @@ décodeur est couvert par 32 tests de fichiers synthétiques inertes.
 - [Microsoft : VirtualProtect](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect).
 - [Microsoft : VirtualAlloc](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc).
 - [Microsoft : VirtualFree](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualfree).
+- [Microsoft : CreateEventExA](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createeventexa).
+- [Microsoft : SetEvent](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-setevent).
+- [Microsoft : ResetEvent](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-resetevent).
+- [Microsoft : WaitForSingleObject](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject).
+- [Microsoft : CloseHandle](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle).
+- [Microsoft : droits des objets de synchronisation](https://learn.microsoft.com/en-us/windows/win32/sync/synchronization-object-security-and-access-rights).
 - [Microsoft : pages et granularité d'allocation](https://learn.microsoft.com/en-us/windows/win32/memory/comparing-memory-allocation-methods).
 - [Microsoft : constantes de protection](https://learn.microsoft.com/en-us/windows/win32/memory/memory-protection-constants).
 - [Microsoft : NtQueryVirtualMemory](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntqueryvirtualmemory).
@@ -512,3 +577,5 @@ décodeur est couvert par 32 tests de fichiers synthétiques inertes.
 - [The Open Group : mprotect, édition consultée](https://pubs.opengroup.org/onlinepubs/7908799/xsh/mprotect.html).
 - [Apple : mprotect](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/mprotect.2.html).
 - [Apple : munmap](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/munmap.2.html).
+- [Apple : attente pthread relative dans libpthread](https://github.com/apple-oss-distributions/libpthread/blob/main/include/pthread/pthread.h).
+- [Apple : état d'annulation pthread](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/pthread_setcancelstate.3.html).
