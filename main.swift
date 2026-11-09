@@ -287,11 +287,15 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             let app = URL(fileURLWithPath: "/Applications/Epic Games Launcher.app")
             if FileManager.default.fileExists(atPath: app.path) { NSWorkspace.shared.openApplication(at: app, configuration: .init()) { [weak self] _, error in DispatchQueue.main.async { self?.result(error == nil, error == nil ? "Epic Games Launcher ouvert. La bibliothèque du compte reste gérée par Epic." : "Impossible d’ouvrir Epic Games Launcher.") } } }
             else { result(false, "Epic Games Launcher n’est pas installé.") }
-        case "launchGame", "installGame", "openGameFolder":
+        case "launchGame", "installGame", "openGameFolder", "uninstallGame":
             guard let id = dict["gameId"] as? String, let game = model.games.first(where: { $0.id == id }) else { result(false, "Jeu non reconnu. Actualisez la bibliothèque."); return }
             if action == "openGameFolder" {
                 guard let path = game.path, FileManager.default.fileExists(atPath: path.path) else { result(false, "Dossier installé introuvable."); return }
                 NSWorkspace.shared.activateFileViewerSelecting([path]); result(true, "Dossier du jeu affiché."); return
+            }
+            if action == "uninstallGame" {
+                uninstallGame(game)
+                return
             }
             route(game, installing: action == "installGame", requestedRuntime: dict["runtimeId"] as? String)
         default: result(false, "Action non prise en charge.")
@@ -581,20 +585,79 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             } }; return
         }
         guard let runtime = validatedSteamRuntime(game, installing: installing, requestedRuntime: requestedRuntime) else {
-            if !installing, game.store == "steam", game.installed, let url = URL(string: "steam://run/\(game.appId)") {
-                let steamApp = URL(fileURLWithPath: "/Applications/Steam.app")
-                if FileManager.default.fileExists(atPath: steamApp.path) {
-                    NSWorkspace.shared.open([url], withApplicationAt: steamApp, configuration: .init()) { [weak self] _, error in
-                        DispatchQueue.main.async {
-                            self?.result(error == nil, error == nil ? "Ouverture de \(game.title)…" : "Steam n’a pas accepté la demande.")
+            if game.store == "steam", !game.appId.isEmpty {
+                let uri = installing ? "steam://install/\(game.appId)" : "steam://run/\(game.appId)"
+                if let url = URL(string: uri) {
+                    let steamApp = URL(fileURLWithPath: "/Applications/Steam.app")
+                    if FileManager.default.fileExists(atPath: steamApp.path) {
+                        NSWorkspace.shared.open([url], withApplicationAt: steamApp, configuration: .init()) { [weak self] _, error in
+                            DispatchQueue.main.async {
+                                self?.result(error == nil, error == nil ? (installing ? "Téléchargement / installation lancé dans Steam." : "Ouverture de \(game.title)…") : "Steam n’a pas accepté la demande.")
+                            }
                         }
+                        if installing, let macRuntime = self.model.runtimes.first(where: { $0.id == "steam-mac" }) {
+                            _ = self.installCoordinator.begin(gameID: game.id, appID: game.appId, title: game.title, runtime: macRuntime, accountID: self.model.selectedAccountID, onReady: { [weak self] _ in
+                                self?.refresh()
+                            })
+                        }
+                        return
                     }
-                    return
                 }
             }
             return
         }
         dispatchSteam(game, runtime: runtime, installing: installing, onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, message) }
+    }
+    func uninstallGame(_ game: Game) {
+        guard !closing else { return }
+        let fm = FileManager.default
+
+        // 1. Delete game.path if present
+        if let path = game.path, fm.fileExists(atPath: path.path) {
+            try? fm.removeItem(at: path)
+        }
+
+        // 2. Check standard Playmelt Games folder
+        let home = fm.homeDirectoryForCurrentUser
+        let playmeltGamesDir = home.appendingPathComponent("Library/Application Support/Playmelt/Games")
+        let candidateFolder = playmeltGamesDir.appendingPathComponent(game.id.replacingOccurrences(of: "local:", with: "").replacingOccurrences(of: "steam:", with: ""))
+        if fm.fileExists(atPath: candidateFolder.path) {
+            try? fm.removeItem(at: candidateFolder)
+        }
+        let safeFolder = playmeltGamesDir.appendingPathComponent(game.title.filter { $0.isLetter || $0.isNumber })
+        if fm.fileExists(atPath: safeFolder.path) {
+            try? fm.removeItem(at: safeFolder)
+        }
+
+        // 3. Remove Steam symlinks and appmanifests if present
+        let steamAppsDir = home.appendingPathComponent("Library/Application Support/Steam/steamapps")
+        if !game.appId.isEmpty {
+            let manifest = steamAppsDir.appendingPathComponent("appmanifest_\(game.appId).acf")
+            if fm.fileExists(atPath: manifest.path) {
+                try? fm.removeItem(at: manifest)
+            }
+        }
+        let steamCommonGame = steamAppsDir.appendingPathComponent("common").appendingPathComponent(game.title)
+        if fm.fileExists(atPath: steamCommonGame.path) {
+            try? fm.removeItem(at: steamCommonGame)
+        }
+
+        // 4. If Steam store game, notify Steam client
+        if game.store == "steam", !game.appId.isEmpty {
+            if let url = URL(string: "steam://uninstall/\(game.appId)") {
+                let steamApp = URL(fileURLWithPath: "/Applications/Steam.app")
+                if fm.fileExists(atPath: steamApp.path) {
+                    NSWorkspace.shared.open([url], withApplicationAt: steamApp, configuration: .init()) { _, _ in }
+                }
+            }
+        }
+
+        // 5. Refresh library state so UI reflects uninstallation immediately
+        refresh { [weak self] in
+            DispatchQueue.main.async {
+                self?.result(true, "\(game.title) a été désinstallé.")
+            }
+        }
     }
     func beginShutdown() {
         closing = true; requestGate.shutdown(); installCoordinator.shutdown(); clientLauncher.shutdown()

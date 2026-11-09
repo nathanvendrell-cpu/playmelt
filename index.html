@@ -1754,7 +1754,7 @@
           const previousRuntime =
             document.getElementById("runtimeSelect")?.value;
           ui.dialogProgress = null;
-          if (windowsExecutionUnavailable() && platforms(game).length === 1 && platforms(game)[0] === "windows" && game.installSource !== "local") {
+          if (windowsExecutionUnavailable() && game.requiredRenderer === "d3dmetal" && game.installSource !== "local") {
             delete body.dataset.rendererKey;
             body.replaceChildren(windowsUnavailableControls());
             return;
@@ -1850,20 +1850,57 @@
                   send(view.action);
                 });
                 body.append(setup);
-              } else body.append(el("span", "renderer-status", view.status));
+              } else if (view.status === "Moteur sans Wine en développement" && game.store === "steam") {
+                const install = el(
+                  "button",
+                  "button primary dialog-action",
+                  "Installer via Steam",
+                );
+                install.disabled = renderProtectionEnabled();
+                install.addEventListener("click", () => {
+                  send("installGame", { gameId: game.id });
+                  $("gameDialog").close();
+                });
+                const open = el(
+                  "button",
+                  "button secondary dialog-action",
+                  "Ouvrir Steam",
+                );
+                open.disabled = renderProtectionEnabled();
+                open.addEventListener("click", () => {
+                  send("openSteam");
+                  $("gameDialog").close();
+                });
+                body.append(install, open);
+              } else {
+                body.append(el("span", "renderer-status", view.status));
+              }
             }
-          } else if (game.canLaunch) {
-            const play = el("button", "button primary dialog-action", "Jouer");
-            play.disabled = renderProtectionEnabled() && game.installSource !== "local";
-            play.addEventListener("click", () => {
-              send("launchGame", { gameId: game.id });
-              $("gameDialog").close();
-            });
-            body.append(play);
+          } else if (game.canLaunch || game.installed) {
+            if (game.canLaunch) {
+              const play = el("button", "button primary dialog-action", "Jouer");
+              play.disabled = renderProtectionEnabled() && game.installSource !== "local";
+              play.addEventListener("click", () => {
+                send("launchGame", { gameId: game.id });
+                $("gameDialog").close();
+              });
+              body.append(play);
+            }
             if (game.installed) {
               const folderBtn = el("button", "button secondary dialog-action", "Ouvrir le dossier");
               folderBtn.addEventListener("click", () => send("openGameFolder", { gameId: game.id }));
               body.append(folderBtn);
+
+              const uninstallBtn = el("button", "button secondary dialog-action danger-action", "Désinstaller");
+              uninstallBtn.disabled = renderProtectionEnabled() && game.installSource !== "local";
+              uninstallBtn.addEventListener("click", () => {
+                if (confirm(`Voulez-vous vraiment désinstaller ${game.title} ?\n\nTous les fichiers du jeu seront supprimés pour libérer l'espace disque.`)) {
+                  uninstallBtn.disabled = true;
+                  send("uninstallGame", { gameId: game.id });
+                  $("gameDialog").close();
+                }
+              });
+              body.append(uninstallBtn);
             }
           } else if (
             game.store === "steam" &&
@@ -1920,9 +1957,19 @@
               });
               body.append(install);
             } else {
-              const open = el(
+              const installBtn = el(
                 "button",
                 "button primary dialog-action",
+                "Installer via Steam",
+              );
+              installBtn.disabled = renderProtectionEnabled();
+              installBtn.addEventListener("click", () => {
+                send("installGame", { gameId: game.id });
+                $("gameDialog").close();
+              });
+              const open = el(
+                "button",
+                "button secondary dialog-action",
                 "Ouvrir Steam",
               );
               open.disabled = renderProtectionEnabled();
@@ -1931,13 +1978,12 @@
                 $("gameDialog").close();
               });
               body.append(
+                installBtn,
                 open,
                 el(
                   "p",
                   "dialog-note",
-                  supported.length
-                    ? "Environnement compatible indisponible."
-                    : "Plateforme à vérifier dans Steam.",
+                  "Téléchargement et installation déclenchés directement dans Steam.",
                 ),
               );
             }
@@ -2198,7 +2244,7 @@
                   ? "Installer et jouer"
                   : game.canInstall
                     ? "Installer"
-                    : "Ouvrir";
+                    : (game.installed ? "Ouvrir" : (game.store === "steam" ? "Installer" : "Ouvrir"));
           const open = el("button", "card-open");
           open.type = "button";
           open.setAttribute(
