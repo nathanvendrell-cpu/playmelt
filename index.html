@@ -515,6 +515,43 @@
         width: 100%;
         margin-top: 7px;
       }
+      .install-stepper {
+        display: flex;
+        gap: 5px;
+        margin: 0 0 16px;
+      }
+      .install-step {
+        flex: 1;
+        padding: 6px 3px;
+        text-align: center;
+        border-radius: 6px;
+        background: #eef2f5;
+        color: #718096;
+        border: 1px solid #d8e1e8;
+        font-size: 10px;
+        font-weight: 500;
+        transition: all 0.2s ease;
+      }
+      .install-step.active {
+        background: #007aff18;
+        color: #007aff;
+        border-color: #007aff60;
+        font-weight: 600;
+        box-shadow: 0 1px 4px #007aff20;
+      }
+      .install-step.done {
+        background: #34c75918;
+        color: #248a3d;
+        border-color: #34c75960;
+        font-weight: 600;
+      }
+      .install-stats {
+        font-size: 11px;
+        color: #64748b;
+        margin: -6px 0 12px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
       .render-protection {
         display: flex;
         align-items: center;
@@ -2012,6 +2049,7 @@
             : null;
         }
         function jobPhase(job) {
+          if (job?.phase) return job.phase;
           return (
             {
               requesting: "Demande envoyée",
@@ -2022,18 +2060,22 @@
               installing: "Installation",
               "disk-space": "Espace disque insuffisant",
               "launch-requested": "Lancement demandé",
+              "launch-ready": "Prêt à jouer",
               failed: "Installation échouée",
               cancelled: "Suivi arrêté",
               "timed-out": "Suivi expiré",
-            }[job.status] || "Installation"
+            }[job?.status] || "Installation"
           );
         }
         function jobRatio(job) {
-          return ["downloading", "paused"].includes(job.status) &&
-            typeof job.bytesDownloaded === "number" &&
+          if (typeof job?.progress === "number" && Number.isFinite(job.progress) && job.progress >= 0) {
+            return Math.max(0, Math.min(1, job.progress));
+          }
+          return ["downloading", "paused", "installing", "validating"].includes(job?.status) &&
+            typeof job?.bytesDownloaded === "number" &&
             Number.isFinite(job.bytesDownloaded) &&
             job.bytesDownloaded >= 0 &&
-            typeof job.bytesTotal === "number" &&
+            typeof job?.bytesTotal === "number" &&
             Number.isFinite(job.bytesTotal) &&
             job.bytesTotal > 0
             ? Math.max(0, Math.min(1, job.bytesDownloaded / job.bytesTotal))
@@ -2042,20 +2084,32 @@
         function renderInstallJob(body, job, game) {
           const terminal = [
             "launch-requested",
+            "launch-ready",
             "failed",
             "cancelled",
             "timed-out",
           ].includes(job.status);
+          const stepper = el("div", "install-stepper");
+          const step1 = el("div", "install-step", "1. Téléchargement");
+          const step2 = el("div", "install-step", "2. Installation");
+          const step3 = el("div", "install-step", "3. Vérification");
+          const step4 = el("div", "install-step", "4. Prêt");
+          stepper.append(step1, step2, step3, step4);
+          body.append(stepper);
+
           const line = el("div", "setup-line"),
             phase = el("span"),
             percent = el("span");
           line.append(phase, percent);
           body.append(line);
-          const progress = terminal ? null : el("progress", "setup-progress");
+          const progress = terminal && job.status !== "launch-ready" ? null : el("progress", "setup-progress");
           if (progress) {
             progress.max = 1;
             body.append(progress);
           }
+          const stats = el("div", "install-stats");
+          body.append(stats);
+
           const note = el("p", "dialog-note");
           body.append(note);
           ui.dialogProgress = {
@@ -2069,22 +2123,36 @@
             percent,
             progress,
             note,
+            stepper: { step1, step2, step3, step4 },
+            stats,
           };
           patchInstallProgress(job);
+          if (job.status === "launch-ready") {
+            const playNow = el(
+              "button",
+              "button primary dialog-action",
+              "Jouer",
+            );
+            playNow.addEventListener("click", () => {
+              send("launchGame", { gameId: game.id });
+              $("gameDialog").close();
+            });
+            body.append(playNow);
+          }
           if (job.cancellable) {
             const cancel = el(
               "button",
               "button secondary setup-cancel",
               "Arrêter le suivi",
             );
-            cancel.title = "Le téléchargement Steam continue.";
+            cancel.title = "Annuler l'installation.";
             cancel.addEventListener("click", () => {
               cancel.disabled = true;
               send("cancelInstallAndPlay");
             });
             body.append(cancel);
           }
-          if (terminal) {
+          if (terminal && job.status !== "launch-ready") {
             const back = el(
               "button",
               "button secondary dialog-action",
@@ -2163,7 +2231,7 @@
           const refs = ui.dialogProgress;
           const terminal =
             job &&
-            ["launch-requested", "failed", "cancelled", "timed-out"].includes(
+            ["launch-requested", "launch-ready", "failed", "cancelled", "timed-out"].includes(
               job.status,
             );
           if (
@@ -2178,11 +2246,45 @@
           )
             return false;
           patchProgressValues(refs, jobPhase(job), jobRatio(job));
-          const note = ["failed", "disk-space", "timed-out"].includes(
-            job.status,
-          )
+
+          if (refs.stepper) {
+            const { step1, step2, step3, step4 } = refs.stepper;
+            step1.className = "install-step";
+            step2.className = "install-step";
+            step3.className = "install-step";
+            step4.className = "install-step";
+            if (["downloading", "requesting", "awaiting-steam", "paused"].includes(job.status)) {
+              step1.className = "install-step active";
+            } else if (job.status === "installing") {
+              step1.className = "install-step done";
+              step2.className = "install-step active";
+            } else if (job.status === "validating") {
+              step1.className = "install-step done";
+              step2.className = "install-step done";
+              step3.className = "install-step active";
+            } else if (job.status === "launch-ready" || job.status === "launch-requested") {
+              step1.className = "install-step done";
+              step2.className = "install-step done";
+              step3.className = "install-step done";
+              step4.className = "install-step done";
+            }
+          }
+
+          if (refs.stats) {
+            let parts = [];
+            if (job.speed) parts.push("Vitesse : " + job.speed);
+            if (job.bytesDownloaded > 0 && job.bytesTotal > 0) {
+              const dl = (job.bytesDownloaded / (1024 * 1024)).toFixed(1) + " Mo";
+              const tot = (job.bytesTotal / (1024 * 1024)).toFixed(1) + " Mo";
+              parts.push(dl + " / " + tot);
+            }
+            refs.stats.textContent = parts.join(" · ");
+            refs.stats.hidden = parts.length === 0;
+          }
+
+          const note = ["failed", "disk-space", "timed-out"].includes(job.status)
             ? job.message || ""
-            : "";
+            : (job.message || "");
           refs.note.hidden = !note;
           if (refs.note.textContent !== note) refs.note.textContent = note;
           return true;
@@ -2211,16 +2313,18 @@
           if (active) {
             const ratio = jobRatio(job);
             header.textContent =
+              "⚡ " + (job.title ? job.title + " : " : "") +
               jobPhase(job) +
               (ratio !== null ? " " + Math.floor(ratio * 100) + " %" : "");
-            header.title = job.title || "";
+            header.title = job.message || job.title || "";
           }
           document
             .querySelectorAll(".game-action[data-game-id]")
             .forEach((button) => {
               const following = active && button.dataset.gameId === job.gameId;
+              const ratio = active ? jobRatio(job) : null;
               const label = following
-                ? "Suivre"
+                ? (ratio !== null ? "Suivre " + Math.floor(ratio * 100) + " %" : "Suivre")
                 : renderProtectionEnabled()
                   ? "Ouvrir"
                   : button.dataset.defaultLabel;
@@ -2522,9 +2626,29 @@
           }
           refreshVisibleDialog();
         };
+        let lastNotifiedJobPhase = "";
         window.onNativeInstallJob = (job) => {
           if (job !== null && (!job || typeof job !== "object")) return;
           state.installJob = job;
+          if (job) {
+            const phase = job.phase || job.status;
+            if (phase !== lastNotifiedJobPhase) {
+              lastNotifiedJobPhase = phase;
+              if (typeof showToast === "function") {
+                if (phase === "Téléchargement") {
+                  showToast("Téléchargement de " + (job.title || "jeu") + " en cours…");
+                } else if (phase === "Installation") {
+                  showToast("Installation des fichiers de " + (job.title || "jeu") + "…");
+                } else if (phase === "Vérification") {
+                  showToast("Configuration du moteur pour " + (job.title || "jeu") + "…");
+                } else if (job.status === "launch-ready") {
+                  showToast((job.title || "Le jeu") + " est installé et prêt ! Vous pouvez jouer.");
+                }
+              }
+            }
+          } else {
+            lastNotifiedJobPhase = "";
+          }
           if (ui.view === "diagnostics") {
             updateD3DMetalSettings();
             updateWindowsSettings();

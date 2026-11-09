@@ -16,6 +16,7 @@ mkdir -p "$PRODUCT/Contents/MacOS" "$PRODUCT/Contents/Resources"
 swiftc -O -target arm64-apple-macos15.0 -module-name MetalMax "$TASK_ROOT/OwnedProcess.swift" "$TASK_ROOT/EpicSessionStore.swift" "$TASK_ROOT/EpicConnector.swift" "$TASK_ROOT/RuntimeSetup.swift" "$TASK_ROOT/D3DMetalStore.swift" "$TASK_ROOT/D3DMetalRuntime.swift" "$TASK_ROOT/GraphicsMemoryBudget.swift" "$TASK_ROOT/GraphicsFeatureContract.swift" "$TASK_ROOT/GraphicsFrameAdapter.swift" "$TASK_ROOT/Core.swift" "$TASK_ROOT/LibraryScan.swift" "$TASK_ROOT/SteamAuthenticationLifetime.swift" "$TASK_ROOT/SteamInstallObserver.swift" "$TASK_ROOT/SteamInstallCoordinator.swift" "$TASK_ROOT/SteamWindowsBootstrap.swift" "$TASK_ROOT/SelfTests.swift" "$TASK_ROOT/main.swift" -o "$PRODUCT/Contents/MacOS/MetalMax" -framework AppKit -framework WebKit -framework Metal -framework Security -framework LocalAuthentication
 cp "$TASK_ROOT/index.html" "$PRODUCT/Contents/Resources/index.html"
 cp "$TASK_ROOT/scripts/epic-worker.py" "$PRODUCT/Contents/Resources/epic-worker.py"
+cp "$TASK_ROOT/scripts/steam-installer.py" "$PRODUCT/Contents/Resources/steam-installer.py"
 cp "$TASK_ROOT/Resources/SteamLibraryReader.js" "$PRODUCT/Contents/Resources/SteamLibraryReader.js"
 for image in PlaymeltLogo.png PlaymeltIcon.png; do
   if [[ -f "$TASK_ROOT/Resources/$image" ]]; then

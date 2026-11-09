@@ -201,9 +201,15 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     var loading = false
     private var closing = false
     let resourceURL: URL
+    var activeInstallerProcess: Process?
+    private var lastNotifiedPhase = ""
     init(resourceURL: URL) {
         self.resourceURL = resourceURL; super.init()
         installCoordinator.onChange = { [weak self] in self?.notifyInstallJob() }
+        installCoordinator.onCancel = { [weak self] in
+            self?.activeInstallerProcess?.terminate()
+            self?.activeInstallerProcess = nil
+        }
         steamBootstrap.onChange = { [weak self] in self?.notifyRuntime() }
         steamBootstrap.onInstalled = { [weak self] in self?.refresh() }
         d3dMetalSteamBootstrap.onChange = { [weak self] in self?.notifyRuntime() }
@@ -268,10 +274,19 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         case "openWindowsSteam":
             guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Steam Windows est indisponible pendant cette opération."); return }
             openWindowsSteam(runtimeID: "playmelt-windows")
-        case "cancelInstallAndPlay": installCoordinator.cancel()
+        case "cancelInstallAndPlay":
+            activeInstallerProcess?.terminate()
+            activeInstallerProcess = nil
+            installCoordinator.cancel()
         case "installAndPlay":
             guard let id = dict["gameId"] as? String, let game = model.games.first(where: { $0.id == id }) else { result(false, "Jeu introuvable. Actualisez la bibliothèque."); return }
-            installAndPlay(game, runtimeID: dict["runtimeId"] as? String)
+            if game.installed {
+                route(game, installing: false, requestedRuntime: dict["runtimeId"] as? String)
+            } else if game.store == "steam" {
+                startNativeSteamInstall(game: game, autoPlay: true)
+            } else {
+                installAndPlay(game, runtimeID: dict["runtimeId"] as? String)
+            }
         case "syncLibrary", "openSteamLogin":
             if authentication == nil { authentication = SteamAuthentication(model: model) { [weak self] ok, message in self?.sendState(); self?.result(ok, message) } }
             model.beginSteamLibrarySync(); sendState()
@@ -379,7 +394,16 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     }
     func notifyRuntime() { notify("onNativeRuntime", runtimePayload()) }
     func notifyInstallJob() {
-        if let job = installCoordinator.snapshot { notify("onNativeInstallJob", job) }
+        if let job = installCoordinator.snapshot {
+            notify("onNativeInstallJob", job)
+        } else {
+            webView?.evaluateJavaScript("if (typeof window.onNativeInstallJob === 'function') window.onNativeInstallJob(null);", completionHandler: nil)
+        }
+    }
+    func sendToast(_ message: String, error: Bool = false) {
+        guard !closing, let data = try? JSONSerialization.data(withJSONObject: [message, error]),
+              let json = String(data: data, encoding: .utf8) else { return }
+        webView?.evaluateJavaScript("if (typeof showToast === 'function') { const [m, e] = \(json); showToast(m, e); }", completionHandler: nil)
     }
     func result(_ ok: Bool, _ message: String) { notify("onNativeResult", ["ok": ok, "message": message]) }
     func notify(_ name: String, _ payload: [String: Any]) {
@@ -497,6 +521,119 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             if !ok { self?.installCoordinator.requestFailed(id: id, message: message) }
         }
     }
+    func startNativeSteamInstall(game: Game, autoPlay: Bool) {
+        guard !installCoordinator.isActive else {
+            result(false, "Une installation est déjà en cours. Patientez ou annulez-la.")
+            return
+        }
+        guard !game.appId.isEmpty else {
+            result(false, "Identifiant Steam manquant.")
+            return
+        }
+        let bundleScript = Bundle.main.url(forResource: "steam-installer", withExtension: "py")
+        let sourceScript = (Bundle.main.infoDictionary?["MetalMaxSourceDirectory"] as? String).map {
+            URL(fileURLWithPath: $0).appendingPathComponent("scripts/steam-installer.py")
+        }
+        let devScript = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("scripts/steam-installer.py")
+        var scriptURL: URL?
+        if let b = bundleScript, FileManager.default.fileExists(atPath: b.path) { scriptURL = b }
+        else if let s = sourceScript, FileManager.default.fileExists(atPath: s.path) { scriptURL = s }
+        else if FileManager.default.fileExists(atPath: devScript.path) { scriptURL = devScript }
+        guard let finalScript = scriptURL else {
+            result(false, "Script d'installation Playmelt introuvable.")
+            return
+        }
+        let pythonPaths = ["/opt/homebrew/bin/python3", "/usr/bin/python3", "/usr/local/bin/python3"]
+        guard let pythonPath = pythonPaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            result(false, "Interpréteur Python introuvable pour l'installation.")
+            return
+        }
+        installCoordinator.beginDirect(gameID: game.id, appID: game.appId, title: game.title, autoLaunch: autoPlay)
+        lastNotifiedPhase = ""
+        sendToast("Démarrage du téléchargement de \(game.title)…")
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: pythonPath)
+        proc.arguments = [finalScript.path, "--appid", game.appId, "--title", game.title]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        self.activeInstallerProcess = proc
+        var buffer = Data()
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            buffer.append(chunk)
+            while let newlineRange = buffer.range(of: Data([0x0A])) {
+                let lineData = buffer.subdata(in: 0..<newlineRange.lowerBound)
+                buffer.removeSubrange(0..<newlineRange.upperBound)
+                if let line = String(data: lineData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !line.isEmpty,
+                   let parsed = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
+                    DispatchQueue.main.async {
+                        self?.handleInstallerUpdate(json: parsed, game: game, autoPlay: autoPlay)
+                    }
+                }
+            }
+        }
+        proc.terminationHandler = { [weak self] p in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.activeInstallerProcess = nil
+                if p.terminationStatus != 0 && self.installCoordinator.isActive {
+                    self.installCoordinator.finishDirect(success: false, message: "L'installation a été interrompue.")
+                    self.sendToast("Installation de \(game.title) interrompue.", error: true)
+                    self.sendState()
+                }
+            }
+        }
+        do {
+            try proc.run()
+            result(true, "Téléchargement de \(game.title) en cours dans Playmelt.")
+            sendState()
+        } catch {
+            installCoordinator.finishDirect(success: false, message: "Impossible de lancer l'installateur : \(error.localizedDescription)")
+            result(false, "Erreur au lancement de l'installation.")
+            sendToast("Erreur au lancement de l'installation.", error: true)
+            sendState()
+        }
+    }
+    func handleInstallerUpdate(json: [String: Any], game: Game, autoPlay: Bool) {
+        guard !closing else { return }
+        let status = json["status"] as? String ?? "downloading"
+        let phase = json["phase"] as? String ?? "Téléchargement"
+        let message = json["message"] as? String ?? "Installation en cours…"
+        let percent = json["percent"] as? Double
+        let downloaded = (json["bytesDownloaded"] as? NSNumber)?.uint64Value ?? 0
+        let total = (json["bytesTotal"] as? NSNumber)?.uint64Value ?? 0
+        let speed = json["speed"] as? String ?? ""
+        if phase != lastNotifiedPhase && !phase.isEmpty {
+            lastNotifiedPhase = phase
+            if phase == "Installation" {
+                sendToast("Installation des fichiers de \(game.title)…")
+            } else if phase == "Vérification" {
+                sendToast("Configuration du moteur pour \(game.title)…")
+            }
+        }
+        if status == "launch-ready" {
+            installCoordinator.finishDirect(success: true, message: message)
+            sendToast("\(game.title) est installé et prêt ! Vous pouvez jouer.")
+            refresh { [weak self] in
+                guard let self else { return }
+                DispatchQueue.main.async {
+                    self.result(true, "\(game.title) est prêt à jouer !")
+                    if autoPlay, let installed = self.model.games.first(where: { $0.appId == game.appId }) {
+                        self.route(installed, installing: false, requestedRuntime: nil)
+                    }
+                }
+            }
+        } else if status == "failed" {
+            installCoordinator.finishDirect(success: false, message: message)
+            sendToast("Échec de l'installation de \(game.title) : \(message)", error: true)
+            sendState()
+        } else {
+            installCoordinator.updateDirect(status: status, message: message, progress: percent, downloaded: downloaded, total: total, speed: speed, phase: phase)
+        }
+    }
     func validatedSteamRuntime(_ game: Game, installing: Bool, requestedRuntime: String?) -> Runtime? {
         guard !renderProtectionEnabled else { result(false, "Rendus en cours : installation et lancement suspendus."); return nil }
         guard LibraryModel.validAppID(game.appId), let runtime = model.runtimes.first(where: { $0.id == (installing ? requestedRuntime ?? game.runtimeId : game.runtimeId) && $0.available }) else { result(false, "Aucun client Steam utilisable pour cette route."); return nil }
@@ -555,7 +692,9 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         let isLocal = game.installSource == "local" || findLaunchScript(in: game.path) != nil
         guard !closing, (isLocal || !renderProtectionEnabled) else { result(false, "Rendus en cours : installation et lancement suspendus."); return }
         guard !CommandLine.arguments.contains("--audit-read-only") else { result(false, "Mode de vérification : installations et lancements désactivés."); return }
-        guard !installCoordinator.isActive else { result(false, "Un suivi d’installation est déjà en cours. Arrêtez le suivi avant une autre demande."); return }
+        if installing {
+            guard !installCoordinator.isActive else { result(false, "Un suivi d’installation est déjà en cours. Arrêtez le suivi avant une autre demande."); return }
+        }
         if !installing, let script = ensureLaunchScript(for: game) ?? findLaunchScript(in: game.path) {
             let key = "launch-script:\(game.appId.isEmpty ? game.id : game.appId)"
             guard let token = requestGate.acquire(key) else { result(false, "Demande déjà envoyée."); return }
@@ -573,6 +712,10 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                 result(false, "Impossible de lancer le jeu.")
                 return
             }
+        }
+        if installing, game.store == "steam", !game.appId.isEmpty {
+            startNativeSteamInstall(game: game, autoPlay: false)
+            return
         }
         if game.store == "epic" {
             guard WindowsExecutionPolicy.permits(platform: game.platform) else { result(false, WindowsExecutionPolicy.message); return }

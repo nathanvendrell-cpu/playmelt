@@ -98,8 +98,47 @@ final class SteamInstallCoordinator {
     private var readySignature: String?
     private var closed = false
     var onChange: (() -> Void)?
+    var onCancel: (() -> Void)?
     var snapshot: [String: Any]? { job }
     var isActive: Bool { token != nil }
+    var activeAppID: String? { job?["appId"] as? String }
+    var activeGameID: String? { job?["gameId"] as? String }
+
+    @discardableResult
+    func beginDirect(gameID: String, appID: String, title: String, autoLaunch: Bool = false) -> UUID? {
+        guard !closed, token == nil else { return nil }
+        let id = UUID(); token = id; readySignature = nil
+        job = ["id": id.uuidString, "gameId": gameID, "appId": appID, "title": title,
+               "status": "downloading", "phase": "Téléchargement",
+               "message": "Démarrage du téléchargement de \(title)…",
+               "bytesDownloaded": 0, "bytesTotal": 0,
+               "progress": 0.0, "cancellable": true, "autoLaunch": autoLaunch]
+        onChange?(); return id
+    }
+
+    func updateDirect(status: String, message: String, progress: Double?, downloaded: UInt64 = 0, total: UInt64 = 0, speed: String = "", phase: String = "") {
+        guard token != nil else { return }
+        job?["status"] = status
+        job?["message"] = message
+        if let progress { job?["progress"] = max(0.0, min(1.0, progress)) }
+        if downloaded > 0 { job?["bytesDownloaded"] = downloaded }
+        if total > 0 { job?["bytesTotal"] = total }
+        if !speed.isEmpty { job?["speed"] = speed }
+        if !phase.isEmpty { job?["phase"] = phase }
+        onChange?()
+    }
+
+    func finishDirect(success: Bool, message: String, onReady: ((UUID) -> Void)? = nil) {
+        guard let id = token else { return }
+        stopObserver(); token = nil; readySignature = nil
+        job?["status"] = success ? "launch-ready" : "failed"
+        job?["message"] = message
+        job?["phase"] = success ? "Terminé" : "Échec"
+        job?["progress"] = success ? 1.0 : NSNull()
+        job?["cancellable"] = false
+        onChange?()
+        if success { onReady?(id) }
+    }
 
     func begin(gameID: String, appID: String, title: String, runtime: Runtime, accountID: String,
                timeout: TimeInterval = 12 * 60 * 60, onReady: @escaping (UUID) -> Void) -> UUID? {
@@ -152,7 +191,12 @@ final class SteamInstallCoordinator {
         guard token == id else { return }
         finish(status: success ? "launch-requested" : "failed", message: message)
     }
-    func cancel(message: String = "Suivi et lancement automatique arrêtés. Le téléchargement reste géré par Steam.") { if token != nil { finish(status: "cancelled", message: message) } }
+    func cancel(message: String = "Suivi et lancement automatique arrêtés. Le téléchargement reste géré par Steam.") {
+        if token != nil {
+            onCancel?()
+            finish(status: "cancelled", message: message)
+        }
+    }
     func shutdown() { closed = true; stopObserver(); token = nil }
     private func finish(status: String, message: String) {
         stopObserver(); token = nil; readySignature = nil
