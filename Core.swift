@@ -209,6 +209,8 @@ struct Game {
     var supportedPlatforms: [String] = []
     var customImageURL = ""
     var customPortraitURL = ""
+    var lastPlayed: Int64 = 0
+    var installSource: String = "steam"
     func json(runtimes: [Runtime], availability: [String: Bool]? = nil, completedRuntimeIDs: Set<String>? = nil) -> [String: Any] {
         func usable(_ runtime: Runtime) -> Bool { runtime.executionAllowed && (availability?[runtime.id] ?? runtime.available) }
         let runtime = runtimes.first { $0.id == runtimeId && usable($0) }
@@ -224,6 +226,9 @@ struct Game {
             let canPlay = SteamGameLaunchProfile.blockReason(appID: appId, platform: candidate.platform, renderer: candidate.renderer, graphicsValidated: candidate.graphicsValidated) == nil
             return ["runtimeId": candidate.id, "canInstall": allowed, "canInstallAndPlay": allowed && canPlay]
         } : []
+        let directCanLaunch = installed && complete && (installSource == "local" || findLaunchScript(in: path) != nil)
+        let standardCanLaunch = installed && complete && launchSupported && (store == "epic" ? WindowsExecutionPolicy.permits(platform: platform) && FileManager.default.fileExists(atPath: "/Applications/Epic Games Launcher.app") : available)
+        let canLaunch = directCanLaunch || standardCanLaunch
         return ["id": id, "appId": appId, "title": title, "store": store, "installed": installed,
                 "platform": platform, "runtimeId": runtimeId, "runtimeName": runtimeName, "ownership": ownership,
                 "platforms": platforms, "installRoutes": routes,
@@ -233,10 +238,12 @@ struct Game {
                 "localImageURL": store == "steam" ? "metalmaxart://steam/\(appId)" : "",
                 "portraitImageURL": !customPortraitURL.isEmpty ? customPortraitURL : store == "steam" ? "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appId)/library_600x900.jpg" : "",
                 "localPortraitURL": store == "steam" ? "metalmaxart://steam/\(appId)/portrait" : "",
-                "canLaunch": installed && complete && launchSupported && (store == "epic" ? WindowsExecutionPolicy.permits(platform: platform) && FileManager.default.fileExists(atPath: "/Applications/Epic Games Launcher.app") : available),
+                "canLaunch": canLaunch,
                 "canInstall": store == "steam" && !complete && platform != "unknown" && available && routeMatches,
                 "canInstallAndPlay": store == "steam" && !complete && platform != "unknown" && available && launchSupported,
-                "installComplete": complete]
+                "installComplete": complete,
+                "lastPlayed": lastPlayed,
+                "installSource": installSource]
     }
 }
 
@@ -291,13 +298,96 @@ final class SteamRequestGate {
     func shutdown() { closed = true; entries.removeAll() }
 }
 
+func findLaunchScript(in url: URL?) -> URL? {
+    guard let url else { return nil }
+    let fm = FileManager.default
+    let validExts = ["command", "sh"]
+    if validExts.contains(url.pathExtension.lowercased()), fm.isExecutableFile(atPath: url.path) { return url }
+    if let files = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
+        if let script = files.first(where: { validExts.contains($0.pathExtension.lowercased()) && fm.isExecutableFile(atPath: $0.path) }) {
+            return script
+        }
+    }
+    let parent = url.deletingLastPathComponent()
+    if let files = try? fm.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil) {
+        if let script = files.first(where: { validExts.contains($0.pathExtension.lowercased()) && fm.isExecutableFile(atPath: $0.path) }) {
+            return script
+        }
+    }
+    return nil
+}
+
+func ensureLaunchScript(for game: Game) -> URL? {
+    if let existing = findLaunchScript(in: game.path) { return existing }
+    guard game.installSource == "local", let folder = game.path else { return nil }
+    let fm = FileManager.default
+    let winFolder = folder.appendingPathComponent("Windows")
+    let targetDir = fm.fileExists(atPath: winFolder.path) ? winFolder : folder
+    guard let files = try? fm.subpathsOfDirectory(atPath: targetDir.path) else { return nil }
+    let exeCandidates = files.filter { path in
+        let lower = path.lowercased()
+        guard lower.hasSuffix(".exe") else { return false }
+        let ignoredWords = ["crash", "sentry", "redist", "setup", "install", "unins", "vcredist", "dxsetup", "patch", "update"]
+        guard !ignoredWords.contains(where: { lower.contains($0) }) else { return false }
+        guard !lower.contains("engine/extras") && !lower.contains("engine/programs") && !lower.contains("plugins/") else { return false }
+        return true
+    }
+    let shippingExe = exeCandidates.first(where: { $0.lowercased().contains("-shipping.exe") })
+    let mainExe = shippingExe ?? exeCandidates.sorted(by: { $0.count < $1.count }).first
+    guard let chosen = mainExe else { return nil }
+    var extraArgs = "-dx11"
+    if chosen.lowercased().contains("-shipping.exe") {
+        let projCandidate = (try? fm.contentsOfDirectory(atPath: targetDir.path))?.first(where: { item in
+            var isDir: ObjCBool = false
+            return fm.fileExists(atPath: targetDir.appendingPathComponent(item).path, isDirectory: &isDir) && isDir.boolValue && !["engine", "communityresources"].contains(item.lowercased())
+        })
+        if let proj = projCandidate {
+            extraArgs = "\(proj) -dx11"
+        }
+    }
+    let safeTitle = game.title.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-").trimmingCharacters(in: .whitespaces)
+    let scriptURL = folder.appendingPathComponent("Lancer-\(safeTitle).command")
+    let scriptContent = """
+    #!/bin/bash
+    # Lanceur direct Playmelt pour \(game.title) (Apple Silicon / Metal / Wine / DXMT)
+    set -e
+    GAME_DIR="\(targetDir.path)"
+    RUNTIME_DIR="$HOME/Library/Application Support/Playmelt/Runtime"
+    RENDERER_DIR="$HOME/Library/Application Support/Playmelt/Renderers/D3DMetal/payload"
+
+    cd "$GAME_DIR"
+
+    export WINEPREFIX="$RUNTIME_DIR/prefix"
+    export WINEDEBUG="-all"
+    export WINEDLLOVERRIDES="winemenubuilder.exe=d"
+    export WINEDLLPATH_PREPEND="$RENDERER_DIR/wine:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/renderers/dxmt/wine"
+    export CX_D3DMETALPATH="$RENDERER_DIR/external"
+    export DYLD_FALLBACK_LIBRARY_PATH="$RENDERER_DIR/external:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks/GStreamer.framework/Versions/1.0/lib"
+    export DYLD_FALLBACK_FRAMEWORK_PATH="$RENDERER_DIR/external:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks"
+    export MVK_CONFIG_LOG_LEVEL=1
+
+    exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" "\(chosen)" \(extraArgs) "$@" >/dev/null 2>&1
+    \n
+    """
+    try? scriptContent.write(to: scriptURL, atomically: true, encoding: .utf8)
+    _ = chmod(scriptURL.path, 0o755)
+    return scriptURL
+}
+
 func steamInstallationPath(apps: URL, directory: String) -> URL? {
     guard !directory.isEmpty, directory != ".", directory != "..", !directory.contains("/"), !directory.contains("\\") else { return nil }
     let base = apps.resolvingSymlinksInPath()
     let common = base.appendingPathComponent("common").resolvingSymlinksInPath()
     let path = common.appendingPathComponent(directory).resolvingSymlinksInPath()
-    guard common.path.hasPrefix(base.path + "/"), path.path.hasPrefix(common.path + "/") else { return nil }
-    return path
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let playmeltGames = home.appendingPathComponent("Library/Application Support/Playmelt/Games").resolvingSymlinksInPath()
+    let commonPath = common.path
+    let resolvedPath = path.path
+    if (commonPath.hasPrefix(base.path + "/") && resolvedPath.hasPrefix(commonPath + "/")) ||
+       resolvedPath.hasPrefix(playmeltGames.path + "/") || resolvedPath == playmeltGames.path {
+        return path
+    }
+    return nil
 }
 
 func containsLaunchBinary(_ root: URL, platform: String, cancelled: () -> Bool = { false }) -> Bool {
@@ -307,13 +397,16 @@ func containsLaunchBinary(_ root: URL, platform: String, cancelled: () -> Bool =
         if cancelled() { return false }
         count += 1; if count > 1500 { break }
         if walker.level > 6 { walker.skipDescendants(); continue }
-        if platform == "windows", file.pathExtension.lowercased() == "exe",
+        if file.pathExtension.lowercased() == "command", FileManager.default.isExecutableFile(atPath: file.path) {
+            return true
+        }
+        if (platform == "windows" || platform == "any" || platform == "unknown"), file.pathExtension.lowercased() == "exe",
            (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
            let handle = try? FileHandle(forReadingFrom: file) {
             let prefix = try? handle.read(upToCount: 2); try? handle.close()
             if prefix == Data([0x4d, 0x5a]) { return true }
         }
-        if platform == "mac", !["dylib", "so", "bundle", "dll", "exe"].contains(file.pathExtension.lowercased()),
+        if (platform == "mac" || platform == "any" || platform == "unknown"), !["dylib", "so", "bundle", "dll", "exe"].contains(file.pathExtension.lowercased()),
            (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
            FileManager.default.isExecutableFile(atPath: file.path), let handle = try? FileHandle(forReadingFrom: file) {
             let prefix = try? handle.read(upToCount: 4); try? handle.close()
@@ -458,7 +551,8 @@ final class LibraryModel {
         return Game(id: "epic:" + app, appId: app, title: m.string("DisplayName"), store: "epic", installed: true,
                     platform: "mac", runtimeId: "epic-mac", runtimeName: "Epic Games Launcher", ownership: "installed-only",
                     path: path, complete: complete,
-                    epicLaunchID: [namespace, item, app].joined(separator: ":"))
+                    epicLaunchID: [namespace, item, app].joined(separator: ":"),
+                    supportedPlatforms: [], customImageURL: "", customPortraitURL: "", lastPlayed: 0, installSource: "epic")
     }
     /// Checks the manifest's actual launch target, not an unrelated helper in the
     /// installation tree. A readable manifest or MZ Windows file is not a native
@@ -591,10 +685,11 @@ final class LibraryModel {
                 games[index].ownership = "authenticated-library"; games[index].supportedPlatforms = platforms
                 games[index].customImageURL = row["imageURL"] as? String ?? ""
             } else {
-                var game = Game(id: "epic-owned:" + appName, appId: appName, title: String(title.prefix(200)), store: "epic", installed: false,
+                let game = Game(id: "epic-owned:" + appName, appId: appName, title: String(title.prefix(200)), store: "epic", installed: false,
                                 platform: platforms.contains("mac") ? "mac" : platforms.contains("windows") ? "windows" : "unknown",
-                                runtimeId: "epic-mac", runtimeName: "Epic Games Launcher", ownership: "authenticated-library")
-                game.supportedPlatforms = platforms; game.customImageURL = row["imageURL"] as? String ?? ""; games.append(game)
+                                runtimeId: "epic-mac", runtimeName: "Epic Games Launcher", ownership: "authenticated-library",
+                                path: nil, complete: false, epicLaunchID: "", supportedPlatforms: platforms, customImageURL: row["imageURL"] as? String ?? "", customPortraitURL: "", lastPlayed: 0, installSource: "epic")
+                games.append(game)
             }
         }
     }

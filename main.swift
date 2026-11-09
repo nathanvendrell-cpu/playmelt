@@ -216,7 +216,12 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         print("Playmelt action: \(action)"); fflush(stdout)
         let duringScan: Set<String> = ["refresh", "setRenderProtection", "selectAccount", "cancelWindowsRuntime", "cancelD3DMetalRuntime", "cancelInstallAndPlay"]
         guard !loading || duringScan.contains(action) else { result(false, "Lecture locale en cours. Réessayez dans un instant."); return }
-        guard !RenderProtection.blocks(action, enabled: renderProtectionEnabled) else { result(false, "Rendus en cours : cette action est suspendue."); return }
+        let isLocalGame: Bool = {
+            guard action == "launchGame", let id = dict["gameId"] as? String,
+                  let g = model.games.first(where: { $0.id == id }) else { return false }
+            return g.installSource == "local" || findLaunchScript(in: g.path) != nil
+        }()
+        guard isLocalGame || !RenderProtection.blocks(action, enabled: renderProtectionEnabled) else { result(false, "Rendus en cours : cette action est suspendue."); return }
         guard !WindowsExecutionPolicy.legacyActions.contains(action) else { result(false, WindowsExecutionPolicy.message); return }
         switch action {
         case "setRenderProtection":
@@ -543,9 +548,28 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         catch { completion(false, "Impossible d’ouvrir Steam Windows.") }
     }
     func route(_ game: Game, installing: Bool, requestedRuntime: String?) {
-        guard !closing, !renderProtectionEnabled else { result(false, "Rendus en cours : installation et lancement suspendus."); return }
+        let isLocal = game.installSource == "local" || findLaunchScript(in: game.path) != nil
+        guard !closing, (isLocal || !renderProtectionEnabled) else { result(false, "Rendus en cours : installation et lancement suspendus."); return }
         guard !CommandLine.arguments.contains("--audit-read-only") else { result(false, "Mode de vérification : installations et lancements désactivés."); return }
         guard !installCoordinator.isActive else { result(false, "Un suivi d’installation est déjà en cours. Arrêtez le suivi avant une autre demande."); return }
+        if !installing, let script = ensureLaunchScript(for: game) ?? findLaunchScript(in: game.path) {
+            let key = "launch-script:\(game.appId.isEmpty ? game.id : game.appId)"
+            guard let token = requestGate.acquire(key) else { result(false, "Demande déjà envoyée."); return }
+            defer { requestGate.finish(key, token: token) }
+            do {
+                _ = try clientLauncher.launch(executable: URL(fileURLWithPath: "/bin/bash"),
+                                              arguments: [script.path],
+                                              environment: ProcessInfo.processInfo.environment,
+                                              directory: script.deletingLastPathComponent()) { code in
+                    if code != 0 { NSLog("Playmelt game script finished with code %d", code) }
+                }
+                result(true, "Ouverture de \(game.title)…")
+                return
+            } catch {
+                result(false, "Impossible de lancer le jeu.")
+                return
+            }
+        }
         if game.store == "epic" {
             guard WindowsExecutionPolicy.permits(platform: game.platform) else { result(false, WindowsExecutionPolicy.message); return }
             guard !installing, game.complete, !game.epicLaunchID.isEmpty, let encoded = game.epicLaunchID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed), let url = URL(string: "com.epicgames.launcher://apps/\(encoded)?action=launch&silent=true") else { result(false, "Route Epic indisponible."); return }
@@ -556,7 +580,20 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                 self?.result(error == nil, error == nil ? "Ouverture de \(game.title)…" : "Epic n’a pas accepté la demande.")
             } }; return
         }
-        guard let runtime = validatedSteamRuntime(game, installing: installing, requestedRuntime: requestedRuntime) else { return }
+        guard let runtime = validatedSteamRuntime(game, installing: installing, requestedRuntime: requestedRuntime) else {
+            if !installing, game.store == "steam", game.installed, let url = URL(string: "steam://run/\(game.appId)") {
+                let steamApp = URL(fileURLWithPath: "/Applications/Steam.app")
+                if FileManager.default.fileExists(atPath: steamApp.path) {
+                    NSWorkspace.shared.open([url], withApplicationAt: steamApp, configuration: .init()) { [weak self] _, error in
+                        DispatchQueue.main.async {
+                            self?.result(error == nil, error == nil ? "Ouverture de \(game.title)…" : "Steam n’a pas accepté la demande.")
+                        }
+                    }
+                    return
+                }
+            }
+            return
+        }
         dispatchSteam(game, runtime: runtime, installing: installing, onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, message) }
     }
     func beginShutdown() {
@@ -572,6 +609,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var handler: ScriptHandler!
     var shuttingDown = false
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if UserDefaults.standard.object(forKey: RenderProtection.preferenceKey) == nil {
+            UserDefaults.standard.set(false, forKey: RenderProtection.preferenceKey)
+        }
         guard let resource = Bundle.main.url(forResource: "index", withExtension: "html") else { NSApp.terminate(nil); return }
         handler = ScriptHandler(resourceURL: resource)
         let content = WKUserContentController(); content.add(handler!, name: "metalmax")

@@ -337,6 +337,11 @@
         color: #fff;
         border: 1px solid #ffffff30;
       }
+      .store-badge.local-badge {
+        background: #13522dc7;
+        border-color: #34c75960;
+        color: #bdf6cc;
+      }
       .game-copy {
         position: absolute;
         left: 14px;
@@ -857,6 +862,12 @@
           <button class="nav-button" data-view="library" aria-current="page">
             <span>Bibliothèque</span
             ><span class="nav-count" id="countAll">—</span></button
+          ><button class="nav-button" data-view="installed">
+            <span>Jeux installés</span
+            ><span class="nav-count" id="countInstalled">—</span></button
+          ><button class="nav-button" data-view="recent">
+            <span>Joués récemment</span
+            ><span class="nav-count" id="countRecent">—</span></button
           ><button class="nav-button" data-view="steam">
             <span>Steam</span
             ><span class="nav-count" id="countSteam">—</span></button
@@ -1062,8 +1073,11 @@
           if (!allowedActions.has(action)) return false;
           if (windowsExecutionUnavailable() && ["setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam"].includes(action))
             return false;
-          if (renderProtectionEnabled() && renderProtectedActions.has(action))
-            return false;
+          if (renderProtectionEnabled() && renderProtectedActions.has(action)) {
+            const targetGame = payload.gameId ? state.games.find((g) => g.id === payload.gameId) : null;
+            if (!targetGame || targetGame.installSource !== "local")
+              return false;
+          }
           const bridge = window.webkit?.messageHandlers?.metalmax;
           if (!bridge) {
             notify("Connexion native indisponible.", true);
@@ -1179,6 +1193,8 @@
             id: String(g.id ?? ""),
             title: String(g.title || "Jeu sans titre"),
             store: g.store === "epic" ? "epic" : "steam",
+            installSource: g.installSource || (g.store === "epic" ? "epic" : "steam"),
+            lastPlayed: Number(g.lastPlayed || 0),
             installed: g.installed === true,
             canLaunch: g.canLaunch === true,
             canInstall: g.canInstall === true,
@@ -1190,31 +1206,46 @@
         }
         function filteredGames() {
           return state.games
-            .filter(
-              (g) =>
-                (ui.view === "library" || g.store === ui.view) &&
-                (!ui.query ||
-                  g.title.toLocaleLowerCase("fr").includes(ui.query)) &&
-                (ui.install === "all" ||
-                  (ui.install === "installed" ? g.installed : !g.installed)) &&
-                (ui.platform === "all" || platforms(g).includes(ui.platform)),
-            )
-            .sort(
-              (a, b) =>
+            .filter((g) => {
+              if (ui.view === "installed" && !g.installed) return false;
+              if (ui.view === "recent" && !(g.lastPlayed > 0)) return false;
+              if (ui.view === "steam" && g.store !== "steam") return false;
+              if (ui.view === "epic" && g.store !== "epic") return false;
+              if (ui.query && !g.title.toLocaleLowerCase("fr").includes(ui.query)) return false;
+              if (ui.install !== "all") {
+                if (ui.install === "installed" && !g.installed) return false;
+                if (ui.install === "uninstalled" && g.installed) return false;
+              }
+              if (ui.platform !== "all" && !platforms(g).includes(ui.platform)) return false;
+              return true;
+            })
+            .sort((a, b) => {
+              if (ui.view === "recent") {
+                return (
+                  Number(b.lastPlayed || 0) - Number(a.lastPlayed || 0) ||
+                  a.title.localeCompare(b.title, "fr", { sensitivity: "base" })
+                );
+              }
+              return (
                 Number(b.installed) - Number(a.installed) ||
-                a.title.localeCompare(b.title, "fr", { sensitivity: "base" }),
-            );
+                a.title.localeCompare(b.title, "fr", { sensitivity: "base" })
+              );
+            });
         }
         function updateSidebar() {
           for (const [id, count] of [
             ["countAll", state.games.length],
+            ["countInstalled", state.games.filter((g) => g.installed).length],
+            ["countRecent", state.games.filter((g) => (g.lastPlayed || 0) > 0).length],
             [
               "countSteam",
               state.games.filter((g) => g.store === "steam").length,
             ],
             ["countEpic", state.games.filter((g) => g.store === "epic").length],
-          ])
-            $(id).textContent = received ? locale.format(count) : "—";
+          ]) {
+            const node = $(id);
+            if (node) node.textContent = received ? locale.format(count) : "—";
+          }
           const select = $("accountSelect");
           select.replaceChildren();
           if (!state.accounts.length) {
@@ -1245,11 +1276,13 @@
         function updateToolbar() {
           const titles = {
             library: "Bibliothèque",
+            installed: "Jeux installés",
+            recent: "Joués récemment",
             steam: "Steam",
             epic: "Epic Games",
             diagnostics: "État du Mac",
           };
-          $("viewTitle").textContent = titles[ui.view];
+          $("viewTitle").textContent = titles[ui.view] || "Bibliothèque";
           const syncing = state.libraryStatus.status === "syncing";
           $("syncLibrary").disabled = syncing;
           $("syncLibrary").textContent = syncing
@@ -1711,17 +1744,17 @@
         function renderGameDialog(game) {
           ui.dialogRenderProtection = renderProtectionEnabled();
           $("dialogTitle").textContent = game.title;
-          $("dialogStore").textContent = [
-            storeName(game.store),
+          const storeParts = [
+            game.installSource === "local" ? "Installation locale" : storeName(game.store),
             platformLabel(game),
-          ]
-            .filter(Boolean)
-            .join(" · ");
+            game.installed ? (game.installSource === "local" ? "Installé (Local Playmelt)" : "Installé (Steam)") : null,
+          ].filter(Boolean);
+          $("dialogStore").textContent = storeParts.join(" · ");
           const body = $("dialogBody");
           const previousRuntime =
             document.getElementById("runtimeSelect")?.value;
           ui.dialogProgress = null;
-          if (windowsExecutionUnavailable() && platforms(game).length === 1 && platforms(game)[0] === "windows") {
+          if (windowsExecutionUnavailable() && platforms(game).length === 1 && platforms(game)[0] === "windows" && game.installSource !== "local") {
             delete body.dataset.rendererKey;
             body.replaceChildren(windowsUnavailableControls());
             return;
@@ -1821,12 +1854,17 @@
             }
           } else if (game.canLaunch) {
             const play = el("button", "button primary dialog-action", "Jouer");
-            play.disabled = renderProtectionEnabled();
+            play.disabled = renderProtectionEnabled() && game.installSource !== "local";
             play.addEventListener("click", () => {
               send("launchGame", { gameId: game.id });
               $("gameDialog").close();
             });
             body.append(play);
+            if (game.installed) {
+              const folderBtn = el("button", "button secondary dialog-action", "Ouvrir le dossier");
+              folderBtn.addEventListener("click", () => send("openGameFolder", { gameId: game.id }));
+              body.append(folderBtn);
+            }
           } else if (
             game.store === "steam" &&
             (!game.installed || routes.length)
@@ -2174,9 +2212,11 @@
           });
           const artwork = art(game);
           card.disposeArtwork = () => artwork.disposeArtwork?.();
+          const isLocal = game.installSource === "local" || game.store === "local";
+          const badgeText = isLocal ? "Local" : storeName(game.store);
           card.append(
             artwork,
-            el("span", "store-badge", storeName(game.store)),
+            el("span", "store-badge" + (isLocal ? " local-badge" : ""), badgeText),
             open,
           );
           const copy = el("span", "game-copy");
@@ -2192,7 +2232,7 @@
             const current = state.games.find((g) => g.id === game.id);
             if (!current) return;
             if (
-              renderProtectionEnabled() ||
+              (renderProtectionEnabled() && current.installSource !== "local") ||
               current.requiredRenderer === "d3dmetal" ||
               installJobFor(current)
             )
@@ -2215,6 +2255,8 @@
               ui.artworkGeneration,
               game.title,
               game.store,
+              game.installSource,
+              game.lastPlayed,
               platforms(game),
               game.canLaunch,
               game.canInstall,
