@@ -133,28 +133,47 @@ def get_recent_download_rate(content_log_path):
         pass
     return None
 
-def create_launch_script(game_dir, chosen_exe, game_title):
+def create_launch_script(game_dir, chosen_exe, game_title, app_id=None):
     runtime_dir = os.path.expanduser("~/Library/Application Support/Playmelt/Runtime")
     renderer_dir = os.path.expanduser("~/Library/Application Support/Playmelt/Renderers/D3DMetal/payload")
     
-    extra_args = "-dx11"
     lower_exe = chosen_exe.lower()
+    is_unity = "unity" in lower_exe or any(
+        os.path.isdir(os.path.join(game_dir, f)) and f.endswith("_Data")
+        for f in os.listdir(game_dir)
+    )
+    
+    # Check for DX12 requirement:
+    # 1. Known DX12 app IDs
+    dx12_app_ids = {"1783560", "2584270", "4711740"}
+    is_dx12 = bool(app_id and str(app_id) in dx12_app_ids)
+    
+    proj_name = None
     if "-shipping.exe" in lower_exe:
-        # Check Unreal project name
         proj_candidates = [
             f for f in os.listdir(game_dir)
-            if os.path.isdir(os.path.join(game_dir, f)) and f.lower() not in ["engine", "communityresources", "binaries"]
+            if os.path.isdir(os.path.join(game_dir, f)) and f.lower() not in ["engine", "communityresources", "binaries", "redist"]
         ]
         if proj_candidates:
-            extra_args = f"{proj_candidates[0]} -dx11"
-    elif "unity" in lower_exe or not lower_exe.startswith("unreal"):
-        extra_args = "-force-d3d11"
+            proj_name = proj_candidates[0]
+            
+        # Check if directory contains UE5 markers or D3D12 binaries
+        for root, dirs, files in os.walk(game_dir):
+            if any(f.lower() in ["d3d12core.dll", "d3d12sdklayers.dll"] for f in files):
+                is_dx12 = True
+                break
+            if os.path.basename(root).lower() == "nne" and "plugins" in root.lower():
+                is_dx12 = True
+                break
 
-    safe_title = "".join(c if c.isalnum() or c in " -_" else "-" for c in game_title).strip()
-    script_path = os.path.join(game_dir, f"Lancer-{safe_title}.command")
-    
-    content = f"""#!/bin/bash
-# Lanceur direct Playmelt pour {game_title} (Apple Silicon / Metal / Wine / DXMT)
+    # Unity games on macOS Wine are always run on DX11 via DXMT
+    if is_unity:
+        is_dx12 = False
+
+    if is_dx12:
+        extra_args = f"{proj_name} -d3d12" if proj_name else "-d3d12"
+        content = f"""#!/bin/bash
+# Lanceur direct Playmelt pour {game_title} (Apple Silicon / Metal / Wine / D3DMetal DX12)
 set -e
 GAME_DIR="{game_dir}"
 RUNTIME_DIR="{runtime_dir}"
@@ -164,15 +183,38 @@ cd "$GAME_DIR"
 
 export WINEPREFIX="$RUNTIME_DIR/prefix"
 export WINEDEBUG="-all"
-export WINEDLLOVERRIDES="winemenubuilder.exe=d"
-export WINEDLLPATH_PREPEND="$RENDERER_DIR/wine:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/renderers/dxmt/wine"
+export WINEDLLOVERRIDES="d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d"
+export WINEDLLPATH_PREPEND="$RENDERER_DIR/wine"
 export CX_D3DMETALPATH="$RENDERER_DIR/external"
-export DYLD_FALLBACK_LIBRARY_PATH="$RENDERER_DIR/external:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks/GStreamer.framework/Versions/1.0/lib"
+export DYLD_FALLBACK_LIBRARY_PATH="$RENDERER_DIR/external:$RENDERER_DIR/external/D3DMetal.framework/Versions/A/Resources:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks/GStreamer.framework/Versions/1.0/lib"
 export DYLD_FALLBACK_FRAMEWORK_PATH="$RENDERER_DIR/external:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks"
-export MVK_CONFIG_LOG_LEVEL=1
+export MVK_CONFIG_LOG_LEVEL=0
 
 exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" "{chosen_exe}" {extra_args} "$@" >/dev/null 2>&1
 """
+    else:
+        extra_args = "-force-d3d11" if is_unity else (f"{proj_name} -dx11" if proj_name else "-dx11")
+        content = f"""#!/bin/bash
+# Lanceur direct Playmelt pour {game_title} (Apple Silicon / Metal / Wine / DXMT)
+set -e
+GAME_DIR="{game_dir}"
+RUNTIME_DIR="{runtime_dir}"
+
+cd "$GAME_DIR"
+
+export WINEPREFIX="$RUNTIME_DIR/prefix"
+export WINEDEBUG="-all"
+export WINEDLLOVERRIDES="d3d11,dxgi,nvapi64=n,b;winemenubuilder.exe=d"
+export WINEDLLPATH_PREPEND="$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/renderers/dxmt/wine"
+export DYLD_FALLBACK_LIBRARY_PATH="$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks/GStreamer.framework/Versions/1.0/lib"
+export DYLD_FALLBACK_FRAMEWORK_PATH="$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks"
+export MVK_CONFIG_LOG_LEVEL=0
+
+exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" "{chosen_exe}" {extra_args} "$@" >/dev/null 2>&1
+"""
+
+    safe_title = "".join(c if c.isalnum() or c in " -_" else "-" for c in game_title).strip()
+    script_path = os.path.join(game_dir, f"Lancer-{safe_title}.command")
     with open(script_path, "w", encoding="utf-8") as f:
         f.write(content)
     os.chmod(script_path, 0o755)
@@ -307,27 +349,42 @@ def main():
     with open(os.path.join(dest_game_folder, "steam_appid.txt"), "w") as f:
         f.write(f"{app_id}\n")
         
-    # Find Goldberg steamclient64.dll from prefix
+    # Find Goldberg steam_api64.dll and steamclient64.dll
+    emu_candidates = [
+        os.path.join(home, "Library/Application Support/Playmelt/Runtime/steam_api64_emu.dll"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "../Resources/steam_api64.dll"),
+        os.path.join(home, "Library/Application Support/Playmelt/Games/Megabonk/Windows/Megabonk_Data/Plugins/x86_64/steam_api64.dll")
+    ]
+    goldberg_api64 = next((c for c in emu_candidates if os.path.exists(c)), None)
     prefix_steamclient = os.path.join(home, "Library/Application Support/Playmelt/Runtime/prefix/drive_c/Program Files (x86)/Steam/steamclient64.dll")
-    if os.path.exists(prefix_steamclient):
-        # Copy next to any steam_api64.dll
-        for root, dirs, files in os.walk(dest_win_folder):
-            if "steam_api64.dll" in files:
+
+    for root, dirs, files in os.walk(dest_win_folder):
+        if "steam_api64.dll" in files:
+            # Overwrite retail steam_api64.dll with Goldberg to prevent RestartAppIfNecessary exits
+            if goldberg_api64:
+                try:
+                    target_api = os.path.join(root, "steam_api64.dll")
+                    shutil.copy2(goldberg_api64, target_api)
+                except Exception:
+                    pass
+            if os.path.exists(prefix_steamclient):
                 target_dll = os.path.join(root, "steamclient64.dll")
                 if not os.path.exists(target_dll):
                     try:
                         shutil.copy2(prefix_steamclient, target_dll)
                     except Exception:
                         pass
-                # Also create steam_settings/steam_interfaces.txt
-                settings_dir = os.path.join(root, "steam_settings")
-                os.makedirs(settings_dir, exist_ok=True)
-                with open(os.path.join(settings_dir, "steam_appid.txt"), "w") as f:
-                    f.write(f"{app_id}\n")
-                interfaces_file = os.path.join(settings_dir, "steam_interfaces.txt")
-                if not os.path.exists(interfaces_file):
-                    with open(interfaces_file, "w") as f:
-                        f.write("STEAMAPPS_INTERFACE_VERSION009\nSteamClient017\nSteamFriends018\nSteamUser023\nSteamUtils010\n")
+            # Also create steam_settings/steam_interfaces.txt and steam_appid.txt
+            settings_dir = os.path.join(root, "steam_settings")
+            os.makedirs(settings_dir, exist_ok=True)
+            with open(os.path.join(settings_dir, "steam_appid.txt"), "w") as f:
+                f.write(f"{app_id}\n")
+            with open(os.path.join(root, "steam_appid.txt"), "w") as f:
+                f.write(f"{app_id}\n")
+            interfaces_file = os.path.join(settings_dir, "steam_interfaces.txt")
+            if not os.path.exists(interfaces_file):
+                with open(interfaces_file, "w") as f:
+                    f.write("STEAMAPPS_INTERFACE_VERSION009\nSteamClient017\nSteamFriends018\nSteamUser023\nSteamUtils010\n")
                         
     # Detect best executable
     exe_chosen = target_exe
@@ -349,7 +406,7 @@ def main():
         sys.exit(1)
         
     # Create launch script
-    script_path = create_launch_script(dest_win_folder, exe_chosen, title)
+    script_path = create_launch_script(dest_win_folder, exe_chosen, title, app_id=app_id)
     # Also symlink or copy to dest_game_folder
     top_script = os.path.join(dest_game_folder, os.path.basename(script_path))
     if script_path != top_script:

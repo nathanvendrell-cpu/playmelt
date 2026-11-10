@@ -18,6 +18,9 @@ cp "$TASK_ROOT/index.html" "$PRODUCT/Contents/Resources/index.html"
 cp "$TASK_ROOT/scripts/epic-worker.py" "$PRODUCT/Contents/Resources/epic-worker.py"
 cp "$TASK_ROOT/scripts/steam-installer.py" "$PRODUCT/Contents/Resources/steam-installer.py"
 cp "$TASK_ROOT/Resources/SteamLibraryReader.js" "$PRODUCT/Contents/Resources/SteamLibraryReader.js"
+if [[ -f "$TASK_ROOT/Resources/steam_api64.dll" ]]; then
+  cp "$TASK_ROOT/Resources/steam_api64.dll" "$PRODUCT/Contents/Resources/steam_api64.dll"
+fi
 for image in PlaymeltLogo.png PlaymeltIcon.png; do
   if [[ -f "$TASK_ROOT/Resources/$image" ]]; then
     cp "$TASK_ROOT/Resources/$image" "$PRODUCT/Contents/Resources/$image"
