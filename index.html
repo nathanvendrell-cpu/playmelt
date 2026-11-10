@@ -2132,7 +2132,7 @@
             body.replaceChildren(windowsUnavailableControls());
             return;
           }
-          if (game.requiredRenderer === "d3dmetal") {
+          if (game.requiredRenderer === "d3dmetal" && game.installSource !== "local") {
             const key = JSON.stringify([
               game.id,
               game.canInstall,
@@ -2676,7 +2676,7 @@
           const card = el("article", "game-card");
           card.dataset.gameId = game.id;
           const action =
-            game.requiredRenderer === "d3dmetal"
+            game.requiredRenderer === "d3dmetal" && game.installSource !== "local"
               ? "Configurer"
               : game.canLaunch
                 ? "Jouer"
@@ -2722,7 +2722,7 @@
             if (!current) return;
             if (
               (renderProtectionEnabled() && current.installSource !== "local") ||
-              current.requiredRenderer === "d3dmetal" ||
+              (current.requiredRenderer === "d3dmetal" && current.installSource !== "local") ||
               installJobFor(current)
             )
               openGame(current);
