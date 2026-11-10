@@ -218,25 +218,47 @@
       }
       .search {
         flex: 1;
-        min-width: 120px;
+        min-width: 140px;
+        position: relative;
       }
       .search input {
         width: 100%;
-        background: #ffffff70;
-        border: 1px solid #64788b2b;
+        background: #ffffff88;
+        border: 1px solid #64788b30;
         border-radius: 9px;
-        padding: 10px 13px;
+        padding: 9px 13px 9px 34px;
         font-size: 12px;
+        color: var(--ink);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: 11px center;
+        transition: all 0.15s ease;
+      }
+      .search input:focus {
+        background: #ffffff;
+        border-color: #007aff;
+        box-shadow: 0 0 0 3px #007aff20;
       }
       .search input::placeholder {
         color: #67727e;
       }
       .filter-select {
-        border: 0;
-        background: transparent;
-        padding: 7px 18px 7px 6px;
+        border: 1px solid #64788b2b;
+        background: #ffffff70;
+        border-radius: 8px;
+        padding: 7px 26px 7px 10px;
         font-size: 12px;
+        color: var(--ink);
         max-width: 170px;
+        appearance: none;
+        -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 9px center;
+        transition: border-color 0.15s ease;
+      }
+      .filter-select:focus {
+        border-color: #007aff;
       }
       .library-pane {
         padding: 3px 30px 30px;
@@ -254,19 +276,20 @@
         position: relative;
         aspect-ratio: 2/3;
         overflow: hidden;
-        border: 1px solid #ffffffac;
-        border-radius: 12px;
-        background: #aeb7bf;
-        box-shadow: 0 4px 13px #24374b1c;
+        border: 1px solid #ffffffcc;
+        border-radius: 14px;
+        background: #94a3b8;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
         padding: 0;
         text-align: left;
         color: #fff;
         isolation: isolate;
+        transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
       }
       .game-art {
         position: absolute;
         inset: 0;
-        background: #aeb7bf;
+        background: #94a3b8;
         overflow: hidden;
       }
       .game-art img {
@@ -274,6 +297,7 @@
         height: 100%;
         object-fit: cover;
         display: block;
+        transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
       }
       .game-card:after {
         content: "";
@@ -281,19 +305,23 @@
         inset: 0;
         background: linear-gradient(
           180deg,
-          #00000021 0%,
-          transparent 33%,
-          #07101915 53%,
-          #071019c9 82%,
-          #071019ee 100%
+          rgba(0, 0, 0, 0.15) 0%,
+          transparent 30%,
+          rgba(7, 16, 25, 0.1) 50%,
+          rgba(7, 16, 25, 0.8) 78%,
+          rgba(7, 16, 25, 0.96) 100%
         );
         z-index: 1;
         pointer-events: none;
       }
       .game-card:hover,
       .game-card:focus-within {
-        box-shadow: 0 6px 20px #24374b30;
-        border-color: #fff;
+        transform: translateY(-4px);
+        box-shadow: 0 16px 36px rgba(15, 23, 42, 0.24), 0 0 0 1px #ffffff inset;
+        border-color: #ffffff;
+      }
+      .game-card:hover .game-art img {
+        transform: scale(1.04);
       }
       .card-open {
         position: absolute;
@@ -442,115 +470,373 @@
         font-size: 14px;
       }
       .game-dialog {
-        width: 360px;
-        max-width: calc(100vw - 40px);
-        padding: 25px;
-        border: 1px solid #ffffffdb;
-        border-radius: 16px;
-        background: linear-gradient(130deg, #f8fafb, #e2e7ec);
-        box-shadow: 0 20px 80px #081a2e40;
+        width: 480px;
+        max-width: calc(100vw - 32px);
+        padding: 0;
+        border: 1px solid rgba(255, 255, 255, 0.7);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: 0 32px 80px rgba(15, 23, 42, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.05);
         color: var(--ink);
+        overflow: hidden;
+        backdrop-filter: blur(40px) saturate(190%);
+        -webkit-backdrop-filter: blur(40px) saturate(190%);
+        animation: dialogFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      @keyframes dialogFadeIn {
+        from {
+          opacity: 0;
+          transform: scale(0.96) translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
       }
       .game-dialog::backdrop {
-        background: #10223352;
-        backdrop-filter: blur(4px);
-        -webkit-backdrop-filter: blur(4px);
+        background: rgba(15, 23, 42, 0.45);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      .dialog-hero {
+        position: relative;
+        width: 100%;
+        height: 195px;
+        background: linear-gradient(135deg, #1e293b, #0f172a);
+        overflow: hidden;
+      }
+      .dialog-hero-blur {
+        position: absolute;
+        inset: -20px;
+        background-size: cover;
+        background-position: center;
+        filter: blur(25px) brightness(0.65);
+        opacity: 0.85;
+        transform: scale(1.15);
+      }
+      .dialog-hero-img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center 25%;
+        z-index: 1;
+        display: none;
+      }
+      .dialog-hero-scrim {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        background: linear-gradient(
+          180deg,
+          rgba(0, 0, 0, 0.25) 0%,
+          transparent 35%,
+          rgba(255, 255, 255, 0.4) 75%,
+          rgba(255, 255, 255, 0.95) 100%
+        );
+        pointer-events: none;
       }
       .dialog-close {
         position: absolute;
-        right: 15px;
-        top: 12px;
-        border: 0;
-        background: transparent;
-        font-size: 22px;
-        color: #5c6c79;
-        padding: 3px 5px;
+        right: 14px;
+        top: 14px;
+        z-index: 10;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        background: rgba(0, 0, 0, 0.35);
+        color: #ffffff;
+        font-size: 16px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        transition: all 0.15s ease;
+      }
+      .dialog-close:hover {
+        background: rgba(0, 0, 0, 0.6);
+        transform: scale(1.06);
+      }
+      .dialog-hero-badges {
+        position: absolute;
+        left: 20px;
+        bottom: 12px;
+        z-index: 3;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .hero-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: 0.01em;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      .hero-pill.store-pill {
+        background: rgba(15, 23, 42, 0.8);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+      }
+      .hero-pill.store-pill.local {
+        background: rgba(16, 185, 129, 0.85);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.35);
+      }
+      .hero-pill.status-pill.ready {
+        background: rgba(16, 185, 129, 0.9);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+      }
+      .hero-pill.status-pill.installing {
+        background: rgba(0, 122, 255, 0.9);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+      }
+      .hero-pill.status-pill.uninstalled {
+        background: rgba(71, 85, 105, 0.7);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+      .hero-pill.engine-pill {
+        background: rgba(255, 255, 255, 0.85);
+        color: #1e293b;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+      }
+      .dialog-content {
+        padding: 16px 24px 24px;
       }
       .dialog-store {
         font-size: 11px;
+        font-weight: 600;
         color: var(--muted);
-        margin: 0 28px 9px 0;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin: 0 0 6px 0;
       }
       .game-dialog h2 {
-        font-size: 23px;
-        font-weight: 630;
+        font-size: 24px;
+        font-weight: 700;
         letter-spacing: -0.6px;
         line-height: 1.2;
-        margin: 0 0 22px;
+        margin: 0 0 16px;
+        color: #0f172a;
       }
       .dialog-label {
         display: block;
         font-size: 11px;
+        font-weight: 600;
         color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
         margin-bottom: 8px;
       }
       .route-select {
         width: 100%;
-        border: 1px solid #60778c38;
-        border-radius: 8px;
-        padding: 10px;
-        background: #ffffff8c;
-        font-size: 12px;
-        margin-bottom: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        border-radius: 9px;
+        padding: 10px 12px;
+        background: rgba(255, 255, 255, 0.85);
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--ink);
+        margin-bottom: 14px;
+        transition: border-color 0.15s ease;
+      }
+      .route-select:focus {
+        border-color: #007aff;
+      }
+      #dialogBody {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
       .dialog-action {
         width: 100%;
+        min-height: 40px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 10px 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .dialog-action.primary {
+        background: linear-gradient(180deg, #0a84ff 0%, #0071e3 100%);
+        color: #ffffff;
+        border: 1px solid #0062cc;
+        box-shadow: 0 3px 10px rgba(0, 113, 227, 0.32), 0 1px 0 rgba(255, 255, 255, 0.25) inset;
+      }
+      .dialog-action.primary:hover:not(:disabled) {
+        background: linear-gradient(180deg, #1a8eff 0%, #0068d6 100%);
+        box-shadow: 0 5px 14px rgba(0, 113, 227, 0.45);
+        transform: translateY(-0.5px);
+      }
+      .dialog-action.primary:active:not(:disabled) {
+        transform: scale(0.98);
+      }
+      .dialog-action.secondary {
+        background: rgba(255, 255, 255, 0.75);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        color: #334155;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      .dialog-action.secondary:hover:not(:disabled) {
+        background: #ffffff;
+        border-color: rgba(100, 116, 139, 0.5);
+        color: #0f172a;
+      }
+      .dialog-action.danger-action {
+        color: #dc2626;
+        border-color: rgba(220, 38, 38, 0.25);
+        background: rgba(254, 242, 242, 0.6);
+      }
+      .dialog-action.danger-action:hover:not(:disabled) {
+        background: #fee2e2;
+        border-color: #ef4444;
+        color: #b91c1c;
+      }
+      .dialog-action.action-play {
+        min-height: 44px;
+        font-size: 14px;
+        font-weight: 650;
+        letter-spacing: -0.2px;
+        background: linear-gradient(180deg, #007aff 0%, #0062cc 100%);
+        color: #fff;
+        border: 1px solid #0056b3;
+        box-shadow: 0 4px 14px rgba(0, 122, 255, 0.35), 0 1px 0 rgba(255, 255, 255, 0.25) inset;
+      }
+      .dialog-action.action-play::before {
+        content: "▶";
+        font-size: 11px;
       }
       .setup-line {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        font-size: 12px;
-        margin: 0 0 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #1e293b;
+        margin: 0;
+      }
+      .setup-line span:last-child {
+        font-variant-numeric: tabular-nums;
+        color: #007aff;
+        font-weight: 700;
+        font-size: 14px;
       }
       .setup-progress {
         width: 100%;
-        height: 6px;
+        height: 8px;
         display: block;
-        accent-color: #344e63;
-        margin: 0 0 15px;
+        appearance: none;
+        border: none;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.08);
+        overflow: hidden;
+        margin: 0;
+      }
+      .setup-progress::-webkit-progress-bar {
+        background: rgba(0, 0, 0, 0.08);
+        border-radius: 999px;
+      }
+      .setup-progress::-webkit-progress-value {
+        background: linear-gradient(90deg, #007aff, #38bdf8);
+        border-radius: 999px;
+        transition: width 0.25s ease;
       }
       .setup-cancel {
         width: 100%;
-        margin-top: 7px;
+        margin-top: 4px;
       }
       .install-stepper {
         display: flex;
-        gap: 5px;
-        margin: 0 0 16px;
+        gap: 6px;
+        margin: 0 0 4px;
       }
       .install-step {
         flex: 1;
-        padding: 6px 3px;
+        padding: 8px 4px;
         text-align: center;
-        border-radius: 6px;
-        background: #eef2f5;
-        color: #718096;
-        border: 1px solid #d8e1e8;
-        font-size: 10px;
-        font-weight: 500;
-        transition: all 0.2s ease;
+        border-radius: 8px;
+        background: rgba(241, 245, 249, 0.85);
+        color: #64748b;
+        border: 1px solid rgba(203, 213, 225, 0.6);
+        font-size: 11px;
+        font-weight: 550;
+        transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
       }
       .install-step.active {
-        background: #007aff18;
-        color: #007aff;
-        border-color: #007aff60;
-        font-weight: 600;
-        box-shadow: 0 1px 4px #007aff20;
+        background: #007aff;
+        color: #ffffff;
+        border-color: #0066d6;
+        font-weight: 650;
+        box-shadow: 0 3px 8px rgba(0, 122, 255, 0.3);
       }
       .install-step.done {
-        background: #34c75918;
-        color: #248a3d;
-        border-color: #34c75960;
+        background: rgba(16, 185, 129, 0.15);
+        color: #047857;
+        border-color: rgba(16, 185, 129, 0.5);
         font-weight: 600;
       }
       .install-stats {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         font-size: 11px;
-        color: #64748b;
-        margin: -6px 0 12px;
-        text-align: right;
+        font-weight: 550;
+        color: #475569;
+        background: rgba(241, 245, 249, 0.75);
+        border: 1px solid rgba(226, 232, 240, 0.9);
+        border-radius: 8px;
+        padding: 7px 12px;
+        margin: 0;
         font-variant-numeric: tabular-nums;
+        letter-spacing: 0.01em;
+      }
+      .installed-card-badge {
+        position: absolute;
+        right: 10px;
+        top: 10px;
+        z-index: 2;
+        font-size: 10px;
+        line-height: 1;
+        font-weight: 600;
+        padding: 5px 8px;
+        border-radius: 6px;
+        background: rgba(16, 185, 129, 0.9);
+        color: #fff;
+        border: 1px solid rgba(255, 255, 255, 0.4);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        pointer-events: none;
+      }
+      .installed-card-badge::before {
+        content: "";
+        display: inline-block;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: #fff;
       }
       .render-protection {
         display: flex;
@@ -1002,12 +1288,20 @@
       </main>
     </div>
     <dialog class="game-dialog" id="gameDialog" aria-labelledby="dialogTitle">
-      <button class="dialog-close" id="dialogClose" aria-label="Fermer">
-        ×
-      </button>
-      <p class="dialog-store" id="dialogStore"></p>
-      <h2 id="dialogTitle"></h2>
-      <div id="dialogBody"></div>
+      <div class="dialog-hero" id="dialogHero">
+        <div class="dialog-hero-blur" id="dialogHeroBlur"></div>
+        <img class="dialog-hero-img" id="dialogHeroImg" alt="" />
+        <div class="dialog-hero-scrim"></div>
+        <button class="dialog-close" id="dialogClose" aria-label="Fermer">
+          ×
+        </button>
+        <div class="dialog-hero-badges" id="dialogHeroBadges"></div>
+      </div>
+      <div class="dialog-content">
+        <p class="dialog-store" id="dialogStore"></p>
+        <h2 id="dialogTitle"></h2>
+        <div id="dialogBody"></div>
+      </div>
     </dialog>
     <div class="toast" id="toast" role="status" aria-live="polite" hidden>
       <span id="toastMessage"></span
@@ -1787,6 +2081,48 @@
             game.installed ? (game.installSource === "local" ? "Installé (Local Playmelt)" : "Installé (Steam)") : null,
           ].filter(Boolean);
           $("dialogStore").textContent = storeParts.join(" · ");
+          const heroImg = $("dialogHeroImg");
+          const heroBlur = $("dialogHeroBlur");
+          const heroBadges = $("dialogHeroBadges");
+          if (heroImg && heroBlur) {
+            const sources = imageSources(game);
+            const wideUrl = game.imageURL || (game.store === "steam" && /^\d+$/.test(game.id) ? `metalmaxart:/steam/${game.id}` : null) || (sources.length ? sources[0] : "");
+            if (wideUrl) {
+              heroImg.src = wideUrl;
+              heroImg.style.display = "block";
+              heroBlur.style.backgroundImage = `url("${wideUrl}")`;
+              heroImg.onerror = () => {
+                const alt = sources.find((s) => s !== wideUrl);
+                if (alt) {
+                  heroImg.src = alt;
+                  heroBlur.style.backgroundImage = `url("${alt}")`;
+                } else {
+                  heroImg.style.display = "none";
+                }
+              };
+            } else {
+              heroImg.removeAttribute("src");
+              heroImg.style.display = "none";
+              heroBlur.style.backgroundImage = "none";
+            }
+          }
+          if (heroBadges) {
+            heroBadges.replaceChildren();
+            const isLocal = game.installSource === "local";
+            const storePill = el("span", "hero-pill store-pill " + (isLocal ? "local" : game.store), isLocal ? "Local" : storeName(game.store));
+            heroBadges.append(storePill);
+            const currentJob = installJobFor(game);
+            if (game.installed) {
+              heroBadges.append(el("span", "hero-pill status-pill ready", "✓ Installé"));
+            } else if (currentJob) {
+              heroBadges.append(el("span", "hero-pill status-pill installing", "⏳ En cours"));
+            } else {
+              heroBadges.append(el("span", "hero-pill status-pill uninstalled", "Non installé"));
+            }
+            if (game.requiredGraphicsAPI && game.requiredGraphicsAPI !== "unknown") {
+              heroBadges.append(el("span", "hero-pill engine-pill", game.requiredGraphicsAPI));
+            }
+          }
           const body = $("dialogBody");
           const previousRuntime =
             document.getElementById("runtimeSelect")?.value;
@@ -1915,7 +2251,7 @@
             }
           } else if (game.canLaunch || game.installed) {
             if (game.canLaunch) {
-              const play = el("button", "button primary dialog-action", "Jouer");
+              const play = el("button", "button primary dialog-action action-play", "Jouer");
               play.disabled = renderProtectionEnabled() && game.installSource !== "local";
               play.addEventListener("click", () => {
                 send("launchGame", { gameId: game.id });
@@ -2367,8 +2703,11 @@
           card.append(
             artwork,
             el("span", "store-badge" + (isLocal ? " local-badge" : ""), badgeText),
-            open,
           );
+          if (game.installed) {
+            card.append(el("span", "installed-card-badge", "Installé"));
+          }
+          card.append(open);
           const copy = el("span", "game-copy");
           copy.append(el("span", "game-title", game.title));
           if (platformLabel(game))
