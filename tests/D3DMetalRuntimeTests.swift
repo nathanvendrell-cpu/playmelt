@@ -1,22 +1,19 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 private final class MockD3DRunner: D3DMetalCommandRunning {
-    enum Mode { case success, missingSymbol, active, leftover, bootError, stopError, waitError, hold, mutate }
+    enum Mode { case success, missingSymbol, active, leftover, inspectionError, bootError, stopError, waitError, hold, mutate }
     let lock = NSLock()
     var mode: Mode = .success
     var commands: [D3DMetalCommand] = []
     var cleanupSawCancellation = false
-    var activeProcessPath = ""
+    var occupancyChecks = 0
     var mutate: (() throws -> Void)?
     func list() -> [D3DMetalCommand] { lock.lock(); defer { lock.unlock() }; return commands }
     func run(_ command: D3DMetalCommand, cancelled: () -> Bool) throws -> String {
         lock.lock(); commands.append(command); let mode = self.mode; lock.unlock()
         if command.executable.lastPathComponent == "nm" { return mode == .missingSymbol ? "0000 T _other\n" : "0000 D _macdrv_functions\n" }
-        if command.executable.lastPathComponent == "ps" {
-            let after = list().filter { $0.executable.lastPathComponent == "ps" }.count > 1
-            return mode == .active || (mode == .leftover && after) ? "123 " + activeProcessPath + "\n" : ""
-        }
         if command.arguments == ["wineboot","-u"] {
             if mode == .hold {
                 let deadline = Date().addingTimeInterval(3)
@@ -40,6 +37,11 @@ private final class MockD3DRunner: D3DMetalCommandRunning {
             return ""
         }
         throw RuntimeSetupError.failed("unexpected fixture command")
+    }
+    func occupied(_ engine: URL, _ prefix: URL) throws -> Bool {
+        lock.lock(); occupancyChecks += 1; let count = occupancyChecks, mode = self.mode; lock.unlock()
+        if mode == .inspectionError { throw RuntimeSetupError.failed("fixture process inspection failed") }
+        return mode == .active || (mode == .leftover && count > 1)
     }
 }
 
@@ -66,8 +68,7 @@ private final class MockD3DRunner: D3DMetalCommandRunning {
         try put(mach(),engine.appendingPathComponent("lib/wine/x86_64-unix/winemac.so"))
         try put(Data("fixture WINEDLLPATH_PREPEND\0 loader".utf8),engine.appendingPathComponent("lib/wine/x86_64-unix/ntdll.so"))
         let base = PlaymeltRuntimeDescriptor(engineID:"fixture-wine",wineURL:engine.appendingPathComponent("bin/wine"),wineserverURL:engine.appendingPathComponent("bin/wineserver"),prefixURL:prefix,steamRoot:prefix.appendingPathComponent("drive_c/Steam"),environment:["DYLD_FALLBACK_LIBRARY_PATH":root.appendingPathComponent("base/frameworks").path,"WINEDLLPATH_PREPEND":root.appendingPathComponent("base/renderers/dxmt/wine").path,"DXMT_ENABLE_NVEXT":"1"],readyEngine:true,steamInstalled:false)
-        let runner=MockD3DRunner(), runtime=D3DMetalRuntime(store:store,runner:runner,capacity:{_ in 8_000_000_000})
-        runner.activeProcessPath=base.wineURL.path
+        let runner=MockD3DRunner(), runtime=D3DMetalRuntime(store:store,runner:runner,capacity:{_ in 8_000_000_000},occupied:runner.occupied)
         return (store,base,runner,runtime)
     }
     static func until(_ done: () -> Bool) {
@@ -94,11 +95,20 @@ private final class MockD3DRunner: D3DMetalCommandRunning {
         let descriptor=try runtime.descriptor(base:base)!
         expect(descriptor.prefixURL != base.prefixURL && descriptor.steamRoot != base.steamRoot,"prefix and Steam isolated")
         expect(descriptor.environment["DXMT_ENABLE_NVEXT"] == nil && !(descriptor.environment["WINEDLLPATH_PREPEND"] ?? "").contains("dxmt"),"no DXMT mixed into descriptor")
+        expect(descriptor.environment["WINEDLLOVERRIDES"] == "d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d","descriptor launch uses Apple native overrides")
         expect(runtime.snapshot(base:base)["prepared"] as? Bool == true && runtime.snapshot(base:base)["canLaunch"] as? Bool == false,"prepared is never qualified")
         expect(runtime.snapshot(base:base)["loadTested"] as? Bool == false && runtime.snapshot(base:base)["gameTested"] as? Bool == false,"no runtime proof invented")
         let runtimeCommands=runner.list().filter { $0.executable == base.wineURL || $0.executable == base.wineserverURL }
         expect(runtimeCommands.map(\.arguments) == [["wineboot","-u"],["-k"],["-w"]],"boot and scoped stop/wait sequence")
         expect(runtimeCommands.allSatisfy{$0.environment["WINEPREFIX"] == descriptor.prefixURL.path},"all Wine commands use isolated prefix")
+        expect(runtimeCommands.allSatisfy{$0.environment["WINEDLLOVERRIDES"] == "winemenubuilder.exe=d"},"preparation and scoped cleanup keep boot overrides")
+        let candidate = try store.candidateConfiguration(base: base)
+        let legacyEnvironmentData = try JSONSerialization.data(withJSONObject: candidate.environment, options: .sortedKeys)
+        let legacyEnvironmentHash = SHA256.hash(data: legacyEnvironmentData).map { String(format:"%02x", $0) }.joined()
+        let readyData = try Data(contentsOf: store.isolatedRoot.appendingPathComponent("prefix-ready.json"))
+        let ready = try JSONSerialization.jsonObject(with: readyData) as! [String:Any]
+        expect(ready["environmentHash"] as? String == legacyEnvironmentHash, "receipt keeps legacy preparation environment hash")
+        expect(runtimeCommands[0].environment["WINEBOOT_HIDE_DIALOG"] == "1" && runtimeCommands.dropFirst().allSatisfy { $0.environment["WINEBOOT_HIDE_DIALOG"] == nil } && descriptor.environment["WINEBOOT_HIDE_DIALOG"] == nil,"only wineboot hides its wait window")
         expect(runtimeCommands.allSatisfy{$0.timeout > 0 && $0.timeout <= 180},"every command has bounded timeout")
         expect((try fm.attributesOfItem(atPath:store.isolatedRoot.appendingPathComponent("preparation.log").path)[.size] as? NSNumber)?.intValue == 65536,"log capped at 64KiB")
         let before=runner.list().count
@@ -124,11 +134,11 @@ private final class MockD3DRunner: D3DMetalCommandRunning {
             if mode == .missingSymbol { expect(!calls.contains(["wineboot","-u"]),"missing ABI export prevents Wine") }
             else { expect(calls.contains(["-k"]) && calls.contains(["-w"]),"both cleanup attempts run independently") }
         }
-        for mode in [MockD3DRunner.Mode.active,.leftover] {
+        for mode in [MockD3DRunner.Mode.active,.leftover,.inspectionError] {
             let (s,b,r,t)=try fixture(temp.appendingPathComponent(UUID().uuidString));r.mode=mode
             expect(!success(start(t,b)),"existing or leftover process blocks readiness")
             expect(!fm.fileExists(atPath:s.isolatedRoot.appendingPathComponent("prefix-ready.json").path),"process presence never receives ready receipt")
-            if mode == .active { expect(!r.list().contains{$0.arguments == ["wineboot","-u"]},"existing process never interrupted") }
+            if mode == .active || mode == .inspectionError { expect(!r.list().contains{$0.arguments == ["wineboot","-u"]},"existing or uninspectable process never interrupted") }
             else { expect(r.list().contains{$0.arguments == ["-w"]},"leftover detected after scoped cleanup") }
         }
         do {
@@ -190,6 +200,17 @@ private final class MockD3DRunner: D3DMetalCommandRunning {
         expect(ProcessInfo.processInfo.systemUptime-startTime < 3,"continuous writer cannot starve timeout")
         let pid=Int32(try String(contentsOf:pidFile,encoding:.utf8))!
         expect(kill(pid,0) == -1 && errno == ESRCH,"exact native child reaped without zombie")
-        print("D3DMetalRuntime tests: \(checks) PASS; mock Wine only, one bounded CPU output-supervisor test; no GPU/game/client.")
+        let engine = temp.appendingPathComponent("engine"), prefix = temp.appendingPathComponent("prefix")
+        expect(D3DMetalProcessInspector.occupied(paths:[100:engine.appendingPathComponent("bin/wine").path],engine:engine,prefix:prefix),"real executable in engine is busy independent of display name")
+        expect(!D3DMetalProcessInspector.occupied(paths:[100:engine.path + "-other/bin/wine"],engine:engine,prefix:prefix),"similarly named sibling is outside engine")
+        let sleeper = Process(); sleeper.executableURL=URL(fileURLWithPath:"/bin/sleep"); sleeper.arguments=["10"]
+        try sleeper.run()
+        defer { if sleeper.isRunning { sleeper.terminate() }; sleeper.waitUntilExit() }
+        let childPaths = try D3DMetalProcessInspector.paths()
+        let childPath = childPaths[sleeper.processIdentifier]
+        sleeper.terminate(); sleeper.waitUntilExit()
+        expect(childPath != nil,"native inspector sees actual child executable")
+        expect(childPath.map { URL(fileURLWithPath:$0).lastPathComponent == "sleep" } == true,"native inspector reads executable path, not arguments")
+        print("D3DMetalRuntime tests: \(checks) PASS; mock Wine, bounded native process tests; no GPU/game/client.")
     }
 }

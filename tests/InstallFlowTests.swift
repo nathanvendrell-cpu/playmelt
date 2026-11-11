@@ -15,6 +15,9 @@ private final class EpicFlowRunner: OwnedProcessRunning {
     static func check(_ value: Bool, _ label: String) {
         checks += 1; if !value { fatalError("FAIL: " + label) }
     }
+    static func rejects(_ label: String, _ body: () throws -> Void) {
+        do { try body(); check(false, label) } catch { check(true, label) }
+    }
     static func wait(_ done: () -> Bool) {
         let limit = Date().addingTimeInterval(3)
         while !done() && Date() < limit { _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005)) }
@@ -35,7 +38,7 @@ private final class EpicFlowRunner: OwnedProcessRunning {
                       "source": "fixture", "updatedAt": "2026-10-25T00:00:00Z"]]
     }
     static func main() throws {
-        let root = fm.temporaryDirectory.appendingPathComponent("playmelt-install-fixtures-" + UUID().uuidString)
+        let root = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("playmelt-install-fixtures-" + UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
         let install = root.appendingPathComponent("game")
@@ -94,6 +97,59 @@ private final class EpicFlowRunner: OwnedProcessRunning {
         check(try read()?.complete == false, "FAT offset outside file rejected")
 
         let account = "76561198000000001"
+        check(SteamGameLaunchProfile.prefersNative(platform: "mac", supportedPlatforms: ["mac", "windows"], requestedRuntime: nil), "Mac edition stays native by default")
+        check(SteamGameLaunchProfile.prefersNative(platform: "windows", supportedPlatforms: ["mac", "windows"], requestedRuntime: "steam-mac"), "explicit Mac choice is preserved")
+        check(!SteamGameLaunchProfile.prefersNative(platform: "mac", supportedPlatforms: ["mac", "windows"], requestedRuntime: "playmelt-windows"), "explicit Windows choice is preserved")
+        check(!SteamGameLaunchProfile.prefersNative(platform: "windows", supportedPlatforms: ["windows"], requestedRuntime: nil), "Windows-only title cannot fall back to Mac")
+        check(SteamGameLaunchProfile.localRenderer(appID: "526870", unity: false, dx12Markers: true) == "dxmt", "Satisfactory retains its working DX11 route despite bundled DX12 libraries")
+        check(SteamGameLaunchProfile.localRenderer(appID: "1783560", unity: true, dx12Markers: false) == "d3dmetal", "explicit DX12 requirement cannot be overridden by a Unity heuristic")
+        for action in ["launchGame", "installGame", "installAndPlay", "uninstallGame"] {
+            check(RenderProtection.blocks(action, enabled: true), "render gate covers \(action)")
+        }
+        let direct = SteamInstallCoordinator()
+        let old = direct.beginDirect(gameID: "steam:10", appID: "10", title: "A", accountID: account, autoLaunch: true)!
+        direct.cancel()
+        let current = direct.beginDirect(gameID: "steam:20", appID: "20", title: "B", accountID: account, autoLaunch: true)!
+        direct.updateDirect(id: old, status: "installing", message: "stale", progress: 1)
+        check(direct.snapshot?["appId"] as? String == "20" && direct.snapshot?["status"] as? String == "downloading", "late old output cannot mutate the new installation")
+        check(!direct.finishDirect(id: old, success: true, message: "late"), "late completion cannot finish another job")
+        check(direct.finishDirect(id: current, success: true, message: "prepared"), "current direct completion is accepted")
+        check(direct.permitsDirectAutoLaunch(id: current, accountID: account, executionBlocked: false), "current account can request its own automatic launch")
+        check(!direct.permitsDirectAutoLaunch(id: current, accountID: "76561198000000002", executionBlocked: false), "changed account blocks automatic launch")
+        check(!direct.permitsDirectAutoLaunch(id: current, accountID: account, executionBlocked: true), "render protection blocks queued automatic launch")
+        direct.cancel()
+        check(!direct.permitsDirectAutoLaunch(id: current, accountID: account, executionBlocked: false), "cancel invalidates launch queued after completion")
+        direct.shutdown()
+        check(direct.beginDirect(gameID: "steam:30", appID: "30", title: "C", accountID: account) == nil, "shutdown refuses new direct workers")
+
+        let gameRoot = root.appendingPathComponent("games")
+        let gameFolder = gameRoot.appendingPathComponent("Game A")
+        try put(Data("fixture data".utf8), at: gameFolder.appendingPathComponent("save.dat"))
+        try put(Data("other game".utf8), at: gameRoot.appendingPathComponent("Game A Other/save.dat"))
+        var removalGame = Game(id: "local:10", appId: "10", title: "Game A", store: "steam", installed: true, platform: "windows", runtimeId: "", runtimeName: "", ownership: "installed-only", path: gameFolder, complete: true, installSource: "local")
+        let removal = try GameUninstallPlan.make(game: removalGame, installRoots: [gameRoot], steamRoots: [])
+        check(removal.items.map(\.path) == [gameFolder.path] && fm.fileExists(atPath: gameFolder.appendingPathComponent("save.dat").path), "uninstall dry run is exact and does not delete files")
+        removalGame.path = gameRoot
+        rejects("uninstall refuses the whole games root") { _ = try GameUninstallPlan.make(game: removalGame, installRoots: [gameRoot], steamRoots: []) }
+        removalGame.path = fm.homeDirectoryForCurrentUser
+        rejects("uninstall refuses HOME even as a configured root") { _ = try GameUninstallPlan.make(game: removalGame, installRoots: [fm.homeDirectoryForCurrentUser], steamRoots: []) }
+        let outside = root.appendingPathComponent("project")
+        try put(Data("preserve".utf8), at: outside.appendingPathComponent("source.swift"))
+        let escape = gameRoot.appendingPathComponent("Escape")
+        try fm.createSymbolicLink(at: escape, withDestinationURL: outside)
+        removalGame.path = escape
+        rejects("uninstall refuses a symlink outside game roots") { _ = try GameUninstallPlan.make(game: removalGame, installRoots: [gameRoot], steamRoots: []) }
+        removalGame.path = gameFolder
+        try put(Data("gitdir: fixture".utf8), at: gameFolder.appendingPathComponent(".git"))
+        rejects("uninstall preserves a detected Git worktree") { _ = try GameUninstallPlan.make(game: removalGame, installRoots: [gameRoot], steamRoots: []) }
+
+        let literal = "spaces ' $(touch \(root.appendingPathComponent("injected").path)) `echo unexpected`"
+        let quoteCheck = Process(), quoteOutput = Pipe()
+        quoteCheck.executableURL = URL(fileURLWithPath: "/bin/sh")
+        quoteCheck.arguments = ["-c", "printf '%s' " + shellLiteral(literal)]
+        quoteCheck.standardOutput = quoteOutput; quoteCheck.standardError = FileHandle.nullDevice
+        try quoteCheck.run(); quoteCheck.waitUntilExit()
+        check(quoteCheck.terminationStatus == 0 && String(decoding: quoteOutput.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == literal && !fm.fileExists(atPath: root.appendingPathComponent("injected").path), "launcher quotes preserve text without executing substitutions")
         let ready = SteamInstallObservation(status: "installing", message: "Ready", ready: true, signature: "complete")
         check(SteamInstallAccountContext.gate(ready, expected: account, active: account).ready, "matching Steam account allows handoff")
         for active in [nil, "76561198000000002"] as [String?] {

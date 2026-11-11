@@ -498,6 +498,45 @@
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
       }
+      .settings-dialog {
+        width: 650px;
+        max-width: calc(100vw - 28px);
+        max-height: calc(100dvh - 28px);
+        padding: 0;
+        border: 1px solid rgba(255,255,255,.68);
+        border-radius: 20px;
+        background: rgba(242,246,251,.97);
+        color: var(--ink);
+        box-shadow: 0 32px 80px rgba(15,23,42,.32);
+        backdrop-filter: blur(40px) saturate(175%);
+        -webkit-backdrop-filter: blur(40px) saturate(175%);
+        overflow: auto;
+      }
+      .settings-dialog::backdrop { background: rgba(15,23,42,.5); backdrop-filter: blur(8px); }
+      .settings-head { padding: 22px 24px 16px; display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }
+      .settings-head h2 { margin:0; font-size:21px; letter-spacing:-.025em; }
+      .settings-subtitle { margin:4px 0 0; font-size:12px; color:#64748b; }
+      .settings-close { border:0; border-radius:50%; width:32px; height:32px; color:#475569; background:rgba(148,163,184,.16); font-size:21px; cursor:pointer; }
+      .settings-content { display:grid; gap:12px; padding:0 24px 20px; }
+      .settings-section { border:1px solid rgba(148,163,184,.25); border-radius:14px; padding:16px; background:rgba(255,255,255,.62); }
+      .settings-section h3 { margin:0 0 12px; font-size:13px; letter-spacing:.02em; }
+      .settings-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+      .settings-field { display:grid; gap:5px; min-width:0; font-size:12px; color:#475569; }
+      .settings-field input, .settings-field select { width:100%; min-width:0; min-height:36px; padding:8px 10px; border-radius:8px; border:1px solid #cbd5e1; color:#1e293b; background:rgba(255,255,255,.9); font:inherit; }
+      .settings-field.full { grid-column:1/-1; }
+      .settings-metrics { grid-column:1/-1; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+      .settings-metric { padding:12px; border-radius:10px; background:rgba(224,232,242,.58); min-width:0; }
+      .settings-metric-label { color:#64748b; font-size:11px; }
+      .settings-metric-value { color:#17263b; font-size:17px; font-weight:650; margin:6px 0 3px; }
+      .settings-metric-detail { color:#64748b; font-size:11px; line-height:1.4; overflow-wrap:anywhere; }
+      .settings-badge { font-size:10px; color:#37617d; float:right; }
+      .settings-note { margin:0; color:#64748b; font-size:12px; line-height:1.5; }
+      .settings-note + .settings-note { margin-top:8px; }
+      .settings-status { min-height:18px; font-size:12px; color:#475569; }
+      .settings-status.error { color:#b42318; }
+      .settings-actions { display:flex; justify-content:flex-end; gap:8px; }
+      .settings-dialog :focus-visible { outline:3px solid #1682ef; outline-offset:2px; }
+      @media (max-width:520px) { .settings-head { padding:18px 16px 12px; } .settings-content { padding:0 16px 16px; } .settings-fields, .settings-metrics { grid-template-columns:1fr; } }
       .dialog-hero {
         position: relative;
         width: 100%;
@@ -1303,6 +1342,10 @@
         <div id="dialogBody"></div>
       </div>
     </dialog>
+    <dialog class="settings-dialog" id="gameSettingsDialog" aria-labelledby="gameSettingsTitle" aria-describedby="gameSettingsSubtitle">
+      <div class="settings-head"><div><h2 id="gameSettingsTitle">Paramètres</h2><p class="settings-subtitle" id="gameSettingsSubtitle"></p></div><button class="settings-close" id="gameSettingsClose" aria-label="Fermer">×</button></div>
+      <div class="settings-content" id="gameSettingsBody"></div>
+    </dialog>
     <div class="toast" id="toast" role="status" aria-live="polite" hidden>
       <span id="toastMessage"></span
       ><button
@@ -1328,10 +1371,11 @@
           dialogProgress: null,
           artworkGeneration: 0,
           pendingRenderProtection: null,
+          gameSettings: null,
         };
         let state = {
             renderProtectionEnabled: true,
-            executionPolicy: { mode: "no-wine", windowsExecutionAvailable: false },
+            executionPolicy: { mode: "wine-metal", nativeEngineAvailable: false },
             accounts: [],
             games: [],
             runtimes: [],
@@ -1351,6 +1395,7 @@
           "syncLibrary",
           "launchGame",
           "installGame",
+          "uninstallGame",
           "openSteam",
           "openEpic",
           "connectEpic",
@@ -1371,11 +1416,14 @@
           "installSteamD3DMetal",
           "openD3DMetalSteam",
           "setRenderProtection",
+          "getGameSettings",
+          "saveGameSettings",
         ]);
         const renderProtectedActions = new Set([
           "launchGame",
           "installGame",
           "installAndPlay",
+          "uninstallGame",
           "openSteam",
           "openEpic",
           "setupWindowsRuntime",
@@ -1404,11 +1452,8 @@
           if (!allowedActions.has(action)) return false;
           if (windowsExecutionUnavailable() && ["setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam"].includes(action))
             return false;
-          if (renderProtectionEnabled() && renderProtectedActions.has(action)) {
-            const targetGame = payload.gameId ? state.games.find((g) => g.id === payload.gameId) : null;
-            if (!targetGame || targetGame.installSource !== "local")
-              return false;
-          }
+          if (renderProtectionEnabled() && renderProtectedActions.has(action))
+            return false;
           const bridge = window.webkit?.messageHandlers?.metalmax;
           if (!bridge) {
             notify("Connexion native indisponible.", true);
@@ -1687,6 +1732,206 @@
           ui.dialogGameId = game.id;
           renderGameDialog(game);
           if (!$("gameDialog").open) $("gameDialog").showModal();
+        }
+        function openGameSettings(game, opener) {
+          ui.gameSettings = { gameId: game.id, opener, dirty: false, pending: false, draft: null, revision: null, touched: new Set() };
+          $("gameSettingsSubtitle").textContent = game.title;
+          $("gameSettingsBody").replaceChildren(el("p", "settings-note", "Chargement des paramètres…"));
+          $("gameSettingsDialog").showModal();
+          if (!send("getGameSettings", { gameId: game.id }))
+            $("gameSettingsBody").replaceChildren(el("p", "settings-note", "Paramètres indisponibles."));
+        }
+        function settingsMetrics(settings, capabilities) {
+          const display = settings?.display || {};
+          const graphics = settings?.graphics || {};
+          if (!capabilities?.display || !capabilities?.graphics) return null;
+          const width = Number(display.width), height = Number(display.height);
+          if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+          const output = Math.round(width * height);
+          const render = graphics.upscaler === 'fsr' && graphics.quality === 'quality'
+            ? Math.round(width * 2 / 3) * Math.round(height * 2 / 3) : null;
+          const target = Number(graphics.dynamicFPS);
+          return { output, render, budget: target > 0 ? 1000 / target : null, target };
+        }
+        function metricCard(title, badge, value, detail) {
+          const card = el('div', 'settings-metric');
+          const label = el('div', 'settings-metric-label', title);
+          label.append(el('span', 'settings-badge', badge));
+          const number = el('div', 'settings-metric-value', value);
+          const note = el('div', 'settings-metric-detail', detail);
+          card.append(label, number, note);
+          return { card, number, note };
+        }
+        function updateSettingsMetrics(session) {
+          if (!session.pixelMetric) return;
+          const metrics = settingsMetrics(session.draft, session.capabilities);
+          session.pixelMetric.number.textContent = metrics?.render != null ? metrics.render.toLocaleString('fr-FR') : '—';
+          session.pixelMetric.note.textContent = metrics?.render != null
+            ? `FSR Qualité théorique · ${metrics.output.toLocaleString('fr-FR')} pixels affichés${metrics.target > 0 ? ' · rendu dynamique variable' : ''}`
+            : 'Calcul indisponible.';
+          session.budgetMetric.number.textContent = metrics?.budget != null ? metrics.budget.toFixed(1).replace('.', ',') + ' ms' : '—';
+          session.budgetMetric.note.textContent = metrics?.budget != null ? `Cible : ${metrics.target} images/s, sans prédiction de FPS.` : 'Aucune cible dynamique.';
+        }
+        function measuredPerformance(measurement) {
+          const samples = Array.isArray(measurement?.fpsSamples) ? measurement.fpsSamples : [];
+          const valid = samples.filter(m => Number.isFinite(m?.fps) && m.fps >= 0 && typeof m.timestamp === 'string' && typeof m.observedSettings?.Resolution === 'string');
+          const date = new Date(measurement?.timestamp);
+          if (!valid.length || !measurement?.source || Number.isNaN(date.getTime())) return { value: '—', detail: 'Aucune mesure complète disponible.' };
+          const sample = valid[valid.length - 1], observed = sample.observedSettings;
+          const details = [observed.Resolution];
+          if (typeof observed['Dynamic resolution FPS target'] === 'string') details.push('cible ' + observed['Dynamic resolution FPS target']);
+          if (typeof observed['Frame Generation'] === 'string') details.push('génération ' + observed['Frame Generation']);
+          return { value: sample.fps.toLocaleString('fr-FR') + ' FPS', detail: `Journal actualisé le ${date.toLocaleDateString('fr-FR')} · relevé à ${sample.timestamp.slice(0, 8)} (jour non précisé) · ${details.join(' · ')}` };
+        }
+        function restoreSettingsControls(session) {
+          session.controls?.forEach(input => {
+            input.disabled = input.dataset.initialDisabled === 'true';
+          });
+        }
+        const settingFieldPaths = new Set([
+          'launchArgs', 'backend', 'display.mode', 'display.screenID', 'display.width',
+          'display.height', 'display.refreshRate', 'display.retina', 'display.vsync', 'display.hdr',
+          'graphics.upscaler', 'graphics.quality', 'graphics.dynamicFPS',
+          'graphics.frameGeneration', 'graphics.grain', 'graphics.sharpness'
+        ]);
+        function markSettingsChanged(session, paths) {
+          for (const path of paths) {
+            if (!settingFieldPaths.has(path)) throw new Error('Champ de paramètres inconnu');
+            session.touched.add(path);
+          }
+          session.dirty = session.touched.size > 0;
+          session.save.disabled = !session.dirty;
+          session.statusNode.textContent = 'Modifications non enregistrées.';
+          updateSettingsMetrics(session);
+        }
+        function showSettingsError(session, message) {
+          session.pending = false;
+          if (!session.statusNode) {
+            $('gameSettingsBody').replaceChildren(el('p', 'settings-status error', message));
+            return;
+          }
+          session.statusNode.textContent = message + ' En cas de conflit, fermez puis rouvrez les paramètres pour recharger ; votre saisie sera abandonnée.';
+          session.statusNode.className = 'settings-status error';
+          if (session.save) session.save.disabled = !session.dirty;
+          restoreSettingsControls(session);
+        }
+        function submitGameSettings(session) {
+          if (!session.dirty || session.pending) return;
+          const invalid = session.controls.some(input =>
+            !input.disabled && typeof input.checkValidity === 'function' && !input.checkValidity()
+          );
+          if (invalid) {
+            session.statusNode.textContent = 'Vérifiez les valeurs saisies.';
+            session.statusNode.className = 'settings-status error';
+            return;
+          }
+          session.pending = true;
+          session.save.disabled = true;
+          session.controls.forEach(input => { input.disabled = true; });
+          session.statusNode.textContent = 'Enregistrement…';
+          const sent = send('saveGameSettings', {
+            gameId: session.gameId, settings: session.draft, expectedRevision: session.revision,
+            changedFields: Array.from(session.touched).sort()
+          });
+          if (!sent) showSettingsError(session, 'Connexion native indisponible.');
+        }
+        function renderGameSettings(snapshot) {
+          const session = ui.gameSettings;
+          if (!session || snapshot?.gameId !== session.gameId || !$('gameSettingsDialog').open) return;
+          if (snapshot.status === 'error') {
+            showSettingsError(session, String(snapshot.error || 'Paramètres indisponibles.'));
+            return;
+          }
+          if (!['ready', 'saved'].includes(snapshot.status) || !snapshot.settings || !snapshot.capabilities) return;
+          if (snapshot.status === 'saved' && !session.pending) return;
+          if (session.dirty && !session.pending) return;
+          if (session.pending && snapshot.status !== 'saved') return;
+          if (session.draft && !session.pending && snapshot.status === 'ready') return;
+          session.pending = false; session.dirty = false; session.revision = snapshot.revision;
+          session.touched.clear();
+          session.controls = []; session.inputs = {}; session.capabilities = snapshot.capabilities;
+          session.draft = JSON.parse(JSON.stringify(snapshot.settings));
+          const draft = session.draft, caps = snapshot.capabilities, body = $('gameSettingsBody');
+          body.replaceChildren();
+          if (snapshot.settingsOrigin === 'partial-registry-and-defaults') body.append(el('p', 'settings-note', 'Valeurs lues partiellement ; les autres sont des valeurs par défaut.'));
+          else if (snapshot.settingsOrigin === 'saved-request') body.append(el('p', 'settings-note', 'Demandes enregistrées, distinctes des mesures observées.'));
+          const section = (title) => { const box = el('section', 'settings-section'); box.append(el('h3', '', title)); const fields = el('div', 'settings-fields'); box.append(fields); body.append(box); return fields; };
+          const control = (grid, label, obj, key, options, enabled = true, full = false) => {
+            const wrap = el('label', 'settings-field' + (full ? ' full' : '')); wrap.append(el('span', '', label));
+            let input;
+            if (Array.isArray(options)) { input = el('select'); options.forEach(({value, label: text}) => input.append(new Option(text, String(value)))); input.value = String(obj[key]); }
+            else { input = el('input'); input.type = options.type; if (options.min !== undefined) input.min = options.min; if (options.max !== undefined) input.max = options.max; if (options.step !== undefined) input.step = options.step; if (options.type === 'checkbox') input.checked = obj[key] === true; else input.value = options.percent ? Math.round(Number(obj[key]) * 100) : obj[key] ?? ''; }
+            input.disabled = !enabled;
+            input.dataset.initialDisabled = String(!enabled); session.controls.push(input); session.inputs[key] = input;
+            const percentLabel = options.percent ? el('span', '', input.value + ' %') : null;
+            const changed = () => {
+              obj[key] = input.type === 'checkbox' ? input.checked : options.percent ? Number(input.value) / 100 : input.type === 'number' || key === 'dynamicFPS' ? Number(input.value) : input.value;
+              if (percentLabel) percentLabel.textContent = input.value + ' %';
+              const field = obj === draft ? key : obj === draft.display ? 'display.' + key : 'graphics.' + key;
+              markSettingsChanged(session, [field]);
+            };
+            input.addEventListener('input', changed); input.addEventListener('change', changed); wrap.append(input); if (percentLabel) wrap.append(percentLabel); grid.append(wrap);
+          };
+          const launch = section('Lancement');
+          control(launch, 'Arguments de lancement', draft, 'launchArgs', {type:'text'}, caps.launchArgs === true, true);
+          if (Array.isArray(caps.backends) && caps.backends.length) control(launch, 'Moteur', draft, 'backend', caps.backends, true);
+          if (caps.readOnlyReason) launch.append(el('p', 'settings-note', String(caps.readOnlyReason)));
+          if (caps.display && draft.display) {
+            const display = section('Affichage'); const d = draft.display;
+            if (Array.isArray(caps.displays) && caps.displays.length) control(display, 'Écran', d, 'screenID', caps.displays);
+            control(display, 'Mode', d, 'mode', [{value:'fullscreen',label:'Plein écran'},{value:'exclusive',label:'Plein écran exclusif'},{value:'windowed',label:'Fenêtré'}]);
+            control(display, 'Retina', d, 'retina', [{value:'auto',label:'Automatique'},{value:'on',label:'Activé'},{value:'off',label:'Désactivé'}]);
+            display.append(el('p', 'settings-note full', 'Retina automatique s’adapte à l’échelle de l’écran choisi.'));
+            control(display, 'Largeur', d, 'width', {type:'number',min:640,max:7680,step:1});
+            control(display, 'Hauteur', d, 'height', {type:'number',min:480,max:4320,step:1});
+            control(display, 'Fréquence (Hz)', d, 'refreshRate', {type:'number',min:1,max:1000,step:1});
+            const useDisplay = el('button', 'button secondary', 'Utiliser la résolution de l’écran');
+            useDisplay.dataset.initialDisabled = 'false'; session.controls.push(useDisplay);
+            useDisplay.addEventListener('click', () => {
+              const selected = (caps.displays || []).find(item => item.value === d.screenID);
+              if (!selected || !Number.isFinite(selected.width) || !Number.isFinite(selected.height) || !Number.isFinite(selected.refreshRate)) {
+                session.statusNode.textContent = 'Résolution de cet écran indisponible.'; return;
+              }
+              for (const key of ['width', 'height', 'refreshRate']) {
+                const rounded = Math.round(selected[key]);
+                d[key] = key === 'refreshRate' ? Math.max(1, Math.min(1000, rounded)) : rounded;
+                session.inputs[key].value = String(d[key]);
+              }
+              markSettingsChanged(session, ['display.width', 'display.height', 'display.refreshRate']);
+            });
+            display.append(useDisplay);
+            control(display, 'Synchronisation verticale', d, 'vsync', {type:'checkbox'});
+            control(display, 'HDR', d, 'hdr', {type:'checkbox'});
+          }
+          if (caps.graphics && draft.graphics) {
+            const graphics = section('Graphismes'); const g = draft.graphics;
+            const fsr = el('button', 'button secondary', 'Utiliser FSR Qualité');
+            fsr.dataset.initialDisabled = 'false'; session.controls.push(fsr);
+            fsr.addEventListener('click', () => {
+              g.upscaler = 'fsr'; g.quality = 'quality';
+              markSettingsChanged(session, ['graphics.upscaler', 'graphics.quality']);
+            });
+            graphics.append(fsr);
+            control(graphics, 'Cible de résolution dynamique', g, 'dynamicFPS', [{value:0,label:'Désactivée'},{value:30,label:'30 images/s'},{value:60,label:'60 images/s'}]);
+            control(graphics, 'Génération d’images', g, 'frameGeneration', {type:'checkbox'});
+            control(graphics, 'Grain', g, 'grain', {type:'range',min:0,max:100,step:1,percent:true});
+            control(graphics, 'Netteté', g, 'sharpness', {type:'range',min:0,max:100,step:1,percent:true});
+          }
+          const perf = section('Performances');
+          const measured = measuredPerformance(snapshot.measurements);
+          const fpsMetric = metricCard('FPS', 'MESURÉ', measured.value, measured.detail);
+          session.pixelMetric = metricCard('Pixels de rendu', 'CALCUL', '—', '');
+          session.budgetMetric = metricCard('Budget image', 'CALCUL', '—', '');
+          const cards = el('div', 'settings-metrics');
+          cards.append(fpsMetric.card, session.pixelMetric.card, session.budgetMetric.card);
+          perf.append(cards); updateSettingsMetrics(session);
+          body.append(el('p', 'settings-note', 'Les changements sont demandés pour le prochain lancement.'));
+          session.statusNode = el('p', 'settings-status', snapshot.status === 'saved' ? 'Paramètres enregistrés.' : ''); session.statusNode.setAttribute('role','status'); body.append(session.statusNode);
+          const actions = el('div','settings-actions');
+          const cancel = el('button','button secondary','Annuler'); cancel.addEventListener('click', () => $('gameSettingsDialog').close());
+          const save = el('button','button primary','Enregistrer'); save.disabled = true; session.save = save;
+          save.addEventListener('click', () => submitGameSettings(session));
+          actions.append(cancel,save); body.append(actions);
         }
         function runtimeDisplayName(runtime) {
           if (runtime?.displayName) return runtime.displayName;
@@ -2252,7 +2497,7 @@
           } else if (game.canLaunch || game.installed) {
             if (game.canLaunch) {
               const play = el("button", "button primary dialog-action action-play", "Jouer");
-              play.disabled = renderProtectionEnabled() && game.installSource !== "local";
+              play.disabled = renderProtectionEnabled();
               play.addEventListener("click", () => {
                 send("launchGame", { gameId: game.id });
                 $("gameDialog").close();
@@ -2260,18 +2505,17 @@
               body.append(play);
             }
             if (game.installed) {
+              const settingsBtn = el("button", "button secondary dialog-action", "Paramètres");
+              settingsBtn.addEventListener("click", () => openGameSettings(game, settingsBtn));
+              body.append(settingsBtn);
               const folderBtn = el("button", "button secondary dialog-action", "Ouvrir le dossier");
               folderBtn.addEventListener("click", () => send("openGameFolder", { gameId: game.id }));
               body.append(folderBtn);
 
               const uninstallBtn = el("button", "button secondary dialog-action danger-action", "Désinstaller");
-              uninstallBtn.disabled = renderProtectionEnabled() && game.installSource !== "local";
+              uninstallBtn.disabled = renderProtectionEnabled();
               uninstallBtn.addEventListener("click", () => {
-                if (confirm(`Voulez-vous vraiment désinstaller ${game.title} ?\n\nTous les fichiers du jeu seront supprimés pour libérer l'espace disque.`)) {
-                  uninstallBtn.disabled = true;
-                  send("uninstallGame", { gameId: game.id });
-                  $("gameDialog").close();
-                }
+                send("uninstallGame", { gameId: game.id });
               });
               body.append(uninstallBtn);
             }
@@ -2626,6 +2870,7 @@
           return true;
         }
         function refreshVisibleDialog() {
+          if ($("gameSettingsDialog")?.open) return;
           if (!$("gameDialog").open) return;
           const game = state.games.find((g) => g.id === ui.dialogGameId);
           if (!game) return;
@@ -2721,7 +2966,7 @@
             const current = state.games.find((g) => g.id === game.id);
             if (!current) return;
             if (
-              (renderProtectionEnabled() && current.installSource !== "local") ||
+              renderProtectionEnabled() ||
               (current.requiredRenderer === "d3dmetal" && current.installSource !== "local") ||
               installJobFor(current)
             )
@@ -2955,6 +3200,7 @@
           else if (libraryChanged) renderLibrary();
           updateJobIndicator();
           refreshVisibleDialog();
+          if (incoming.gameSettings) renderGameSettings(incoming.gameSettings);
         };
         window.onNativeRuntime = (snapshot) => {
           if (!snapshot || typeof snapshot !== "object") return;
@@ -3072,6 +3318,12 @@
         });
         $("gameDialog").addEventListener("close", () => {
           ui.dialogProgress = null;
+        });
+        $("gameSettingsClose").addEventListener("click", () => $("gameSettingsDialog").close());
+        $("gameSettingsDialog").addEventListener("close", () => {
+          const opener = ui.gameSettings?.opener;
+          ui.gameSettings = null;
+          if (opener?.isConnected) opener.focus();
         });
         $("dialogClose").addEventListener("click", () =>
           $("gameDialog").close(),

@@ -147,6 +147,14 @@ final class LibraryScanner {
         let start = ProcessInfo.processInfo.systemUptime
         var metrics = LibraryScanMetrics(), accounts: [Account] = [], metadata: [String: SteamAppInfo] = [:]
         let availability = Dictionary(uniqueKeysWithValues: request.runtimes.map { ($0.id, $0.available) })
+        func assignWindowsRuntime(to game: inout Game) {
+            let runtime = request.runtimes.first {
+                $0.platform == "windows" && $0.executionAllowed && availability[$0.id] == true &&
+                SteamGameLaunchProfile.supportsInstallation(appID: game.appId, runtime: $0)
+            }
+            game.runtimeId = runtime?.id ?? ""
+            game.runtimeName = runtime?.name ?? "Moteur Windows non configuré"
+        }
         for runtime in request.runtimes where !stopped {
             let login = runtime.steamRoot.appendingPathComponent("config/loginusers.vdf")
             let found = users.read(login, metrics: &metrics) {
@@ -216,8 +224,7 @@ final class LibraryScanner {
                     if let v = self.readVDF(file)?.object("AppState"), let lp = Int64(v.string("LastPlayed")), lp > 0 {
                         lastPlayedTimes[m.appID] = max(lastPlayedTimes[m.appID] ?? 0, lp)
                     }
-                    let home = FileManager.default.homeDirectoryForCurrentUser
-                    let playmeltGames = home.appendingPathComponent("Library/Application Support/Playmelt/Games").resolvingSymlinksInPath()
+                    let playmeltGames = request.home.appendingPathComponent("Library/Application Support/Playmelt/Games").resolvingSymlinksInPath()
                     let isLocalPlaymelt = path.path.hasPrefix(playmeltGames.path + "/") || path.path == playmeltGames.path
                     let platformSupported = metadata[m.appID]?.platforms.contains(runtime.platform == "mac" ? "macos" : "windows") == true || isLocalPlaymelt
                     var game = LibraryModel.makeGame(m.appID, ownership: cachedIDs.contains(m.appID) ? "account-cache" : "installed-only", metadata: metadata, runtimes: request.runtimes, availability: availability)
@@ -230,14 +237,20 @@ final class LibraryScanner {
                         if platformSupported && containsLaunchBinary(path, platform: runtime.platform, cancelled: { self.stopped }) {
                             game.complete = true
                             game.platform = runtime.platform
+                            game.runtimeId = runtime.id
+                            game.runtimeName = runtime.name
+                            if runtime.platform == "windows", !SteamGameLaunchProfile.supportsInstallation(appID: game.appId, runtime: runtime) {
+                                assignWindowsRuntime(to: &game)
+                            }
                         } else if containsLaunchBinary(path, platform: "windows", cancelled: { self.stopped }) || findLaunchScript(in: path) != nil || isLocalPlaymelt {
                             game.complete = true
                             game.platform = "windows"
-                            if let winRuntime = request.runtimes.first(where: { $0.platform == "windows" && (availability[$0.id] ?? $0.available) }) {
-                                game.runtimeId = winRuntime.id
-                                game.runtimeName = winRuntime.name
-                            }
+                            assignWindowsRuntime(to: &game)
                         }
+                    }
+                    if isLocalPlaymelt {
+                        game.platform = "windows"
+                        assignWindowsRuntime(to: &game)
                     }
                     if game.platform == "unknown" && platformSupported { game.platform = runtime.platform }
                     games.append(game); installedIDs.insert(m.appID)
@@ -258,29 +271,22 @@ final class LibraryScanner {
                 guard let id = targetAppID else { continue }
                 let script = findLaunchScript(in: folder)
                 let hasBinary = containsLaunchBinary(folder, platform: "windows", cancelled: { self.stopped }) || script != nil
-                if let existingIdx = games.firstIndex(where: { $0.appId == id }) {
-                    games[existingIdx].installed = true
-                    games[existingIdx].complete = hasBinary
-                    games[existingIdx].installSource = "local"
-                    games[existingIdx].path = folder
-                    games[existingIdx].platform = "windows"
-                    if let lp = lastPlayedTimes[id], lp > games[existingIdx].lastPlayed { games[existingIdx].lastPlayed = lp }
-                } else {
-                    var localGame = LibraryModel.makeGame(id, ownership: cachedIDs.contains(id) ? "account-cache" : "installed-only", metadata: metadata, runtimes: request.runtimes, availability: availability)
-                    localGame.id = "local:\(id)"
-                    localGame.installed = true
-                    localGame.complete = hasBinary
-                    localGame.installSource = "local"
-                    localGame.platform = "windows"
-                    localGame.path = folder
-                    localGame.lastPlayed = lastPlayedTimes[id] ?? 0
-                    if let winRuntime = request.runtimes.first(where: { $0.platform == "windows" && (availability[$0.id] ?? $0.available) }) {
-                        localGame.runtimeId = winRuntime.id
-                        localGame.runtimeName = winRuntime.name
-                    }
-                    games.append(localGame)
-                    installedIDs.insert(id)
+                let localPaths = Set([folder.resolvingSymlinksInPath().path, folder.appendingPathComponent("Windows").resolvingSymlinksInPath().path])
+                let existingIdx = games.firstIndex {
+                    $0.appId == id && $0.platform == "windows" &&
+                    $0.path.map { localPaths.contains($0.resolvingSymlinksInPath().path) } == true
                 }
+                var localGame = existingIdx.map { games[$0] } ?? LibraryModel.makeGame(id, ownership: cachedIDs.contains(id) ? "account-cache" : "installed-only", metadata: metadata, runtimes: request.runtimes, availability: availability)
+                localGame.id = existingIdx.map { games[$0].id } ?? "local:\(id):\(folder.lastPathComponent)"
+                localGame.installed = true
+                localGame.complete = hasBinary
+                localGame.installSource = "local"
+                localGame.platform = "windows"
+                localGame.path = folder
+                localGame.lastPlayed = max(localGame.lastPlayed, lastPlayedTimes[id] ?? 0)
+                assignWindowsRuntime(to: &localGame)
+                if let existingIdx { games[existingIdx] = localGame } else { games.append(localGame) }
+                installedIDs.insert(id)
             }
         }
         for id in cachedIDs.sorted() where !installedIDs.contains(id) {

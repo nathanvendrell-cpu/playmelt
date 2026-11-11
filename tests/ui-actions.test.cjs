@@ -4,6 +4,25 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+// Exercise the real bridge gate, including the former local-game exception.
+const bridged = [];
+const bridgeContext = {
+  state: { games: [{ id: "local:10", installSource: "local" }] },
+  window: { webkit: { messageHandlers: { metalmax: { postMessage: (m) => bridged.push(m) } } } },
+  protected: true,
+  renderProtectionEnabled() { return this.protected; },
+  windowsExecutionUnavailable: () => false,
+};
+bridgeContext.renderProtectionEnabled = () => bridgeContext.protected;
+const bridgeStart = html.indexOf("const allowedActions = new Set(");
+const bridgeEnd = html.indexOf("function imageSources(", bridgeStart);
+const bridgeSend = vm.runInNewContext(html.slice(bridgeStart, bridgeEnd) + "; send", bridgeContext);
+assert.equal(bridgeSend("launchGame", { gameId: "local:10" }), false);
+assert.equal(bridgeSend("uninstallGame", { gameId: "local:10" }), false);
+assert.equal(bridged.length, 0, "Local games must respect render protection at the actual bridge");
+bridgeContext.protected = false;
+assert.equal(bridgeSend("uninstallGame", { gameId: "local:10" }), true);
+assert.equal(bridged[0].action, "uninstallGame", "Uninstall reaches native target preview and confirmation");
 const start = html.indexOf("function renderProtectionEnabled()");
 const end = html.indexOf("function renderLibrary()", start);
 assert(start > 0 && end > start);
@@ -55,6 +74,9 @@ const elements = Object.fromEntries(
     "dialogBody",
     "gameDialog",
     "installJobButton",
+    "gameSettingsDialog",
+    "gameSettingsBody",
+    "gameSettingsSubtitle",
   ].map((id) => [id, node("div")]),
 );
 const sent = [];
@@ -66,7 +88,7 @@ const context = {
   },
   $: (id) => elements[id],
   el: node,
-  send: (action, payload) => sent.push({ action, payload }),
+  send: (action, payload) => { sent.push({ action, payload }); return true; },
   platforms: (game) => game.platforms || [],
   platformLabel: () => "Mac",
   storeName: () => "Steam",
@@ -87,10 +109,70 @@ const context = {
   },
 };
 const api = vm.runInNewContext(
-  html.slice(start, end) + "; ({openGame,refreshVisibleDialog})",
+  html.slice(start, end) + "; ({openGame,refreshVisibleDialog,openGameSettings,renderGameSettings,settingsMetrics,measuredPerformance})",
   context,
 );
 const openGame = api.openGame;
+const configGame = {id:'local:10',title:'Test',installed:true};
+api.openGameSettings(configGame, null);
+assert.equal(sent.pop().action, 'getGameSettings');
+const snapshot = {gameId:'local:10',status:'ready',revision:3,settings:{launchArgs:'',backend:'auto',display:{screenID:'primary',mode:'fullscreen',width:1280,height:720,refreshRate:60,retina:'auto',vsync:true,hdr:false},graphics:{upscaler:'fsr',quality:'quality',dynamicFPS:60,frameGeneration:true,grain:0,sharpness:.2}},capabilities:{launchArgs:true,backends:[{value:'auto',label:'Auto'}],display:true,graphics:true,displays:[{value:'primary',label:'Principal',width:2560,height:1440,refreshRate:59.94}]},measurements:{}};
+api.renderGameSettings(snapshot);
+assert.equal(api.settingsMetrics(snapshot.settings, snapshot.capabilities).budget, 1000/60);
+assert.equal(api.settingsMetrics(snapshot.settings, {display:false,graphics:false}), null);
+assert.equal(api.measuredPerformance({source:'log',timestamp:'2026-11-11T00:00:00Z',fpsSamples:[{timestamp:'00:00:01',fps:42}]}).value, '—', 'Incomplete measurement is not displayed');
+assert.equal(api.measuredPerformance({source:'log',timestamp:'2026-11-11T00:00:00Z',fpsSamples:[{timestamp:'00:00:01',fps:42,observedSettings:{Resolution:'2560x1440'}}]}).value, '42 FPS');
+assert.equal(context.ui.gameSettings.save.disabled, true);
+const sectionNodes = elements.gameSettingsBody.children;
+const screenButton = sectionNodes[1].children[1].children.find(n => n.text === 'Utiliser la résolution de l’écran');
+assert.equal(context.ui.gameSettings.draft.display.width, 1280, 'Screen choice never changes dimensions silently');
+screenButton.handlers.click();
+assert.equal(context.ui.gameSettings.draft.display.width, 2560);
+assert.equal(context.ui.gameSettings.draft.display.height, 1440);
+assert.equal(context.ui.gameSettings.draft.display.refreshRate, 60, 'Fractional refresh rate rounds to a valid integer');
+const grain = context.ui.gameSettings.inputs.grain;
+grain.value = '37'; grain.handlers.input();
+assert.equal(context.ui.gameSettings.draft.graphics.grain, .37, 'Slider percent is converted to backend fraction');
+const argsInput = sectionNodes[0].children[1].children[0].children[1];
+argsInput.value = '-nolauncher'; argsInput.handlers.input();
+assert.equal(context.ui.gameSettings.save.disabled, false);
+api.renderGameSettings(snapshot);
+assert.equal(context.ui.gameSettings.draft.launchArgs, '-nolauncher', 'A state refresh cannot overwrite the draft');
+context.ui.gameSettings.save.handlers.click();
+assert.equal(argsInput.disabled, true, 'Controls remain stable while a save is pending');
+assert.equal(sent.at(-1).action, 'saveGameSettings');
+assert.equal(sent.at(-1).payload.expectedRevision, 3);
+assert.deepEqual(Array.from(sent.at(-1).payload.changedFields), ['display.height','display.refreshRate','display.width','graphics.grain','launchArgs']);
+api.renderGameSettings({gameId:'local:10',status:'error',error:'Conflit de version'});
+assert.equal(context.ui.gameSettings.draft.launchArgs, '-nolauncher');
+assert.equal(context.ui.gameSettings.save.disabled, false);
+assert.equal(argsInput.disabled, false, 'A failed save returns editing to the user');
+assert.match(context.ui.gameSettings.statusNode.textContent, /Conflit de version/);
+assert(context.ui.gameSettings.touched.has('launchArgs'), 'Failure preserves explicit changes');
+elements.gameSettingsDialog.close();
+sent.length = 0;
+api.openGameSettings(configGame, null);
+sent.length = 0;
+api.renderGameSettings(snapshot);
+const onlyArgs = context.ui.gameSettings.inputs.launchArgs;
+onlyArgs.value = '--test'; onlyArgs.handlers.input();
+onlyArgs.value = ''; onlyArgs.handlers.input();
+context.ui.gameSettings.save.handlers.click();
+assert.deepEqual(Array.from(sent.at(-1).payload.changedFields), ['launchArgs'], 'A reverted edit remains explicit and does not apply default graphics');
+api.renderGameSettings({...snapshot, status:'saved', revision:4});
+assert.equal(context.ui.gameSettings.touched.size, 0, 'Success clears touched fields');
+const frameGen = context.ui.gameSettings.inputs.frameGeneration;
+frameGen.checked = false; frameGen.handlers.change();
+context.ui.gameSettings.save.handlers.click();
+assert.deepEqual(Array.from(sent.at(-1).payload.changedFields), ['graphics.frameGeneration']);
+assert.equal(sent.at(-1).payload.settings.graphics.frameGeneration, false, 'An explicit false is preserved');
+api.renderGameSettings({...snapshot, status:'saved', revision:5});
+const graphicsSection = elements.gameSettingsBody.children.find(n => n.children[0]?.text === 'Graphismes');
+graphicsSection.children[1].children.find(n => n.text === 'Utiliser FSR Qualité').handlers.click();
+context.ui.gameSettings.save.handlers.click();
+assert.deepEqual(Array.from(sent.at(-1).payload.changedFields), ['graphics.quality','graphics.upscaler']);
+elements.gameSettingsDialog.close();
+sent.length = 0;
 openGame({
   id: "steam:427520",
   title: "Factorio",

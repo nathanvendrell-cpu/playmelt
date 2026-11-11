@@ -1,6 +1,7 @@
 import AppKit
 import WebKit
 import Foundation
+import Darwin
 
 final class SteamArtworkHandler: NSObject, WKURLSchemeHandler {
     weak var handler: ScriptHandler?
@@ -197,18 +198,26 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     let installCoordinator = SteamInstallCoordinator()
     let requestGate = SteamRequestGate()
     let clientLauncher = UserProcessLauncher()
+    private let gameSettingsStore = GameSettingsStore(root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/GameSettings", isDirectory: true))
+    private let gameSettingsQueue = DispatchQueue(label: "fr.playmelt.game-settings", qos: .utility)
+    private var gameSettingsPayload: [String: Any]?
+    private var gameSettingsRequest = UUID()
     var authentication: SteamAuthentication?
     var loading = false
     private var closing = false
     let resourceURL: URL
     var activeInstallerProcess: Process?
+    private var activeInstallerID: UUID?
+    private var installerBuffer = Data()
+    private var installerEOF = false
+    private var installerExitStatus: Int32?
+    private var installerShutdownWaiters: [() -> Void] = []
     private var lastNotifiedPhase = ""
     init(resourceURL: URL) {
         self.resourceURL = resourceURL; super.init()
         installCoordinator.onChange = { [weak self] in self?.notifyInstallJob() }
         installCoordinator.onCancel = { [weak self] in
-            self?.activeInstallerProcess?.terminate()
-            self?.activeInstallerProcess = nil
+            self?.stopNativeInstaller()
         }
         steamBootstrap.onChange = { [weak self] in self?.notifyRuntime() }
         steamBootstrap.onInstalled = { [weak self] in self?.refresh() }
@@ -220,16 +229,13 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
               webView?.url?.standardizedFileURL == resourceURL.standardizedFileURL,
               let dict = message.body as? [String: Any], let action = dict["action"] as? String else { return }
         print("Playmelt action: \(action)"); fflush(stdout)
-        let duringScan: Set<String> = ["refresh", "setRenderProtection", "selectAccount", "cancelWindowsRuntime", "cancelD3DMetalRuntime", "cancelInstallAndPlay"]
+        let duringScan: Set<String> = ["refresh", "setRenderProtection", "selectAccount", "cancelWindowsRuntime", "cancelD3DMetalRuntime", "cancelInstallAndPlay", "getGameSettings", "saveGameSettings"]
         guard !loading || duringScan.contains(action) else { result(false, "Lecture locale en cours. Réessayez dans un instant."); return }
-        let isLocalGame: Bool = {
-            guard action == "launchGame", let id = dict["gameId"] as? String,
-                  let g = model.games.first(where: { $0.id == id }) else { return false }
-            return g.installSource == "local" || findLaunchScript(in: g.path) != nil
-        }()
-        guard isLocalGame || !RenderProtection.blocks(action, enabled: renderProtectionEnabled) else { result(false, "Rendus en cours : cette action est suspendue."); return }
+        guard !RenderProtection.blocks(action, enabled: renderProtectionEnabled) else { result(false, "Rendus en cours : cette action est suspendue."); return }
         guard !WindowsExecutionPolicy.legacyActions.contains(action) else { result(false, WindowsExecutionPolicy.message); return }
         switch action {
+        case "getGameSettings", "saveGameSettings":
+            receiveGameSettings(action: action, payload: dict)
         case "setRenderProtection":
             guard let enabled = dict["enabled"] as? Bool else { return }
             model.preferences.set(enabled, forKey: RenderProtection.preferenceKey)
@@ -275,15 +281,17 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Steam Windows est indisponible pendant cette opération."); return }
             openWindowsSteam(runtimeID: "playmelt-windows")
         case "cancelInstallAndPlay":
-            activeInstallerProcess?.terminate()
-            activeInstallerProcess = nil
             installCoordinator.cancel()
         case "installAndPlay":
             guard let id = dict["gameId"] as? String, let game = model.games.first(where: { $0.id == id }) else { result(false, "Jeu introuvable. Actualisez la bibliothèque."); return }
             if game.installed {
                 route(game, installing: false, requestedRuntime: dict["runtimeId"] as? String)
             } else if game.store == "steam" {
-                startNativeSteamInstall(game: game, autoPlay: true)
+                if prefersNativeSteam(game, requestedRuntime: dict["runtimeId"] as? String) {
+                    installAndPlay(game, runtimeID: "steam-mac")
+                } else {
+                    startNativeSteamInstall(game: game, autoPlay: true, requestedRuntime: dict["runtimeId"] as? String)
+                }
             } else {
                 installAndPlay(game, runtimeID: dict["runtimeId"] as? String)
             }
@@ -390,7 +398,53 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         model.epicAvailability = epicConnector.availability()
         var state = model.state(); state["windowsRuntime"] = runtimePayload(); state["installJob"] = installCoordinator.snapshot ?? NSNull()
         state["renderProtectionEnabled"] = renderProtectionEnabled
+        if let gameSettingsPayload { state["gameSettings"] = gameSettingsPayload }
         notify("onNativeState", state)
+    }
+    private func gameSettingsContext(_ game: Game) -> GameSettingsContext {
+        GameSettingsContext(id: game.id, appID: game.appId, platform: game.platform,
+                            installed: game.installed, path: game.path?.path ?? "",
+                            requiredRenderer: SteamGameLaunchProfile.requiredRenderer(appID: game.appId),
+                            supportsLaunchArguments: game.store == "steam" || game.installSource == "local")
+    }
+    private func receiveGameSettings(action: String, payload: [String: Any]) {
+        guard let id = payload["gameId"] as? String else { return }
+        guard let game = model.games.first(where: { $0.id == id }) else {
+            gameSettingsPayload = ["gameId": id, "status": "error", "error": "Ce jeu n’est plus dans la bibliothèque. Actualisez-la."]
+            sendState(); return
+        }
+        let saving = action == "saveGameSettings"
+        if saving && CommandLine.arguments.contains("--audit-read-only") {
+            gameSettingsPayload = ["gameId": id, "status": "error", "error": "La sauvegarde est désactivée en mode de vérification."]
+            sendState(); return
+        }
+        guard !saving || (payload["settings"] is [String: Any] && payload["changedFields"] is [String]) else {
+            gameSettingsPayload = ["gameId": id, "status": "error", "error": "Les paramètres reçus sont incomplets."]
+            sendState(); return
+        }
+        let context = gameSettingsContext(game)
+        let displays = GameDisplayMetadata.screens()
+        let hardware = hardwareState(renderProtectionEnabled: renderProtectionEnabled)
+        let request = UUID(); gameSettingsRequest = request
+        gameSettingsQueue.async { [weak self] in
+            guard let self else { return }
+            var response: [String: Any]
+            if saving {
+                response = self.gameSettingsStore.save(game: context, payload: payload["settings"] as! [String: Any], expectedRevision: payload["expectedRevision"] as? String, changedFields: payload["changedFields"] as! [String])
+                if response["status"] as? String == "saved" {
+                    response = self.gameSettingsStore.snapshot(game: context, hardware: hardware, displays: displays)
+                    if response["status"] as? String != "error" { response["status"] = "saved" }
+                }
+            } else {
+                response = self.gameSettingsStore.snapshot(game: context, hardware: hardware, displays: displays)
+            }
+            let completedResponse = response
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.closing, self.gameSettingsRequest == request else { return }
+                self.gameSettingsPayload = completedResponse
+                self.sendState()
+            }
+        }
     }
     func notifyRuntime() { notify("onNativeRuntime", runtimePayload()) }
     func notifyInstallJob() {
@@ -521,14 +575,32 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             if !ok { self?.installCoordinator.requestFailed(id: id, message: message) }
         }
     }
-    func startNativeSteamInstall(game: Game, autoPlay: Bool) {
-        guard !installCoordinator.isActive else {
+    func prefersNativeSteam(_ game: Game, requestedRuntime: String?) -> Bool {
+        SteamGameLaunchProfile.prefersNative(platform: game.platform, supportedPlatforms: game.supportedPlatforms, requestedRuntime: requestedRuntime)
+    }
+    func startNativeSteamInstall(game: Game, autoPlay: Bool, requestedRuntime: String? = nil) {
+        guard !closing, !renderProtectionEnabled, !CommandLine.arguments.contains("--audit-read-only") else {
+            result(false, "Mode de protection : installation suspendue."); return
+        }
+        guard !installCoordinator.isActive, activeInstallerProcess == nil else {
             result(false, "Une installation est déjà en cours. Patientez ou annulez-la.")
             return
         }
-        guard !game.appId.isEmpty else {
+        guard LibraryModel.validAppID(game.appId) else {
             result(false, "Identifiant Steam manquant.")
             return
+        }
+        let account = model.selectedAccountID
+        let steamRoot = model.home.appendingPathComponent("Library/Application Support/Steam")
+        guard SteamInstallAccountContext.permitsAutoLaunch(expected: account, active: activeSteamAccount(TextVDF.read(steamRoot.appendingPathComponent("config/loginusers.vdf")).object("users"))) else {
+            result(false, "Vérifiez le compte actif dans Steam avant l’installation."); return
+        }
+        guard game.store == "steam", model.metadata[game.appId]?.platforms.contains("windows") == true,
+              let runtime = validatedSteamRuntime(game, installing: true, requestedRuntime: requestedRuntime ?? game.runtimeId), runtime.platform == "windows" else {
+            result(false, "Choisissez et préparez une route Windows compatible avant l’installation."); return
+        }
+        if autoPlay, let reason = SteamGameLaunchProfile.blockReason(appID: game.appId, platform: runtime.platform, renderer: runtime.renderer, graphicsValidated: runtime.graphicsValidated) {
+            result(false, reason); return
         }
         let bundleScript = Bundle.main.url(forResource: "steam-installer", withExtension: "py")
         let sourceScript = (Bundle.main.infoDictionary?["MetalMaxSourceDirectory"] as? String).map {
@@ -548,29 +620,34 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             result(false, "Interpréteur Python introuvable pour l'installation.")
             return
         }
-        installCoordinator.beginDirect(gameID: game.id, appID: game.appId, title: game.title, autoLaunch: autoPlay)
+        guard let id = installCoordinator.beginDirect(gameID: game.id, appID: game.appId, title: game.title, accountID: account, autoLaunch: autoPlay) else { return }
         lastNotifiedPhase = ""
         sendToast("Démarrage du téléchargement de \(game.title)…")
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: pythonPath)
-        proc.arguments = [finalScript.path, "--appid", game.appId, "--title", game.title]
+        proc.arguments = [finalScript.path, "--appid", game.appId, "--title", game.title, "--accountid", account, "--renderer", runtime.renderer]
         let pipe = Pipe()
+        proc.standardInput = FileHandle.nullDevice
         proc.standardOutput = pipe
         proc.standardError = FileHandle.nullDevice
         self.activeInstallerProcess = proc
-        var buffer = Data()
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else { return }
-            buffer.append(chunk)
-            while let newlineRange = buffer.range(of: Data([0x0A])) {
-                let lineData = buffer.subdata(in: 0..<newlineRange.lowerBound)
-                buffer.removeSubrange(0..<newlineRange.upperBound)
-                if let line = String(data: lineData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !line.isEmpty,
-                   let parsed = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
-                    DispatchQueue.main.async {
-                        self?.handleInstallerUpdate(json: parsed, game: game, autoPlay: autoPlay)
+        activeInstallerID = id; installerBuffer = Data(); installerEOF = false; installerExitStatus = nil
+        pipe.fileHandleForReading.readabilityHandler = { [weak self, weak proc] handle in
+            let chunk = (try? handle.read(upToCount: 65_536)) ?? Data()
+            if chunk.isEmpty { handle.readabilityHandler = nil; try? handle.close() }
+            DispatchQueue.main.async {
+                guard let self, let proc, self.activeInstallerProcess === proc, self.activeInstallerID == id else { return }
+                if chunk.isEmpty { self.installerEOF = true; self.finishNativeInstallerIfExited(id: id, process: proc); return }
+                guard self.installCoordinator.acceptsDirect(id: id) else { return }
+                self.installerBuffer.append(chunk)
+                guard self.installerBuffer.count <= 262_144 else {
+                    self.installCoordinator.requestFailed(id: id, message: "Sortie de l’installateur invalide."); self.stopNativeInstaller(); return
+                }
+                while let range = self.installerBuffer.range(of: Data([0x0A])) {
+                    let lineData = self.installerBuffer.subdata(in: 0..<range.lowerBound)
+                    self.installerBuffer.removeSubrange(0..<range.upperBound)
+                    if let parsed = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] {
+                        self.handleInstallerUpdate(json: parsed, game: game, id: id, account: account)
                     }
                 }
             }
@@ -578,12 +655,9 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         proc.terminationHandler = { [weak self] p in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.activeInstallerProcess = nil
-                if p.terminationStatus != 0 && self.installCoordinator.isActive {
-                    self.installCoordinator.finishDirect(success: false, message: "L'installation a été interrompue.")
-                    self.sendToast("Installation de \(game.title) interrompue.", error: true)
-                    self.sendState()
-                }
+                guard self.activeInstallerProcess === p, self.activeInstallerID == id else { return }
+                self.installerExitStatus = p.terminationStatus
+                self.finishNativeInstallerIfExited(id: id, process: p)
             }
         }
         do {
@@ -591,14 +665,36 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             result(true, "Téléchargement de \(game.title) en cours dans Playmelt.")
             sendState()
         } catch {
-            installCoordinator.finishDirect(success: false, message: "Impossible de lancer l'installateur : \(error.localizedDescription)")
+            pipe.fileHandleForReading.readabilityHandler = nil
+            try? pipe.fileHandleForReading.close(); try? pipe.fileHandleForWriting.close()
+            activeInstallerProcess = nil; activeInstallerID = nil
+            installCoordinator.finishDirect(id: id, success: false, message: "Impossible de lancer l'installateur : \(error.localizedDescription)")
             result(false, "Erreur au lancement de l'installation.")
             sendToast("Erreur au lancement de l'installation.", error: true)
             sendState()
         }
     }
-    func handleInstallerUpdate(json: [String: Any], game: Game, autoPlay: Bool) {
-        guard !closing else { return }
+    func stopNativeInstaller(completion: (() -> Void)? = nil) {
+        guard let process = activeInstallerProcess else { completion?(); return }
+        if let completion { installerShutdownWaiters.append(completion) }
+        if process.isRunning { process.terminate() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self, weak process] in
+            guard let self, let process, self.activeInstallerProcess === process, process.isRunning else { return }
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+    }
+    private func finishNativeInstallerIfExited(id: UUID, process: Process) {
+        guard activeInstallerProcess === process, activeInstallerID == id, installerEOF, installerExitStatus != nil else { return }
+        if installCoordinator.acceptsDirect(id: id) {
+            installCoordinator.finishDirect(id: id, success: false, message: "L’installateur s’est arrêté sans confirmation de fin Steam.")
+            if !closing { sendState() }
+        }
+        activeInstallerProcess = nil; activeInstallerID = nil; installerBuffer = Data()
+        let callbacks = installerShutdownWaiters; installerShutdownWaiters.removeAll()
+        for callback in callbacks { callback() }
+    }
+    func handleInstallerUpdate(json: [String: Any], game: Game, id: UUID, account: String) {
+        guard !closing, installCoordinator.acceptsDirect(id: id), model.selectedAccountID == account else { return }
         let status = json["status"] as? String ?? "downloading"
         let phase = json["phase"] as? String ?? "Téléchargement"
         let message = json["message"] as? String ?? "Installation en cours…"
@@ -615,23 +711,24 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             }
         }
         if status == "launch-ready" {
-            installCoordinator.finishDirect(success: true, message: message)
-            sendToast("\(game.title) est installé et prêt ! Vous pouvez jouer.")
+            guard installCoordinator.finishDirect(id: id, success: true, message: message) else { return }
+            sendToast("Fichiers de \(game.title) préparés. Le lancement reste à vérifier.")
             refresh { [weak self] in
                 guard let self else { return }
-                DispatchQueue.main.async {
-                    self.result(true, "\(game.title) est prêt à jouer !")
-                    if autoPlay, let installed = self.model.games.first(where: { $0.appId == game.appId }) {
-                        self.route(installed, installing: false, requestedRuntime: nil)
-                    }
+                self.result(true, "Fichiers de \(game.title) préparés.")
+                let active = activeSteamAccount(TextVDF.read(self.model.home.appendingPathComponent("Library/Application Support/Steam/config/loginusers.vdf")).object("users"))
+                if self.installCoordinator.permitsDirectAutoLaunch(id: id, accountID: self.model.selectedAccountID, executionBlocked: self.renderProtectionEnabled),
+                   SteamInstallAccountContext.permitsAutoLaunch(expected: account, active: active),
+                   let installed = self.model.games.first(where: { $0.appId == game.appId && $0.installed && $0.complete }) {
+                    self.route(installed, installing: false, requestedRuntime: nil)
                 }
             }
         } else if status == "failed" {
-            installCoordinator.finishDirect(success: false, message: message)
+            installCoordinator.finishDirect(id: id, success: false, message: message)
             sendToast("Échec de l'installation de \(game.title) : \(message)", error: true)
             sendState()
         } else {
-            installCoordinator.updateDirect(status: status, message: message, progress: percent, downloaded: downloaded, total: total, speed: speed, phase: phase)
+            installCoordinator.updateDirect(id: id, status: status, message: message, progress: percent, downloaded: downloaded, total: total, speed: speed, phase: phase)
         }
     }
     func validatedSteamRuntime(_ game: Game, installing: Bool, requestedRuntime: String?) -> Runtime? {
@@ -665,7 +762,8 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             NSWorkspace.shared.open([url], withApplicationAt: app, configuration: .init()) { _, error in DispatchQueue.main.async { finish(error == nil, error == nil ? message : "Steam n’a pas accepté la demande.") } }
         } else if runtime.platform == "windows" {
             guard let args = installing ? [uri] : SteamGameLaunchProfile.windowsArguments(appID: game.appId, renderer: runtime.renderer, graphicsValidated: runtime.graphicsValidated) else { finish(false, "Le moteur graphique de ce jeu reste à valider."); return }
-            runWindowsClient(runtime, arguments: args, onFailure: onFailure) { ok, error in finish(ok, ok ? message : error) }
+            let extra = installing ? [] : gameSettingsStore.launchArguments(for: gameSettingsContext(game))
+            runWindowsClient(runtime, arguments: args + extra, onFailure: onFailure) { ok, error in finish(ok, ok ? message : error) }
         } else { finish(false, "Client Steam indisponible.") }
     }
     func runWindowsClient(_ runtime: Runtime, arguments: [String], onFailure: @escaping (String) -> Void,
@@ -689,22 +787,34 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         catch { completion(false, "Impossible d’ouvrir Steam Windows.") }
     }
     func route(_ game: Game, installing: Bool, requestedRuntime: String?) {
-        let isLocal = game.installSource == "local" || findLaunchScript(in: game.path) != nil
-        guard !closing, (isLocal || !renderProtectionEnabled) else { result(false, "Rendus en cours : installation et lancement suspendus."); return }
+        guard !closing, !renderProtectionEnabled else { result(false, "Rendus en cours : installation et lancement suspendus."); return }
         guard !CommandLine.arguments.contains("--audit-read-only") else { result(false, "Mode de vérification : installations et lancements désactivés."); return }
         if installing {
             guard !installCoordinator.isActive else { result(false, "Un suivi d’installation est déjà en cours. Arrêtez le suivi avant une autre demande."); return }
         }
-        if !installing, let script = ensureLaunchScript(for: game) ?? findLaunchScript(in: game.path) {
+        var extraArguments: [String] = []
+        var requestedBackend = "auto"
+        if !installing, game.platform == "windows", game.installed {
+            let context = gameSettingsContext(game)
+            let preferences = gameSettingsStore.snapshot(game: context, hardware: [:], displays: [])
+            guard preferences["status"] as? String != "error" else {
+                result(false, "Ouvrez les paramètres du jeu : \(preferences["error"] as? String ?? "configuration invalide").")
+                return
+            }
+            extraArguments = gameSettingsStore.launchArguments(for: context)
+            requestedBackend = gameSettingsStore.requestedBackend(for: context)
+        }
+        if !installing, game.platform == "windows", game.installed, game.complete,
+           let script = ensureLaunchScript(for: game, requestedBackend: requestedBackend) {
             let key = "launch-script:\(game.appId.isEmpty ? game.id : game.appId)"
             guard let token = requestGate.acquire(key) else { result(false, "Demande déjà envoyée."); return }
             defer { requestGate.finish(key, token: token) }
             do {
                 _ = try clientLauncher.launch(executable: URL(fileURLWithPath: "/bin/bash"),
-                                              arguments: [script.path],
+                                              arguments: [script.path] + (game.appId == "2651280" ? [] : extraArguments),
                                               environment: ProcessInfo.processInfo.environment,
                                               directory: script.deletingLastPathComponent()) { code in
-                    if code != 0 { NSLog("Playmelt game script finished with code %d", code) }
+                    if code != 0 { self.result(false, "Le jeu s’est arrêté (code \(code)). Consultez le diagnostic du lancement.") }
                 }
                 result(true, "Ouverture de \(game.title)…")
                 return
@@ -713,8 +823,18 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                 return
             }
         }
+        if !installing, game.platform == "windows", game.installed, game.complete,
+           game.installSource == "local" || game.appId == "2651280" || requestedBackend != "auto" {
+            result(false, "Le lancement de cette installation locale n’est pas prêt. Vérifiez son dossier, ses paramètres et le moteur choisi.")
+            return
+        }
         if installing, game.store == "steam", !game.appId.isEmpty {
-            startNativeSteamInstall(game: game, autoPlay: false)
+            if prefersNativeSteam(game, requestedRuntime: requestedRuntime) {
+                guard let runtime = validatedSteamRuntime(game, installing: true, requestedRuntime: "steam-mac") else { return }
+                dispatchSteam(game, runtime: runtime, installing: true, onFailure: { [weak self] in self?.result(false, $0) }) { [weak self] in self?.result($0, $1) }
+                return
+            }
+            startNativeSteamInstall(game: game, autoPlay: false, requestedRuntime: requestedRuntime)
             return
         }
         if game.store == "epic" {
@@ -727,83 +847,40 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                 self?.result(error == nil, error == nil ? "Ouverture de \(game.title)…" : "Epic n’a pas accepté la demande.")
             } }; return
         }
-        guard let runtime = validatedSteamRuntime(game, installing: installing, requestedRuntime: requestedRuntime) else {
-            if game.store == "steam", !game.appId.isEmpty {
-                let uri = installing ? "steam://install/\(game.appId)" : "steam://run/\(game.appId)"
-                if let url = URL(string: uri) {
-                    let steamApp = URL(fileURLWithPath: "/Applications/Steam.app")
-                    if FileManager.default.fileExists(atPath: steamApp.path) {
-                        NSWorkspace.shared.open([url], withApplicationAt: steamApp, configuration: .init()) { [weak self] _, error in
-                            DispatchQueue.main.async {
-                                self?.result(error == nil, error == nil ? (installing ? "Téléchargement / installation lancé dans Steam." : "Ouverture de \(game.title)…") : "Steam n’a pas accepté la demande.")
-                            }
-                        }
-                        if installing, let macRuntime = self.model.runtimes.first(where: { $0.id == "steam-mac" }) {
-                            _ = self.installCoordinator.begin(gameID: game.id, appID: game.appId, title: game.title, runtime: macRuntime, accountID: self.model.selectedAccountID, onReady: { [weak self] _ in
-                                self?.refresh()
-                            })
-                        }
-                        return
-                    }
-                }
-            }
-            return
-        }
+        guard let runtime = validatedSteamRuntime(game, installing: installing, requestedRuntime: requestedRuntime) else { return }
         dispatchSteam(game, runtime: runtime, installing: installing, onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, message) }
     }
     func uninstallGame(_ game: Game) {
-        guard !closing else { return }
+        guard !closing, !renderProtectionEnabled, !CommandLine.arguments.contains("--audit-read-only") else {
+            result(false, "Désinstallation suspendue par le mode de protection."); return
+        }
+        guard !installCoordinator.isActive, clientLauncher.activeCount == 0 else { result(false, "Terminez l’installation ou fermez le jeu avant de désinstaller."); return }
         let fm = FileManager.default
-
-        // 1. Delete game.path if present
-        if let path = game.path, fm.fileExists(atPath: path.path) {
-            try? fm.removeItem(at: path)
-        }
-
-        // 2. Check standard Playmelt Games folder
         let home = fm.homeDirectoryForCurrentUser
-        let playmeltGamesDir = home.appendingPathComponent("Library/Application Support/Playmelt/Games")
-        let candidateFolder = playmeltGamesDir.appendingPathComponent(game.id.replacingOccurrences(of: "local:", with: "").replacingOccurrences(of: "steam:", with: ""))
-        if fm.fileExists(atPath: candidateFolder.path) {
-            try? fm.removeItem(at: candidateFolder)
-        }
-        let safeFolder = playmeltGamesDir.appendingPathComponent(game.title.filter { $0.isLetter || $0.isNumber })
-        if fm.fileExists(atPath: safeFolder.path) {
-            try? fm.removeItem(at: safeFolder)
-        }
-
-        // 3. Remove Steam symlinks and appmanifests if present
-        let steamAppsDir = home.appendingPathComponent("Library/Application Support/Steam/steamapps")
-        if !game.appId.isEmpty {
-            let manifest = steamAppsDir.appendingPathComponent("appmanifest_\(game.appId).acf")
-            if fm.fileExists(atPath: manifest.path) {
-                try? fm.removeItem(at: manifest)
+        let steamRoots = model.runtimes.flatMap { model.libraryRoots($0) }
+        let roots = [home.appendingPathComponent("Library/Application Support/Playmelt/Games")] + steamRoots.map { $0.appendingPathComponent("steamapps/common") }
+        do {
+            let plan = try GameUninstallPlan.make(game: game, installRoots: roots, steamRoots: steamRoots)
+            let alert = NSAlert()
+            alert.messageText = "Déplacer \(game.title) dans la Corbeille ?"
+            alert.informativeText = "Cibles exactes :\n" + plan.items.map(\.path).joined(separator: "\n") + "\n\nAucune sauvegarde des parties n’est vérifiée. Ces éléments resteront récupérables dans la Corbeille tant qu’elle n’est pas vidée."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Annuler")
+            alert.addButton(withTitle: "Déplacer dans la Corbeille")
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+            guard !closing, !renderProtectionEnabled, !installCoordinator.isActive, clientLauncher.activeCount == 0,
+                  try GameUninstallPlan.make(game: game, installRoots: roots, steamRoots: steamRoots) == plan else {
+                result(false, "L’installation a changé. Aucun fichier n’a été déplacé."); return
             }
-        }
-        let steamCommonGame = steamAppsDir.appendingPathComponent("common").appendingPathComponent(game.title)
-        if fm.fileExists(atPath: steamCommonGame.path) {
-            try? fm.removeItem(at: steamCommonGame)
-        }
-
-        // 4. If Steam store game, notify Steam client
-        if game.store == "steam", !game.appId.isEmpty {
-            if let url = URL(string: "steam://uninstall/\(game.appId)") {
-                let steamApp = URL(fileURLWithPath: "/Applications/Steam.app")
-                if fm.fileExists(atPath: steamApp.path) {
-                    NSWorkspace.shared.open([url], withApplicationAt: steamApp, configuration: .init()) { _, _ in }
-                }
-            }
-        }
-
-        // 5. Refresh library state so UI reflects uninstallation immediately
-        refresh { [weak self] in
-            DispatchQueue.main.async {
-                self?.result(true, "\(game.title) a été désinstallé.")
-            }
+            for item in plan.items { try fm.trashItem(at: item, resultingItemURL: nil) }
+            refresh { [weak self] in self?.result(true, "Les fichiers détectés de \(game.title) ont été déplacés dans la Corbeille.") }
+        } catch {
+            refresh()
+            result(false, "Désinstallation incomplète : \(error.localizedDescription). Vérifiez la Corbeille avant de réessayer.")
         }
     }
     func beginShutdown() {
-        closing = true; requestGate.shutdown(); installCoordinator.shutdown(); clientLauncher.shutdown()
+        closing = true; requestGate.shutdown(); installCoordinator.cancel(); installCoordinator.shutdown(); clientLauncher.shutdown()
         authentication?.shutdown(); authentication = nil
         scanID = UUID(); afterRefresh.removeAll()
     }
@@ -816,7 +893,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var shuttingDown = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         if UserDefaults.standard.object(forKey: RenderProtection.preferenceKey) == nil {
-            UserDefaults.standard.set(false, forKey: RenderProtection.preferenceKey)
+            UserDefaults.standard.set(true, forKey: RenderProtection.preferenceKey)
         }
         guard let resource = Bundle.main.url(forResource: "index", withExtension: "html") else { NSApp.terminate(nil); return }
         handler = ScriptHandler(resourceURL: resource)
@@ -855,6 +932,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         group.enter(); handler.epicConnector.shutdown { group.leave() }
         group.enter(); handler.finishRendererImport { group.leave() }
         group.enter(); handler.libraryScanner.shutdown { group.leave() }
+        group.enter(); handler.stopNativeInstaller { group.leave() }
         group.notify(queue: .main) { NSApp.reply(toApplicationShouldTerminate: true) }
         return .terminateLater
     }

@@ -2,6 +2,60 @@ import Foundation
 import CryptoKit
 import Darwin
 
+@_silgen_name("proc_listpids") private func runtimeProcListPids(_ type: UInt32, _ typeInfo: UInt32, _ buffer: UnsafeMutableRawPointer?, _ size: Int32) -> Int32
+@_silgen_name("proc_pidpath") private func runtimeProcPidPath(_ pid: Int32, _ buffer: UnsafeMutableRawPointer?, _ size: UInt32) -> Int32
+
+/// Inspect same-user executable images, not the process display name or arguments.
+enum D3DMetalProcessInspector {
+    static func inactive(pid: pid_t) throws -> Bool {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.size
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else {
+            if errno == ESRCH { return true }
+            throw RuntimeSetupError.failed("Impossible de vérifier l’état du processus utilisateur \(pid).")
+        }
+        if size == 0 { return true }
+        guard size == MemoryLayout<kinfo_proc>.size else { throw RuntimeSetupError.failed("État de processus incomplet.") }
+        return Int32(info.kp_proc.p_stat) == SZOMB
+    }
+    static func paths() throws -> [pid_t: String] {
+        let initial = runtimeProcListPids(4, UInt32(geteuid()), nil, 0) // PROC_UID_ONLY
+        guard initial > 0 else { throw RuntimeSetupError.failed("Impossible d’énumérer les processus utilisateur.") }
+        var capacity = max(Int(initial) / MemoryLayout<pid_t>.size + 1024, 1024)
+        var pids: [pid_t] = [], bytes: Int32 = 0
+        while capacity <= 65536 {
+            pids = [pid_t](repeating: 0, count: capacity)
+            bytes = pids.withUnsafeMutableBytes { runtimeProcListPids(4, UInt32(geteuid()), $0.baseAddress, Int32($0.count)) }
+            guard bytes >= 0 else { throw RuntimeSetupError.failed("Impossible d’énumérer les processus utilisateur.") }
+            if Int(bytes) < capacity * MemoryLayout<pid_t>.size { break }
+            capacity *= 2
+        }
+        guard capacity <= 65536, bytes > 0, Int(bytes) % MemoryLayout<pid_t>.size == 0 else { throw RuntimeSetupError.failed("L’inventaire des processus est incomplet.") }
+        var result: [pid_t: String] = [:]
+        for pid in pids.prefix(Int(bytes) / MemoryLayout<pid_t>.size) where pid > 0 {
+            var buffer = [CChar](repeating: 0, count: 4096)
+            errno = 0
+            let count = buffer.withUnsafeMutableBytes { runtimeProcPidPath(pid, $0.baseAddress, UInt32($0.count)) }
+            if count <= 0 {
+                if try inactive(pid: pid) { continue }
+                throw RuntimeSetupError.failed("Impossible de vérifier le programme du processus utilisateur \(pid).")
+            }
+            result[pid] = String(cString: buffer)
+        }
+        return result
+    }
+    static func occupied(paths: [pid_t: String], engine: URL, prefix: URL) -> Bool {
+        let roots = [engine, prefix].map { $0.standardizedFileURL.resolvingSymlinksInPath().path }
+        return paths.values.contains { path in
+            let resolved = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+            return roots.contains { resolved == $0 || resolved.hasPrefix($0 + "/") }
+        }
+    }
+    static func occupied(engine: URL, prefix: URL) throws -> Bool {
+        occupied(paths: try paths(), engine: engine, prefix: prefix)
+    }
+}
+
 struct D3DMetalCommand {
     let executable: URL
     let arguments: [String]
@@ -42,6 +96,7 @@ final class D3DMetalRuntime {
     private let store: D3DMetalStore
     private let runner: D3DMetalCommandRunning
     private let capacity: (URL) throws -> Int64
+    private let occupied: (URL, URL) throws -> Bool
     private let queue = DispatchQueue(label: "fr.playmelt.d3dmetal.prepare", qos: .utility)
     private let lock = NSLock()
     private var running = false, cancelled = false, closing = false
@@ -55,8 +110,9 @@ final class D3DMetalRuntime {
     private var ownerURL: URL { root.appendingPathComponent("prefix-owner.json") }
 
     init(store: D3DMetalStore = D3DMetalStore(), runner: D3DMetalCommandRunning = D3DMetalProcessRunner(),
-         capacity: @escaping (URL) throws -> Int64 = { try $0.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage ?? 0 }) {
-        self.store = store; self.runner = runner; self.capacity = capacity
+         capacity: @escaping (URL) throws -> Int64 = { try $0.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage ?? 0 },
+         occupied: @escaping (URL, URL) throws -> Bool = { try D3DMetalProcessInspector.occupied(engine: $0, prefix: $1) }) {
+        self.store = store; self.runner = runner; self.capacity = capacity; self.occupied = occupied
     }
 
     /// Metadata and four bounded prefix-header reads only; no payload rehashing.
@@ -76,7 +132,7 @@ final class D3DMetalRuntime {
         let header = try? handle?.read(upToCount: 2); try? handle?.close()
         return .init(engineID: base.engineID + "/d3dmetal/" + config.rendererHash, wineURL: base.wineURL,
                      wineserverURL: base.wineserverURL, prefixURL: config.prefix, steamRoot: steam,
-                     environment: config.environment, readyEngine: true, steamInstalled: header == Data([0x4d,0x5a]))
+                     environment: D3DMetalStore.launchEnvironment(config.environment), readyEngine: true, steamInstalled: header == Data([0x4d,0x5a]))
     }
 
     func snapshot(base: PlaymeltRuntimeDescriptor) -> [String:Any] {
@@ -150,8 +206,7 @@ final class D3DMetalRuntime {
         if let existing = try descriptor(base: base) { return existing }
         guard try capacity(root) > 2_000_000_000 else { throw RuntimeSetupError.failed("Au moins 2 Go libres sont requis pour préparer le préfixe DirectX 12.") }
         try checkCancellation()
-        let processes = try runner.run(.init(executable: URL(fileURLWithPath:"/bin/ps"), arguments:["-axo","pid=,comm="], environment:toolsEnvironment, timeout:5), cancelled:{self.isCancelled})
-        guard !processes.split(separator:"\n").contains(where: { $0.contains(engine.path + "/") || $0.contains(plan.prefixURL.path + "/") }) else { throw D3DMetalPreparationError.blocked("Wine est utilisé par un programme existant. Il doit être fermé avant cette préparation.") }
+        guard try !occupied(engine, plan.prefixURL) else { throw D3DMetalPreparationError.blocked("Wine est utilisé par un programme existant. Il doit être fermé avant cette préparation.") }
         let fm = FileManager.default
         if fm.fileExists(atPath: plan.prefixURL.path) {
             guard try ownsPrefix(plan.prefixURL, rendererHash: plan.rendererHash, engineID: base.engineID),
@@ -172,7 +227,9 @@ final class D3DMetalRuntime {
         }
         func run(_ executable: URL, _ arguments: [String], _ timeout: TimeInterval, cleanup: Bool = false) throws {
             appendLog(executable.lastPathComponent + " " + arguments.joined(separator:" ") + "\n")
-            do { let result = try runner.run(.init(executable:executable,arguments:arguments,environment:plan.environment,timeout:timeout),cancelled:{cleanup ? false : self.isCancelled}); appendLog(result + "\n") }
+            var environment = plan.preparationEnvironment
+            if executable == base.wineURL && arguments == ["wineboot", "-u"] { environment["WINEBOOT_HIDE_DIALOG"] = "1" }
+            do { let result = try runner.run(.init(executable:executable,arguments:arguments,environment:environment,timeout:timeout),cancelled:{cleanup ? false : self.isCancelled}); appendLog(result + "\n") }
             catch { appendLog(error.localizedDescription + "\n"); throw error }
         }
         try checkCancellation()
@@ -184,8 +241,7 @@ final class D3DMetalRuntime {
         do { try run(base.wineserverURL,["-k"],10,cleanup:true) } catch { stopFailed = true }
         do { try run(base.wineserverURL,["-w"],10,cleanup:true) } catch { stopFailed = true }
         do {
-            let remaining = try runner.run(.init(executable:URL(fileURLWithPath:"/bin/ps"),arguments:["-axo","pid=,comm="],environment:toolsEnvironment,timeout:5),cancelled:{false})
-            if remaining.split(separator:"\n").contains(where: { $0.contains(engine.path + "/") || $0.contains(plan.prefixURL.path + "/") }) { stopFailed = true }
+            if try occupied(engine, plan.prefixURL) { stopFailed = true }
         } catch { stopFailed = true }
         if stopFailed { throw RuntimeSetupError.failed("L’arrêt du Wine de ce préfixe n’a pas été confirmé. La préparation n’est pas marquée prête.") }
         if let bootError { throw bootError }
@@ -193,7 +249,7 @@ final class D3DMetalRuntime {
         try RuntimeSetup.validatePrefix(plan.prefixURL)
         guard expectedBindings == (try bindings(base:base)) else { throw D3DMetalPreparationError.blocked("Le moteur ou l’import a changé pendant la préparation. Les données sont conservées.") }
         let receipt: [String:Any] = ["schema":1,"owner":"playmelt-d3dmetal","rendererHash":plan.rendererHash,"engineID":base.engineID,
-            "engineFingerprint":plan.engineFingerprint,"environmentHash":Self.environmentHash(plan.environment),"bindings":expectedBindings,
+            "engineFingerprint":plan.engineFingerprint,"environmentHash":Self.environmentHash(plan.preparationEnvironment),"bindings":expectedBindings,
             "preparedAt":ISO8601DateFormatter().string(from:Date()),"loadTested":false,"gameTested":false,"canLaunch":false]
         let temporaryReceipt = root.appendingPathComponent(".ready-" + UUID().uuidString)
         defer { try? fm.removeItem(at:temporaryReceipt) } // only this new transaction file

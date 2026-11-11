@@ -124,7 +124,8 @@ import Darwin
         expect(!plan.canExecute && plan.blockedReasons.count >= 3, "unqualified route stays blocked")
         expect(plan.prefixURL != descriptor.prefixURL && plan.environment["WINEPREFIX"] == plan.prefixURL.path, "separate DX12 prefix")
         expect(plan.environment["WINEDLLPATH_PREPEND"] == payload.appendingPathComponent("wine").path, "one Apple overlay only")
-        expect(plan.environment["DXMT_ENABLE_NVEXT"] == nil && plan.environment["WINEDLLOVERRIDES"] == "winemenubuilder.exe=d", "no inherited DXMT flags/overrides")
+        expect(plan.environment["DXMT_ENABLE_NVEXT"] == nil && plan.environment["WINEDLLOVERRIDES"] == "d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d", "launch uses Apple native overrides without inherited DXMT flags")
+        expect(plan.preparationEnvironment["WINEDLLOVERRIDES"] == "winemenubuilder.exe=d", "preparation retains its boot overrides")
         expect(plan.environment["CX_D3DMETALPATH"] == payload.appendingPathComponent("external").path, "upstream Apple bridge contract")
         let wrong = try base(temp, environment: ["DYLD_FALLBACK_LIBRARY_PATH": "/Applications/CrossOver.app/Contents/lib"])
         rejects("application dependency") { _ = try store.launchPlan(base: wrong) }
@@ -136,6 +137,24 @@ import Darwin
         try unknownStore.importLocal(sourceURL: unknownSource)
         let unknownPlan = try unknownStore.launchPlan(base: descriptor)
         expect(unknownPlan.blockedReasons.contains { $0.contains("/opt/unknown/vendor.dylib") }, "unknown absolute dependency blocks plan")
+
+        let resourcesSource = temp.appendingPathComponent("resources-source")
+        let resourcesLib = try source(resourcesSource)
+        let resourcesFramework = resourcesLib.appendingPathComponent("external/D3DMetal.framework/Versions/A")
+        try put(macho(dependency: "@rpath/libdxccontainer.dylib"), resourcesFramework.appendingPathComponent("D3DMetal"))
+        try put(macho(dependency: "@rpath/libmetalirconverter.dylib"), resourcesFramework.appendingPathComponent("Resources/libdxccontainer.dylib"))
+        try put(macho(), resourcesFramework.appendingPathComponent("Resources/libmetalirconverter.dylib"))
+        let resourcesStore = D3DMetalStore(root: temp.appendingPathComponent("resources/Renderers/D3DMetal"))
+        try resourcesStore.importLocal(sourceURL: resourcesSource)
+        let resourcesPlan = try resourcesStore.launchPlan(base: descriptor)
+        let expectedResources = temp.appendingPathComponent("resources/Renderers/D3DMetal/payload/external/D3DMetal.framework/Resources").path
+        expect(resourcesPlan.preparationBlockers.isEmpty, "framework Resources resolves both @rpath dependencies")
+        expect(resourcesPlan.environment["DYLD_FALLBACK_LIBRARY_PATH"]?.split(separator: ":").contains(Substring(expectedResources)) == true, "framework Resources is in runtime search path")
+        try fm.removeItem(at: resourcesFramework.appendingPathComponent("Resources/libmetalirconverter.dylib"))
+        let missingResourcesStore = D3DMetalStore(root: temp.appendingPathComponent("missing-resources/Renderers/D3DMetal"))
+        try missingResourcesStore.importLocal(sourceURL: resourcesSource)
+        let missingResourcesPlan = try missingResourcesStore.launchPlan(base: descriptor)
+        expect(missingResourcesPlan.preparationBlockers.contains { $0.contains("@rpath/libmetalirconverter.dylib") }, "missing framework dependency still blocks preparation")
 
         let probe = temp.appendingPathComponent("probe.exe"); try put(pe(), probe)
         func response(_ request: D3DMetalProbeRequest, fields: [String:Any] = [:]) throws -> Data {

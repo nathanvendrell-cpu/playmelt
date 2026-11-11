@@ -105,19 +105,25 @@ final class SteamInstallCoordinator {
     var activeGameID: String? { job?["gameId"] as? String }
 
     @discardableResult
-    func beginDirect(gameID: String, appID: String, title: String, autoLaunch: Bool = false) -> UUID? {
-        guard !closed, token == nil else { return nil }
+    func beginDirect(gameID: String, appID: String, title: String, accountID: String, autoLaunch: Bool = false) -> UUID? {
+        guard !closed, token == nil, LibraryModel.validAppID(appID), LibraryModel.validAccountID(accountID) else { return nil }
         let id = UUID(); token = id; readySignature = nil
         job = ["id": id.uuidString, "gameId": gameID, "appId": appID, "title": title,
                "status": "downloading", "phase": "Téléchargement",
                "message": "Démarrage du téléchargement de \(title)…",
                "bytesDownloaded": 0, "bytesTotal": 0,
-               "progress": 0.0, "cancellable": true, "autoLaunch": autoLaunch]
+               "progress": 0.0, "cancellable": true, "autoLaunch": autoLaunch, "accountId": accountID]
         onChange?(); return id
     }
 
-    func updateDirect(status: String, message: String, progress: Double?, downloaded: UInt64 = 0, total: UInt64 = 0, speed: String = "", phase: String = "") {
-        guard token != nil else { return }
+    func acceptsDirect(id: UUID) -> Bool { !closed && token == id && job?["id"] as? String == id.uuidString }
+    func permitsDirectAutoLaunch(id: UUID, accountID: String, executionBlocked: Bool) -> Bool {
+        !closed && !executionBlocked && job?["id"] as? String == id.uuidString &&
+        job?["accountId"] as? String == accountID && job?["autoLaunch"] as? Bool == true &&
+        job?["status"] as? String == "launch-ready"
+    }
+    func updateDirect(id: UUID, status: String, message: String, progress: Double?, downloaded: UInt64 = 0, total: UInt64 = 0, speed: String = "", phase: String = "") {
+        guard acceptsDirect(id: id) else { return }
         job?["status"] = status
         job?["message"] = message
         if let progress { job?["progress"] = max(0.0, min(1.0, progress)) }
@@ -128,8 +134,9 @@ final class SteamInstallCoordinator {
         onChange?()
     }
 
-    func finishDirect(success: Bool, message: String, onReady: ((UUID) -> Void)? = nil) {
-        guard let id = token else { return }
+    @discardableResult
+    func finishDirect(id: UUID, success: Bool, message: String) -> Bool {
+        guard acceptsDirect(id: id) else { return false }
         stopObserver(); token = nil; readySignature = nil
         job?["status"] = success ? "launch-ready" : "failed"
         job?["message"] = message
@@ -137,7 +144,7 @@ final class SteamInstallCoordinator {
         job?["progress"] = success ? 1.0 : NSNull()
         job?["cancellable"] = false
         onChange?()
-        if success { onReady?(id) }
+        return true
     }
 
     func begin(gameID: String, appID: String, title: String, runtime: Runtime, accountID: String,
@@ -192,6 +199,8 @@ final class SteamInstallCoordinator {
         finish(status: success ? "launch-requested" : "failed", message: message)
     }
     func cancel(message: String = "Suivi et lancement automatique arrêtés. Le téléchargement reste géré par Steam.") {
+        // Also invalidates a launch queued behind an asynchronous library refresh.
+        job?["autoLaunch"] = false
         if token != nil {
             onCancel?()
             finish(status: "cancelled", message: message)

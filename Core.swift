@@ -167,16 +167,16 @@ struct SteamAppInfo {
     }
 }
 
-/// The former Windows routes use Wine. Keeping their files does not authorize
-/// invoking them; a graphics bridge alone is not a Windows executable runtime.
+/// Wine + Metal is the production compatibility route. The separate PE loader
+/// remains a research prototype and cannot be selected as a game fallback.
 enum WindowsExecutionPolicy {
-    static let mode = "no-wine"
-    static let message = "Le moteur Windows sans Wine est en développement."
-    static let legacyActions: Set<String> = ["setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam"]
-    static func permits(platform: String, hasWine: Bool = false) -> Bool { platform == "mac" && !hasWine }
+    static let mode = "wine-metal"
+    static let message = "Cette route Windows nécessite le moteur Wine + Metal préparé."
+    static let legacyActions: Set<String> = []
+    static func permits(platform: String, hasWine: Bool = false) -> Bool { (platform == "mac" && !hasWine) || (platform == "windows" && hasWine) }
     static var json: [String: Any] {
-        ["mode": mode, "windowsExecutionAvailable": false, "wineAllowed": false,
-         "message": message, "missingComponents": ["game-compatible-pe-loader", "win32-api-runtime", "validated-dx12-device", "steam-install-and-launch-integration"],
+        ["mode": mode, "wineAllowed": true, "nativeEngineAvailable": false,
+         "message": message, "missingNativeComponents": ["game-compatible-pe-loader", "win32-api-runtime", "validated-dx12-device"],
          "gameExecutionVerified": false]
     }
 }
@@ -248,9 +248,18 @@ struct Game {
 }
 
 enum SteamGameLaunchProfile {
+    static func localRenderer(appID: String, unity: Bool, dx12Markers: Bool) -> String {
+        let required = requiredRenderer(appID: appID)
+        if required != "auto" { return required }
+        return !unity && dx12Markers ? "d3dmetal" : "dxmt"
+    }
+    static func prefersNative(platform: String, supportedPlatforms: [String], requestedRuntime: String?) -> Bool {
+        if let requestedRuntime { return requestedRuntime == "steam-mac" }
+        return platform == "mac" || supportedPlatforms.contains("mac")
+    }
     // The open beta has a distinct Steam app ID; it must retain the same DX12
     // requirement as the retail game instead of falling through to DX11.
-    private static let directX12Games: Set<String> = ["1783560", "2584270", "4711740"]
+    private static let directX12Games: Set<String> = ["1783560", "2584270", "4711740", "2651280"]
     static func requiredRenderer(appID: String) -> String { directX12Games.contains(appID) ? "d3dmetal" : appID == "526870" ? "dxmt" : "auto" }
     static func requiredGraphicsAPI(appID: String) -> String { directX12Games.contains(appID) ? "DirectX12" : appID == "526870" ? "DirectX11" : "unknown" }
     static func supportsInstallation(appID: String, runtime: Runtime) -> Bool {
@@ -269,9 +278,57 @@ enum SteamGameLaunchProfile {
     }
 }
 
+/// A dry-run inventory for one detected installation. No title-based guesses,
+/// parent folders, or unrelated Steam manifests are included.
+struct GameUninstallPlan: Equatable {
+    let installation: URL
+    let items: [URL]
+    static func make(game: Game, installRoots: [URL], steamRoots: [URL], fileManager fm: FileManager = .default) throws -> GameUninstallPlan {
+        func blocked(_ message: String) -> NSError { NSError(domain: "Playmelt.Uninstall", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
+        guard game.installed, let original = game.path, fm.fileExists(atPath: original.path) else { throw blocked("Installation absente. Actualisez la bibliothèque.") }
+        let target = original.standardizedFileURL.resolvingSymlinksInPath()
+        let roots = installRoots.map { $0.standardizedFileURL.resolvingSymlinksInPath() }
+        let protectedRoots = ["03_PROJECTS", "Documents/Codex", ".codex"].map { fm.homeDirectoryForCurrentUser.appendingPathComponent($0).resolvingSymlinksInPath() }
+        guard !roots.contains(where: { $0.path == "/" || $0.path == fm.homeDirectoryForCurrentUser.path }),
+              roots.contains(where: { target.path.hasPrefix($0.path + "/") }),
+              !protectedRoots.contains(where: { target == $0 || target.path.hasPrefix($0.path + "/") }),
+              (try? target.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+              !roots.contains(target), target.path != fm.homeDirectoryForCurrentUser.path,
+              target.path != "/" else { throw blocked("Le dossier détecté sort des bibliothèques autorisées. Aucun fichier n’a été déplacé.") }
+        var ancestor = target
+        while roots.contains(where: { ancestor == $0 || ancestor.path.hasPrefix($0.path + "/") }) {
+            guard !fm.fileExists(atPath: ancestor.appendingPathComponent(".git").path) else { throw blocked("Le dossier appartient à un dépôt ou worktree. Désinstallation manuelle nécessaire.") }
+            ancestor.deleteLastPathComponent()
+        }
+        var items = [target]
+        if game.store == "steam", LibraryModel.validAppID(game.appId) {
+            for steam in steamRoots {
+                let apps = steam.appendingPathComponent("steamapps").standardizedFileURL.resolvingSymlinksInPath()
+                let manifest = apps.appendingPathComponent("appmanifest_\(game.appId).acf")
+                guard fm.fileExists(atPath: manifest.path) else { continue }
+                guard manifest.resolvingSymlinksInPath() == manifest else { throw blocked("Le manifeste Steam est un lien. Vérification manuelle nécessaire.") }
+                let state = TextVDF.read(manifest).object("AppState")
+                let directory = state.string("installdir")
+                guard state.string("appid") == game.appId, !directory.isEmpty, directory != ".", directory != "..",
+                      !directory.contains("/"), !directory.contains("\\") else { throw blocked("Le manifeste Steam est invalide. Aucun fichier n’a été déplacé.") }
+                let link = apps.appendingPathComponent("common").appendingPathComponent(directory).standardizedFileURL
+                let resolved = link.resolvingSymlinksInPath()
+                // A local Playmelt entry can represent the containing game folder.
+                guard resolved == target || resolved.path.hasPrefix(target.path + "/") else { continue }
+                if link != resolved {
+                    guard roots.contains(where: { resolved.path.hasPrefix($0.path + "/") }) else { throw blocked("Le lien Steam sort des bibliothèques autorisées.") }
+                    if !link.path.hasPrefix(target.path + "/") { items.append(link) }
+                }
+                items.append(manifest)
+            }
+        }
+        return .init(installation: target, items: Array(Set(items)).sorted { $0.path < $1.path })
+    }
+}
+
 enum RenderProtection {
     static let preferenceKey = "renderProtectionEnabled"
-    static let executionActions: Set<String> = ["launchGame", "installGame", "installAndPlay", "setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam", "openSteam", "openEpic"]
+    static let executionActions: Set<String> = ["launchGame", "installGame", "installAndPlay", "uninstallGame", "setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam", "openSteam", "openEpic"]
     static func enabled(in preferences: UserDefaults) -> Bool { preferences.object(forKey: preferenceKey) as? Bool ?? true }
     static func blocks(_ action: String, enabled: Bool) -> Bool { enabled && executionActions.contains(action) }
 }
@@ -298,41 +355,21 @@ final class SteamRequestGate {
     func shutdown() { closed = true; entries.removeAll() }
 }
 
-func findLaunchScript(in url: URL?) -> URL? {
-    guard let url else { return nil }
-    let fm = FileManager.default
-    let validExts = ["command", "sh"]
-    if validExts.contains(url.pathExtension.lowercased()), fm.isExecutableFile(atPath: url.path) { return url }
-    if let files = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
-        if let script = files.first(where: { validExts.contains($0.pathExtension.lowercased()) && fm.isExecutableFile(atPath: $0.path) }) {
-            return script
-        }
-    }
-    let parent = url.deletingLastPathComponent()
-    if let files = try? fm.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil) {
-        if let script = files.first(where: { validExts.contains($0.pathExtension.lowercased()) && fm.isExecutableFile(atPath: $0.path) }) {
-            return script
-        }
-    }
-    return nil
+func shellLiteral(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+func localGameEnvironmentExports(appID: String) -> String {
+    appID == "2651280" ? "export ROSETTA_ADVERTISE_AVX=1" : ""
 }
 
-func ensureLaunchScript(for game: Game) -> URL? {
-    let fm = FileManager.default
-    if let existing = findLaunchScript(in: game.path) {
-        // Upgrade legacy flawed launch scripts that mixed D3DMetal into DXMT
-        if let content = try? String(contentsOf: existing, encoding: .utf8),
-           content.contains("WINEDLLPATH_PREPEND=\"$RENDERER_DIR/wine:$RUNTIME_DIR") ||
-           (game.appId == "1783560" && content.contains("-dx11")) {
-            // Needs regeneration below
-        } else {
-            return existing
-        }
+func localGameDX12Arguments(appID: String, projectName: String?) -> [String] {
+    appID == "2651280" ? [] : (projectName.map { [$0] } ?? []) + ["-d3d12"]
+}
+
+func localGameExecutable(appID: String, files: [String]) -> String? {
+    if appID == "2651280" {
+        let matches = files.filter { !$0.contains("/") && $0.lowercased() == "spider-man2.exe" }
+        return matches.count == 1 ? matches[0] : nil
     }
-    guard (game.installSource == "local" || game.store == "steam"), let folder = game.path else { return nil }
-    let winFolder = folder.appendingPathComponent("Windows")
-    let targetDir = fm.fileExists(atPath: winFolder.path) ? winFolder : folder
-    guard let files = try? fm.subpathsOfDirectory(atPath: targetDir.path) else { return nil }
     let exeCandidates = files.filter { path in
         let lower = path.lowercased()
         guard lower.hasSuffix(".exe") else { return false }
@@ -341,14 +378,70 @@ func ensureLaunchScript(for game: Game) -> URL? {
         guard !lower.contains("engine/extras") && !lower.contains("engine/programs") && !lower.contains("plugins/") else { return false }
         return true
     }
-    let shippingExe = exeCandidates.first(where: { $0.lowercased().contains("-shipping.exe") })
-    let mainExe = shippingExe ?? exeCandidates.sorted(by: { $0.count < $1.count }).first
-    guard let chosen = mainExe else { return nil }
+    return exeCandidates.first(where: { $0.lowercased().contains("-shipping.exe") }) ?? exeCandidates.sorted(by: { $0.count < $1.count }).first
+}
+
+func findLaunchScript(in url: URL?) -> URL? {
+    guard let url else { return nil }
+    let fm = FileManager.default
+    if ["command", "sh"].contains(url.pathExtension.lowercased()), fm.isExecutableFile(atPath: url.path) { return url }
+    let directories = url.lastPathComponent == "Windows" ? [url, url.deletingLastPathComponent()] : [url]
+    for directory in directories {
+        let root = directory.resolvingSymlinksInPath()
+        let files = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        if let script = files.sorted(by: { $0.path < $1.path }).first(where: {
+            $0.lastPathComponent.hasPrefix("Lancer-") && $0.pathExtension.lowercased() == "command" &&
+            $0.resolvingSymlinksInPath().path.hasPrefix(root.path + "/") && fm.isExecutableFile(atPath: $0.path)
+        }) { return script }
+    }
+    return nil
+}
+
+private func contentIsOwnedLaunchScript(_ url: URL) -> Bool {
+    guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 65_536,
+          let content = try? String(contentsOf: url, encoding: .utf8) else { return false }
+    return content.hasPrefix("#!/bin/bash") && content.contains("# Lanceur direct Playmelt") && content.contains("# Playmelt launcher v3")
+}
+
+func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> URL? {
+    let fm = FileManager.default
+    guard LibraryModel.validAppID(game.appId) else { return nil }
+    let requiredBackend = SteamGameLaunchProfile.requiredRenderer(appID: game.appId)
+    guard ["auto", "dxmt", "d3dmetal"].contains(requestedBackend),
+          requestedBackend == "auto" || requiredBackend == "auto" || requestedBackend == requiredBackend else { return nil }
+    if game.appId != "2651280", let existing = findLaunchScript(in: game.path) {
+        // Upgrade legacy flawed launch scripts that mixed D3DMetal into DXMT
+        if let content = try? String(contentsOf: existing, encoding: .utf8),
+           content.contains("WINEDLLPATH_PREPEND=\"$RENDERER_DIR/wine:$RUNTIME_DIR") ||
+           (game.appId == "1783560" && content.contains("-dx11")) ||
+           (content.contains("# Lanceur direct Playmelt") && !content.contains("# Playmelt launcher v3")) {
+            // Needs regeneration below
+        } else if requestedBackend == "auto" {
+            return existing
+        } else if !contentIsOwnedLaunchScript(existing) {
+            return nil
+        }
+    }
+    guard (game.installSource == "local" || game.store == "steam"), let folder = game.path else { return nil }
+    let winFolder = folder.appendingPathComponent("Windows")
+    let targetDir = fm.fileExists(atPath: winFolder.path) ? winFolder : folder
+    guard let files = try? fm.subpathsOfDirectory(atPath: targetDir.path) else { return nil }
+    guard let chosen = localGameExecutable(appID: game.appId, files: files) else { return nil }
+    if game.appId == "2651280" {
+        let executable = targetDir.appendingPathComponent(chosen)
+        guard let values = try? executable.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
+    }
 
     let isUnity = chosen.lowercased().contains("unity") || files.contains(where: { $0.lowercased().hasSuffix("_data") || $0.lowercased().contains("unityplayer.dll") })
-    var isDX12 = SteamGameLaunchProfile.requiredRenderer(appID: game.appId) == "d3dmetal" ||
-                 files.contains(where: { $0.lowercased().contains("d3d12core.dll") || $0.lowercased().contains("d3d12sdklayers.dll") || $0.lowercased().contains("plugins/nne") })
-    if isUnity { isDX12 = false }
+    let dx12Markers = files.contains(where: { $0.lowercased().contains("d3d12core.dll") || $0.lowercased().contains("d3d12sdklayers.dll") || $0.lowercased().contains("plugins/nne") })
+    let selectedBackend = requestedBackend == "auto" ? SteamGameLaunchProfile.localRenderer(appID: game.appId, unity: isUnity, dx12Markers: dx12Markers) : requestedBackend
+    let isDX12 = selectedBackend == "d3dmetal"
+    let base = RuntimeSetup().descriptor()
+    guard base.readyEngine else { return nil }
+    if isDX12 {
+        guard let metal = try? D3DMetalRuntime(store: D3DMetalStore()).descriptor(base: base), metal.readyEngine else { return nil }
+    }
 
     var projName: String? = nil
     if chosen.lowercased().contains("-shipping.exe") {
@@ -360,20 +453,35 @@ func ensureLaunchScript(for game: Game) -> URL? {
 
     let extraArgs: String
     let scriptContent: String
-    if isDX12 {
-        extraArgs = projName != nil ? "\(projName!) -d3d12" : "-d3d12"
+    if game.appId == "2651280" {
+        let expected = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/Games/MarvelsSpiderMan2", isDirectory: true).standardizedFileURL
+        guard targetDir.standardizedFileURL == expected, chosen == "Spider-Man2.exe",
+              let runner = Bundle.main.url(forResource: "spiderman2_profile", withExtension: "py"),
+              let python = ["/opt/homebrew/bin/python3", "/usr/bin/python3", "/usr/local/bin/python3"].first(where: { fm.isExecutableFile(atPath: $0) }) else { return nil }
+        extraArgs = ""
         scriptContent = """
         #!/bin/bash
-        # Lanceur direct Playmelt pour \(game.title) (Apple Silicon / Metal / Wine / D3DMetal DX12)
-        set -e
-        GAME_DIR="\(targetDir.path)"
+        # Lanceur direct Playmelt (Wine / D3DMetal DX12)
+        # Playmelt launcher v3
+        exec \(shellLiteral(python)) -B \(shellLiteral(runner.path)) --run
+        \n
+        """
+    } else if isDX12 {
+        extraArgs = localGameDX12Arguments(appID: game.appId, projectName: projName).map(shellLiteral).joined(separator: " ")
+        scriptContent = """
+        #!/bin/bash
+        # Lanceur direct Playmelt (Wine / D3DMetal DX12)
+        # Playmelt launcher v3
+        set -eo pipefail
+        GAME_DIR=\(shellLiteral(targetDir.path))
         RUNTIME_DIR="$HOME/Library/Application Support/Playmelt/Runtime"
         RENDERER_DIR="$HOME/Library/Application Support/Playmelt/Renderers/D3DMetal/payload"
 
         cd "$GAME_DIR"
 
-        export WINEPREFIX="$RUNTIME_DIR/prefix"
-        export WINEDEBUG="-all"
+        \(localGameEnvironmentExports(appID: game.appId))
+        export WINEPREFIX="$RUNTIME_DIR/D3DMetal/prefix"
+        export WINEDEBUG="fixme-all"
         export WINEDLLOVERRIDES="d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d"
         export WINEDLLPATH_PREPEND="$RENDERER_DIR/wine"
         export CX_D3DMETALPATH="$RENDERER_DIR/external"
@@ -381,59 +489,47 @@ func ensureLaunchScript(for game: Game) -> URL? {
         export DYLD_FALLBACK_FRAMEWORK_PATH="$RENDERER_DIR/external:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks"
         export MVK_CONFIG_LOG_LEVEL=0
 
-        exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" "\(chosen)" \(extraArgs) "$@" >/dev/null 2>&1
+        mkdir -p "$RUNTIME_DIR/logs"
+        exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" \(shellLiteral(chosen)) \(extraArgs) "$@" 2>&1 | /usr/bin/tail -c 1048576 >"$RUNTIME_DIR/logs/game-\(game.appId).log"
         \n
         """
     } else {
-        extraArgs = isUnity ? "-force-d3d11" : (projName != nil ? "\(projName!) -dx11" : "-dx11")
+        extraArgs = (isUnity ? ["-force-d3d11"] : ((projName.map { [$0] } ?? []) + ["-dx11"])).map(shellLiteral).joined(separator: " ")
         scriptContent = """
         #!/bin/bash
-        # Lanceur direct Playmelt pour \(game.title) (Apple Silicon / Metal / Wine / DXMT)
-        set -e
-        GAME_DIR="\(targetDir.path)"
+        # Lanceur direct Playmelt (Wine / DXMT)
+        # Playmelt launcher v3
+        set -eo pipefail
+        GAME_DIR=\(shellLiteral(targetDir.path))
         RUNTIME_DIR="$HOME/Library/Application Support/Playmelt/Runtime"
 
         cd "$GAME_DIR"
 
         export WINEPREFIX="$RUNTIME_DIR/prefix"
-        export WINEDEBUG="-all"
+        export WINEDEBUG="fixme-all"
         export WINEDLLOVERRIDES="d3d11,dxgi,nvapi64=n,b;winemenubuilder.exe=d"
         export WINEDLLPATH_PREPEND="$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/renderers/dxmt/wine"
         export DYLD_FALLBACK_LIBRARY_PATH="$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks/GStreamer.framework/Versions/1.0/lib"
         export DYLD_FALLBACK_FRAMEWORK_PATH="$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks"
         export MVK_CONFIG_LOG_LEVEL=0
 
-        exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" "\(chosen)" \(extraArgs) "$@" >/dev/null 2>&1
+        mkdir -p "$RUNTIME_DIR/logs"
+        exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" \(shellLiteral(chosen)) \(extraArgs) "$@" 2>&1 | /usr/bin/tail -c 1048576 >"$RUNTIME_DIR/logs/game-\(game.appId).log"
         \n
         """
     }
 
     let safeTitle = game.title.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-").trimmingCharacters(in: .whitespaces)
     let scriptURL = folder.appendingPathComponent("Lancer-\(safeTitle).command")
-    try? scriptContent.write(to: scriptURL, atomically: true, encoding: .utf8)
-    _ = chmod(scriptURL.path, 0o755)
-
-    // Goldberg emulator injection
-    let home = FileManager.default.homeDirectoryForCurrentUser
-    let emuCandidates = [
-        home.appendingPathComponent("Library/Application Support/Playmelt/Runtime/steam_api64_emu.dll"),
-        Bundle.main.url(forResource: "steam_api64", withExtension: "dll"),
-        home.appendingPathComponent("Library/Application Support/Playmelt/Games/Megabonk/Windows/Megabonk_Data/Plugins/x86_64/steam_api64.dll")
-    ]
-    if let emu = emuCandidates.compactMap({ $0 }).first(where: { fm.fileExists(atPath: $0.path) }) {
-        for file in files where file.lowercased().hasSuffix("steam_api64.dll") {
-            let targetURL = targetDir.appendingPathComponent(file)
-            if let size = (try? fm.attributesOfItem(atPath: targetURL.path)[.size] as? NSNumber)?.int64Value, size > 500_000 {
-                try? fm.removeItem(at: targetURL)
-                try? fm.copyItem(at: emu, to: targetURL)
-            }
-            let targetFolder = targetURL.deletingLastPathComponent()
-            let appidFile = targetFolder.appendingPathComponent("steam_appid.txt")
-            if !game.appId.isEmpty && !fm.fileExists(atPath: appidFile.path) {
-                try? "\(game.appId)\n".write(to: appidFile, atomically: true, encoding: .utf8)
-            }
-        }
+    if game.appId == "2651280", fm.fileExists(atPath: scriptURL.path) {
+        guard let content = try? String(contentsOf: scriptURL, encoding: .utf8),
+              content.contains("# Lanceur direct Playmelt") else { return nil }
     }
+    do {
+        try scriptContent.write(to: scriptURL, atomically: true, encoding: .utf8)
+        guard chmod(scriptURL.path, 0o755) == 0 else { return nil }
+    } catch { return nil }
+
     return scriptURL
 }
 
@@ -807,7 +903,7 @@ func hardwareState(renderProtectionEnabled: Bool = true) -> [String: Any] {
                                "cpuCores": ProcessInfo.processInfo.processorCount, "gpuName": device?.name ?? "Indisponible",
                                "lowPowerMode": ProcessInfo.processInfo.isLowPowerModeEnabled, "thermalState": thermal,
                                "gpuMemoryBudget": memory.json, "gpuAllocatorConnected": false,
-                               "performanceStatus": "Aucun benchmark lancé. Aucun réglage système ou bouteille modifié."]
+                               "performanceStatus": "Configuration observée du Mac. Aucun test de charge automatique."]
     if hasSwap { result["swapUsedGB"] = Double(swap.xsu_used) / 1_073_741_824 }
     return result
 }

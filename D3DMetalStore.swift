@@ -7,6 +7,7 @@ struct D3DMetalLaunchPlan {
     let prefixURL: URL
     let steamRoot: URL
     let environment: [String: String]
+    let preparationEnvironment: [String: String]
     let rendererHash: String
     let engineID: String
     let engineFingerprint: String
@@ -116,14 +117,15 @@ final class D3DMetalStore {
         stateLock.lock(); let report = cached; stateLock.unlock()
         guard let report, let hash = report["contentHash"] as? String, try verifyPayload(report) else { throw Self.failure("Import D3DMetal absent ou modifié.") }
         let configuration = try candidateConfiguration(base: base)
-        let prefix = configuration.prefix, env = configuration.environment
+        let prefix = configuration.prefix, env = Self.launchEnvironment(configuration.environment)
         let baseLibraries = base.environment["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
         let baseFrameworks = base.environment["DYLD_FALLBACK_FRAMEWORK_PATH"] ?? ""
         var reasons = ["Le contrat ABI entre cet import Apple et ce Wine doit encore être validé."]
         reasons.append("Les composants graphiques 32 bits de ce préfixe restent à qualifier ; aucun overlay DXMT n’y est ajouté.")
         var preparationBlockers: [String] = []
         let engine = base.wineURL.deletingLastPathComponent().deletingLastPathComponent()
-        let searchRoots = [payload.appendingPathComponent("external"), engine.appendingPathComponent("lib/wine/x86_64-unix"), engine.appendingPathComponent("lib")] +
+        let frameworkResources = payload.appendingPathComponent("external/D3DMetal.framework/Resources")
+        let searchRoots = [payload.appendingPathComponent("external"), frameworkResources, engine.appendingPathComponent("lib/wine/x86_64-unix"), engine.appendingPathComponent("lib")] +
             (baseLibraries + ":" + baseFrameworks).split(separator: ":").map { URL(fileURLWithPath: String($0)) }
         var unresolved = Set<String>()
         for image in report["machO"] as? [[String: Any]] ?? [] {
@@ -144,8 +146,14 @@ final class D3DMetalStore {
         reasons += preparationBlockers
         if (try? RuntimeSetup.validatePrefix(prefix)) == nil { reasons.append("Le préfixe DirectX 12 indépendant n’est pas initialisé.") }
         return .init(wineURL: base.wineURL, prefixURL: prefix, steamRoot: prefix.appendingPathComponent("drive_c/Program Files (x86)/Steam"),
-                     environment: env, rendererHash: hash, engineID: base.engineID,
+                     environment: env, preparationEnvironment: configuration.environment, rendererHash: hash, engineID: base.engineID,
                      engineFingerprint: try Self.engineFingerprint(base.wineURL), preparationBlockers: preparationBlockers, blockedReasons: reasons)
+    }
+
+    static func launchEnvironment(_ preparationEnvironment: [String: String]) -> [String: String] {
+        var environment = preparationEnvironment
+        environment["WINEDLLOVERRIDES"] = "d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d"
+        return environment
     }
 
     /// Configuration only, with no hash scan and no qualification grant. A caller
@@ -158,6 +166,7 @@ final class D3DMetalStore {
               !Self.forbiddenPath(prefix), !Self.forbiddenPath(base.wineURL) else { throw Self.failure("Le préfixe DirectX 12 doit être indépendant.") }
         try RuntimeSetup.rejectSymlinkAncestors(prefix)
         let external = payload.appendingPathComponent("external").path
+        let frameworkResources = payload.appendingPathComponent("external/D3DMetal.framework/Resources").path
         let overlay = payload.appendingPathComponent("wine").path
         let baseLibraries = base.environment["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
         let baseFrameworks = base.environment["DYLD_FALLBACK_FRAMEWORK_PATH"] ?? ""
@@ -169,7 +178,7 @@ final class D3DMetalStore {
             "TMPDIR": NSTemporaryDirectory(), "WINEPREFIX": prefix.path, "WINEDEBUG": "fixme-all",
             "WINEMSYNC": "0", "WINEESYNC": "0", "WINEDLLOVERRIDES": "winemenubuilder.exe=d",
             "WINEDLLPATH_PREPEND": overlay, "CX_D3DMETALPATH": external,
-            "DYLD_FALLBACK_LIBRARY_PATH": ([external, baseLibraries].filter { !$0.isEmpty }).joined(separator: ":"),
+            "DYLD_FALLBACK_LIBRARY_PATH": ([external, frameworkResources, baseLibraries].filter { !$0.isEmpty }).joined(separator: ":"),
             "DYLD_FALLBACK_FRAMEWORK_PATH": ([external, baseFrameworks].filter { !$0.isEmpty }).joined(separator: ":")
         ]
         if let plugins = base.environment["GST_PLUGIN_PATH"], !Self.forbiddenPath(URL(fileURLWithPath: plugins)), !Self.isDXMTOverlay(plugins) { env["GST_PLUGIN_PATH"] = plugins }
