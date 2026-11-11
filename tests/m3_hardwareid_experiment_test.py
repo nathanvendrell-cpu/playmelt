@@ -14,16 +14,16 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
 class Harness:
     def __init__(self,root,overwrite=False,fail_game=False):
-        self.root=root; self.value=m.tx.ORIGINAL; self.overwrite=overwrite; self.fail_game=fail_game; self.called=[]
+        self.root=root; self.value=m.tx.ORIGINAL; self.overwrite=overwrite; self.fail_game=fail_game; self.called=[]; self.environments=[]
         self.ident={'root_dev':1,'root_ino':2,'prefix_dev':1,'prefix_ino':3,'uid':501}
         self.plan={'wine':'/fixture/wine','server':'/fixture/wineserver','environment':{},'rendererHash':'renderer','engineFingerprint':'engine'}
     def probe(self,plan,folder,marker,stage,seen):
-        self.called.append('probe-'+stage)
+        self.environments.append(('probe',dict(plan['environment'])));self.called.append('probe-'+stage)
         if stage=='after' and self.overwrite: self.value=m.tx.ORIGINAL
         hw=m.tx.APPLE if self.value==m.tx.ORIGINAL else m.tx.AMD
         return {'schema':1,'kind':'playmelt-setupapi-display-probe','nonce':'nonce','setupComplete':True,'interfacesComplete':True,'setupDevices':[{'instanceId':m.INSTANCE,'hardwareId':hw}]},'nonce'
     def invoke(self,plan,mode,folder,marker,seen):
-        self.called.append(mode)
+        self.environments.append(('helper',dict(plan['environment'])));self.called.append(mode)
         if mode=='--apply':
             self.assert_prepared(folder); self.value=m.tx.REPLACEMENT
         if mode=='--undo': self.value=m.tx.ORIGINAL
@@ -31,9 +31,9 @@ class Harness:
     def assert_prepared(self,folder):
         journal=json.loads((folder/'journal.json').read_text())
         if journal['state']!='prepared' or journal['before_hex']!=m.tx.ORIGINAL: raise AssertionError('journal not durable before write')
-    def shutdown(self,server,env,directory,state): state['shutdown'].update({'-k':{'exit':0},'-w':{'exit':0}})
+    def shutdown(self,server,env,directory,state): self.environments.append(('shutdown',dict(env)));state['shutdown'].update({'-k':{'exit':0},'-w':{'exit':0}})
     def game(self,*args):
-        self.called.append('game')
+        self.environments.append(('game',dict(args[1])));self.called.append('game')
         if self.fail_game: raise RuntimeError('game failed')
         class Child:
             def poll(self): return 0
@@ -86,7 +86,7 @@ class ExperimentTests(unittest.TestCase):
                 self.assertEqual(env['WINEDLLOVERRIDES'],'d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d')
                 self.assertEqual(env['ROSETTA_ADVERTISE_AVX'],'1');self.assertEqual(env['MVK_CONFIG_LOG_LEVEL'],'0')
 
-    def run_fixture(self,overwrite=False,fail_game=False,rollback_busy=False,reap_denied=False):
+    def run_fixture(self,overwrite=False,fail_game=False,rollback_busy=False,reap_denied=False,sync_mode=None):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory).resolve();run=root/'run';run.mkdir();prefix=run/'prefix';prefix.mkdir();(run/'home').mkdir()
             game_dir=root/'game';game_dir.mkdir();game=game_dir/'Spider-Man2.exe';game.write_bytes(b'MZ')
@@ -105,9 +105,25 @@ class ExperimentTests(unittest.TestCase):
                 if reap_denied:m.base.reap_child.side_effect=PermissionError('denied')
                 stack.enter_context(mock.patch.object(sys,'argv',['test','--run']))
                 stack.enter_context(mock.patch('sys.stdout',new=io.StringIO()))
-                rc=m.main()
+                rc=m.main(sync_mode=sync_mode)
             folder=next(run.glob('gpu-hardwareid-*'));receipt=json.loads((folder/'receipt.json').read_text());journal=json.loads((folder/'journal.json').read_text())
             return rc,h,receipt,journal
+    def test_sync_overlay_is_pure_and_validated(self):
+        original={'environment':{'WINEMSYNC':'0','WINEESYNC':'0','nested':{'v':[1]}},'other':{'x':1}}
+        selected=m.with_sync_mode(original,'msync');self.assertEqual((selected['environment']['WINEMSYNC'],selected['environment']['WINEESYNC']),('1','0'))
+        selected['environment']['nested']['v'].append(2);self.assertEqual(original['environment']['nested']['v'],[1]);self.assertEqual(original['environment']['WINEMSYNC'],'0')
+        self.assertEqual(m.with_sync_mode(selected,'server')['environment']['WINEMSYNC'],'0')
+        with self.assertRaises(ValueError):m.with_sync_mode(original,'invalid')
+    def test_changed_identity_rejected_before_prefix_activity(self):
+        plan={'engineFingerprint':'changed','rendererHash':'renderer','environment':{}}
+        with mock.patch.object(sys,'argv',['test','--run']),mock.patch.object(sys,'platform','darwin'),mock.patch.object(m.tx,'load_plan',return_value=plan),mock.patch.object(m.tx,'prefix_identity') as identify:
+            with self.assertRaisesRegex(RuntimeError,'changed'):m.main(sync_mode='msync',expected_identity=('original','renderer'))
+            identify.assert_not_called()
+    def test_msync_same_environment_for_helpers_game_and_cleanup(self):
+        rc,h,receipt,journal=self.run_fixture(sync_mode='msync')
+        self.assertEqual(rc,0);self.assertEqual({name for name,_ in h.environments},{'probe','helper','game','shutdown'})
+        for _,env in h.environments:self.assertEqual((env.get('WINEMSYNC'),env.get('WINEESYNC')),('1','0'))
+        self.assertEqual(h.plan['environment'],{});self.assertEqual(receipt['synchronization']['requested'],'msync');self.assertEqual(receipt['synchronization']['activation'],'unverified')
     def test_complete_transaction_restores_original(self):
         rc,h,receipt,journal=self.run_fixture()
         self.assertEqual(rc,0);self.assertIn('game',h.called);self.assertEqual(h.value,m.tx.ORIGINAL)
@@ -137,6 +153,11 @@ class ExperimentTests(unittest.TestCase):
         class Inspector:
             def identity(self,pid):return old
         with self.assertRaises(RuntimeError):m.verify_stopped({(100,):old},Inspector())
+    def test_reused_pid_is_not_mistaken_for_owned_process(self):
+        old={'pid':100,'uid':1,'start_sec':2,'start_usec':3,'path':'/x'}
+        class Inspector:
+            def identity(self,pid):return dict(old,start_sec=4)
+        self.assertEqual(m.verify_stopped({(100,):old},Inspector())[0]['status'],'reused')
     def test_probe_requires_exact_nonce_and_value(self):
         good={'schema':1,'kind':'playmelt-setupapi-display-probe','nonce':'n','setupComplete':True,'interfacesComplete':True,'setupDevices':[{'instanceId':m.INSTANCE,'hardwareId':m.tx.APPLE}]}
         m.require_observed(good,m.tx.APPLE,'n')

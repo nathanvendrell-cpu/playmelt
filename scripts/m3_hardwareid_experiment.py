@@ -6,6 +6,7 @@ compatibility identity. Never edits the game, PCI instance key or capabilities.
 Abrupt termination can leave a prepared/applied journal: use reviewed --undo.
 """
 import getpass
+import copy
 import hashlib
 import errno
 import json
@@ -89,11 +90,22 @@ def recover(plan,folder,txn,identity,seen,record):
 
 COPY_PREVIOUS_DIAGNOSTIC_LOG=True
 
-def main():
+def with_sync_mode(plan,mode):
+    if mode not in ('server','msync'):raise ValueError('unsupported synchronization mode')
+    selected=copy.deepcopy(plan)
+    selected['environment']['WINEMSYNC']='1' if mode=='msync' else '0'
+    selected['environment']['WINEESYNC']='0'
+    return selected
+
+def main(sync_mode=None,expected_identity=None):
+    if sync_mode is not None and sync_mode not in ('server','msync'):raise ValueError('unsupported synchronization mode')
     if sys.argv != [sys.argv[0],'--run']:
         print('Review required; this experiment acts only with --run.',file=sys.stderr);return 64
     if sys.platform!='darwin': raise RuntimeError('macOS only')
-    plan=tx.load_plan();identity=tx.prefix_identity();reuse.require_idle_prefix(reuse.PREFIX)
+    plan=tx.load_plan()
+    if expected_identity is not None and (plan.get('engineFingerprint'),plan.get('rendererHash'))!=expected_identity:raise RuntimeError('engine or renderer changed before launch')
+    if sync_mode is not None:plan=with_sync_mode(plan,sync_mode)
+    identity=tx.prefix_identity();reuse.require_idle_prefix(reuse.PREFIX)
     if not base.valid_executable(base.GAME) or base.GAME_DIR.resolve()!=base.GAME_DIR: raise RuntimeError('game path/MZ invalid')
     entries=[p.name for p in base.GAME_DIR.iterdir() if p.name.lower()=='spider-man2.exe']
     if entries!=['Spider-Man2.exe'] or (base.GAME_DIR/'Windows').exists(): raise RuntimeError('game layout ambiguous')
@@ -101,7 +113,7 @@ def main():
         if json.loads(existing.read_text()).get('state')!='rolled_back': raise RuntimeError('unresolved prior transaction: '+str(existing))
     txn=str(uuid.uuid4());folder=reuse.RUN/('gpu-hardwareid-'+txn);folder.mkdir(mode=0o700)
     print(str(folder),flush=True)
-    record=record_for(plan,identity,txn); state={'status':'allocated','transaction':txn,'prefix':str(reuse.PREFIX),'inspection':'unknown','shutdown':{},'probe':{}}
+    record=record_for(plan,identity,txn); state={'status':'allocated','transaction':txn,'prefix':str(reuse.PREFIX),'inspection':'unknown','shutdown':{},'probe':{},'synchronization':{'requested':sync_mode or 'plan_default','WINEMSYNC':plan['environment'].get('WINEMSYNC'),'WINEESYNC':plan['environment'].get('WINEESYNC'),'activation':'unverified'}}
     base.write_receipt(folder,state)
     oldlog=reuse.PREFIX/'drive_c/users'/getpass.getuser()/"Documents/Marvel's Spider-Man 2/Marvel's Spider-Man 2.log"
     if COPY_PREVIOUS_DIAGNOSTIC_LOG and oldlog.is_file() and not oldlog.is_symlink():

@@ -87,14 +87,22 @@ def read_preferences(path=GAME_SETTINGS):
         if type(v)!=int or not lo<=v<=hi:raise RuntimeError('invalid game settings integer')
     def boolean(v):
         if type(v)!=bool:raise RuntimeError('invalid game settings boolean')
-    fields(data,('schemaVersion','gameKey','revision','settings','applyFields'))
-    if type(data['schemaVersion'])!=int or data['schemaVersion']!=2 or data['gameKey']!='steam-2651280-windows':raise RuntimeError('invalid game settings identity')
+    if type(data)!=dict or type(data.get('schemaVersion'))!=int or data.get('schemaVersion') not in (2,3):raise RuntimeError('invalid game settings schema')
+    fields(data,('schemaVersion','gameKey','revision','settings','applyFields')+(('fieldRevisions',) if data['schemaVersion']==3 else ()))
+    if type(data['schemaVersion'])!=int or data['schemaVersion'] not in (2,3) or data['gameKey']!='steam-2651280-windows':raise RuntimeError('invalid game settings identity')
     try:
         if type(data['revision'])!=str or str(uuid.UUID(data['revision']))!=data['revision']:raise ValueError()
     except (ValueError,AttributeError):raise RuntimeError('invalid settings revision')
     allowed={'launchArgs','backend','display.mode','display.screenID','display.width','display.height','display.refreshRate','display.retina','display.vsync','display.hdr','graphics.upscaler','graphics.quality','graphics.dynamicFPS','graphics.frameGeneration','graphics.grain','graphics.sharpness'}
     mask=data['applyFields']
     if type(mask)!=list or any(type(x)!=str or x not in allowed for x in mask) or len(mask)!=len(set(mask)):raise RuntimeError('invalid applyFields')
+    if data['schemaVersion']==3:
+        revisions=data['fieldRevisions']
+        if type(revisions)!=dict or set(revisions)!=set(mask):raise RuntimeError('invalid fieldRevisions')
+        for value in revisions.values():
+            try:
+                if type(value)!=str or str(uuid.UUID(value))!=value:raise ValueError()
+            except (ValueError,AttributeError):raise RuntimeError('invalid field revision')
     s=data['settings'];fields(s,('launchArgs','backend','display','graphics'))
     if s['backend'] not in ('auto','d3dmetal'):raise RuntimeError('unsupported backend')
     args=s['launchArgs']
@@ -126,15 +134,25 @@ def apply_preferences(plan,preferences):
     reg=PREFIX/'user.reg';journal=PROFILE/'preferences-journal.json'
     if reg.is_symlink() or not reg.is_file():raise RuntimeError('invalid profile registry')
     if journal.is_symlink():raise RuntimeError('invalid preferences journal')
+    old={}
     if journal.exists():
         old=json.loads(journal.read_text())
         if old.get('state')!='committed':raise RuntimeError('unresolved preferences journal; registry preserved')
     previous=reg.read_text(encoding='utf-8'); updated=previous
-    revision=preferences[0]['revision'] if preferences else None
-    mask=set(preferences[0]['applyFields']) if preferences else set()
+    revision=preferences[0]['revision'] if preferences else old.get('revision')
+    cumulative=set(preferences[0]['applyFields']) if preferences else set()
+    incoming=(preferences[0]['fieldRevisions'] if preferences[0]['schemaVersion']==3 else {key:revision for key in cumulative}) if preferences else {}
+    prior=old.get('appliedFieldRevisions')
+    if prior is not None and (type(prior)!=dict or any(type(k)!=str or type(v)!=str for k,v in prior.items())):raise RuntimeError('invalid applied field revisions')
+    if prior is None:
+        # Legacy receipt with the current document revision already applied every field.
+        prior=dict(incoming) if preferences and old.get('revision')==revision else {key:old.get('revision') for key in incoming}
+    mask={key for key,value in incoming.items() if prior.get(key)!=value}
+    applied=dict(prior);applied.update(incoming)
+    record_changed=bool(preferences and (revision!=old.get('revision') or old.get('appliedFieldRevisions')!=applied))
     d=preferences[0]['settings']['display'] if preferences else {}
     g=preferences[0]['settings']['graphics'] if preferences else {}
-    choice=d.get('retina','auto') if 'display.retina' in mask else 'auto'
+    choice=d.get('retina','auto') if 'display.retina' in cumulative else 'auto'
     hints=plan.get('displayHints',{});primary=hints.get('primary') if isinstance(hints,dict) else None
     displays=hints.get('displays',[]) if isinstance(hints,dict) else []
     displays=displays if isinstance(displays,list) else []
@@ -160,7 +178,7 @@ def apply_preferences(plan,preferences):
         selected=matches[0] if len(matches)==1 else primary
         fallback=len(matches)!=1
     scale=selected.get('scale') if isinstance(selected,dict) else None
-    retina={'on':'Y','off':'N'}.get(choice)
+    retina={'on':'Y','off':'N'}.get(choice) if 'display.retina' in mask else None
     if choice=='auto' and type(scale) in (int,float) and scale in (1,2):retina='Y' if scale==2 else 'N'
     groups={}
     if retina is not None:groups[r'Software\\Wine\\Mac Driver']={'RetinaMode':'"'+retina+'"'}
@@ -170,13 +188,15 @@ def apply_preferences(plan,preferences):
     if 'display.height' in mask:vals.update(FullscreenHeight=d['height'],WindowHeight=d['height'],UserWindowHeight=d['height'])
     for field,key in (('refreshRate','RefreshRate'),('vsync','VSync'),('hdr','HDR')):
         if 'display.'+field in mask:vals[key]=int(d[field])
-    if 'display.screenID' in mask and isinstance(selected,dict) and type(selected.get('wineIndex'))==int and 0<=selected['wineIndex']<64:vals['Monitor']=selected['wineIndex']
+    if 'display.screenID' in mask:
+        if not isinstance(selected,dict) or type(selected.get('wineIndex'))!=int or not 0<=selected['wineIndex']<64:raise RuntimeError('selected display could not be resolved')
+        vals['Monitor']=selected['wineIndex']
     if 'graphics.upscaler' in mask:vals['UpscaleMethod']=3
     if 'graphics.quality' in mask:vals['UpscaleQuality']=3
     if 'graphics.dynamicFPS' in mask:vals['DynamicResolutionTargetFPS']=g['dynamicFPS']
     if 'graphics.frameGeneration' in mask:vals['FrameGen']=int(g['frameGeneration'])
     if 'graphics.grain' in mask:vals['FilmGrainStrength']=round(g['grain']*1000)
-    if 'graphics.sharpness' in mask:vals.update(UpscaleSharpness=round(g['sharpness']*1000),Sharpness=0)
+    if 'graphics.sharpness' in mask:vals['UpscaleSharpness']=round(g['sharpness']*1000)
     if vals:groups[r"Software\\Insomniac Games\\Marvel's Spider-Man 2\\Graphics"]={k:'dword:%08x'%v for k,v in vals.items()}
     changes=[]
     for section,values in groups.items():
@@ -191,15 +211,20 @@ def apply_preferences(plan,preferences):
         for key,newvalue in values.items():
             pattern=re.compile(r'^"'+re.escape(key)+r'"=(.*)$',re.M); found=list(pattern.finditer(body))
             if len(found)>1:raise RuntimeError('duplicate registry value: '+key)
-            old=found[0].group(1) if found else None
-            changes.append({'section':section,'name':key,'before':old,'after':newvalue})
+            old_value=found[0].group(1) if found else None
+            if old_value==newvalue:continue
+            changes.append({'section':section,'name':key,'before':old_value,'after':newvalue})
             line='"'+key+'"='+newvalue
             if found:body=body[:found[0].start()]+line+body[found[0].end():]
             else:body=body.rstrip('\n')+'\n'+line+'\n\n'
         updated=updated[:start]+body+updated[end:]
-    if not changes:return
+    if not changes and not record_changed:return
     before=hashlib.sha256(previous.encode()).hexdigest();after=hashlib.sha256(updated.encode()).hexdigest()
-    receipt={'schema':1,'state':'prepared','revision':revision,'beforeSHA256':before,'afterSHA256':after,'changes':changes,'screenRequested':requested,'screenSelected':selected.get('id') if isinstance(selected,dict) else None,'screenFallback':fallback}
+    receipt={'schema':1,'state':'prepared','revision':revision,'appliedFieldRevisions':applied,'beforeSHA256':before,'afterSHA256':after,'changes':changes,'screenRequested':requested,'screenSelected':selected.get('id') if isinstance(selected,dict) else None,'screenFallback':fallback}
+    if not changes:
+        reuse.require_idle_prefix(PREFIX)
+        if reg.read_text(encoding='utf-8')!=previous:raise RuntimeError('registry changed during preferences transaction')
+        receipt['state']='committed';atomic_json(journal,receipt);return
     atomic_json(journal,receipt)
     reuse.require_idle_prefix(PREFIX)
     if reg.read_text(encoding='utf-8')!=previous:raise RuntimeError('registry changed during preferences transaction')
@@ -469,14 +494,16 @@ def wait_game(original,argv,env,directory,log,timeout,inspector,marker,seen,extr
             for key,_ in sel.select(0.2):
                 chunk=os.read(key.fd,65536)
                 if not chunk:sel.unregister(key.fileobj);continue
-                n=min(len(chunk),max(0,base.MAX_LOG-written));log.write(chunk[:n]);log.flush();written+=n
+                n=min(len(chunk),max(0,base.MAX_LOG-written))
+                if n:log.write(chunk[:n]);log.flush();written+=n
                 if n<len(chunk):capped=True
         end=time.monotonic()+0.3
         while sel.get_map() and time.monotonic()<end:
             for key,_ in sel.select(min(0.05,max(0,end-time.monotonic()))):
                 chunk=os.read(key.fd,65536)
                 if not chunk:sel.unregister(key.fileobj);continue
-                n=min(len(chunk),max(0,base.MAX_LOG-written));log.write(chunk[:n]);log.flush();written+=n
+                n=min(len(chunk),max(0,base.MAX_LOG-written))
+                if n:log.write(chunk[:n]);log.flush();written+=n
                 if n<len(chunk):capped=True
         return p,False,capped
     except BaseException:
@@ -484,12 +511,32 @@ def wait_game(original,argv,env,directory,log,timeout,inspector,marker,seen,extr
     finally:sel.close()
 
 
+def game_environment(env,wine,hud):
+    if hud not in (None,'0','1'):raise RuntimeError('invalid PLAYMELT_METAL_HUD; expected 0 or 1')
+    selected=dict(env);selected['PLAYMELT_WINE_EXECUTABLE']=wine
+    for key in ('MTL_HUD_ENABLED','MTL_HUD_LOG_ENABLED'):selected.pop(key,None)
+    if hud=='1':selected.update(MTL_HUD_ENABLED='1',MTL_HUD_LOG_ENABLED='1')
+    return selected
+
+# This exact combination showed lower synthetic sync overhead and survived two
+# observed sessions. This is not evidence of higher FPS or a 60 FPS guarantee.
+QUALIFIED_SYNC_ENGINE='1b992a3e0bc5f2a058a24f923832aaa6e464d44766fb0ad13054797e02060d10:4cbf65e363d6d8b5a70dba719b50b811fb4b2705985e93f777c6cb7a12878eb0'
+QUALIFIED_SYNC_RENDERER='00794464dd716062f0a30a57a118d4ea617cee27c787910bc72f60120f5fccc8'
+def select_sync_mode(plan,mode):
+    if mode not in ('--run','--prepare-only','--run-msync-test','--run-server-test'):raise ValueError('invalid profile mode')
+    if mode=='--run-msync-test':return 'msync'
+    if mode=='--run-server-test':return 'server'
+    if plan.get('engineFingerprint')==QUALIFIED_SYNC_ENGINE and plan.get('rendererHash')==QUALIFIED_SYNC_RENDERER:return 'msync'
+    return None
+
 def requested_mode(argv):
-    return argv[1] if len(argv)==2 and argv[1] in ('--run','--prepare-only') else None
+    return argv[1] if len(argv)==2 and argv[1] in ('--run','--run-msync-test','--run-server-test','--prepare-only') else None
 
 def main():
     mode=requested_mode(sys.argv)
     if mode is None:return 64
+    hud=os.environ.get('PLAYMELT_METAL_HUD')
+    if hud not in (None,'0','1'):raise RuntimeError('invalid PLAYMELT_METAL_HUD; expected 0 or 1')
     if sys.platform!='darwin':raise RuntimeError('macOS required')
     if GAME_DIR.resolve()!=GAME_DIR or not base.valid_executable(GAME):raise RuntimeError('game executable missing or invalid')
     manifest=json.loads((RESOURCES/'spiderman-runtime-hashes.json').read_text())
@@ -498,6 +545,9 @@ def main():
     if base.PLAN_HELPER.is_symlink() or not base.PLAN_HELPER.is_file() or digest(base.PLAN_HELPER)!=manifest['plan']:raise RuntimeError('plan helper identity mismatch')
     tx.HELPER_SHA=manifest['cas'];experiment.PROBE_SHA=manifest['probe']
     plan=json.loads(subprocess.run([str(base.PLAN_HELPER)],capture_output=True,check=True,timeout=90).stdout)
+    sync_mode=select_sync_mode(plan,mode)
+    expected_identity=(plan.get('engineFingerprint'),plan.get('rendererHash'))
+    if sync_mode is not None:plan=experiment.with_sync_mode(plan,sync_mode)
     reuse.RUN=PROFILE;reuse.PREFIX=PREFIX;base.GAME_DIR=GAME_DIR;base.GAME=GAME
     preferences=read_preferences()
     lockfd=create_profile(plan)
@@ -522,7 +572,7 @@ def main():
         before=crash_snapshot();old_run=base.run_command;old_shutdown=base.bounded_shutdown;old_argv=sys.argv;old_copy_log=experiment.COPY_PREVIOUS_DIAGNOSTIC_LOG
         def run_adapter(argv,env,directory,log,timeout,inspector,marker,seen):
             if argv==[plan['wine'],str(GAME)]:
-                env=dict(env);env['PLAYMELT_WINE_EXECUTABLE']=plan['wine']
+                env=game_environment(env,plan['wine'],hud)
                 return wait_game(old_run,argv,env,directory,log,timeout,inspector,marker,seen,preferences[1] if preferences else ())
             return old_run(argv,env,directory,log,timeout,inspector,marker,seen)
         def shutdown_adapter(server,env,directory,state):
@@ -532,7 +582,7 @@ def main():
             except Exception as e:state['shutdown']['scope']={'error':str(e)}
         try:
             base.run_command=run_adapter;base.bounded_shutdown=shutdown_adapter;experiment.COPY_PREVIOUS_DIAGNOSTIC_LOG=False;sys.argv=[old_argv[0],'--run']
-            result=experiment.main()
+            result=experiment.main(sync_mode=sync_mode,expected_identity=expected_identity) if sync_mode is not None else experiment.main()
         finally:
             base.run_command=old_run;base.bounded_shutdown=old_shutdown;experiment.COPY_PREVIOUS_DIAGNOSTIC_LOG=old_copy_log;sys.argv=old_argv
         crash=new_crash(before,crash_snapshot())

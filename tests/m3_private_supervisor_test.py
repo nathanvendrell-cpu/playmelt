@@ -1,4 +1,5 @@
 import importlib.util
+import ctypes
 import io
 import json
 import os
@@ -38,6 +39,28 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(item['uid'],os.geteuid())
         self.assertGreater(item['start_sec'],0)
 
+    def test_marker_bounded_copy_exact_fields_and_error(self):
+        class Library:
+            payload=b'';error=0
+            def sysctl(self,mib,count,buf,size,*args):
+                if self.error:return 1
+                ctypes.memmove(buf,self.payload,len(self.payload));ctypes.cast(size,ctypes.POINTER(ctypes.c_size_t))[0]=len(self.payload);return 0
+        inspector=supervisor.Inspector.__new__(supervisor.Inspector);inspector.lib=Library();buffer=ctypes.create_string_buffer(1024*1024)
+        prefix=b'\x01\0\0\0exe\0'
+        for payload,expected in [(b'',None),(b'\0',None),(prefix+b'PLAYMELT_TEST_RUN=test',None),(prefix+b'PLAYMELT_TEST_RUN=test\0z',None),(prefix+b'PLAYMELT_TEST_RUN=test\0z\0',True),(prefix+b'PLAYMELT_TEST_RUN=test2\0',False),(prefix+b'xPLAYMELT_TEST_RUN=test\0',False),(prefix+b'PLAYMELT_TEST_RUN=te',None),(prefix,False)]:
+            inspector.lib.payload=payload;self.assertEqual(inspector.marker(12,'test',buffer),expected)
+        inspector.lib.error=1;self.assertIsNone(inspector.marker(12,'test',buffer))
+    def test_snapshot_reuses_local_buffer_and_marks_unknown(self):
+        class Library:
+            def proc_listpids(self,kind,uid,buf,cap):
+                if buf is None:return 8
+                ctypes.memmove(buf,(ctypes.c_int*2)(100,101),8);return 8
+        inspector=supervisor.Inspector.__new__(supervisor.Inspector);inspector.lib=Library();buffers=[]
+        inspector.identity=lambda pid:{'pid':pid,'path':str(supervisor.PROJECT)+'/x'}
+        def marker(pid,value,buf):buffers.append(buf);return True if pid==100 else None
+        inspector.marker=marker;found,unknown=inspector.snapshot('test')
+        self.assertEqual([x['pid'] for x in found],[100]);self.assertEqual([x['pid'] for x in unknown],[101]);self.assertIs(buffers[0],buffers[1])
+        inspector.snapshot('test');self.assertIsNot(buffers[0],buffers[2])
     def test_virtual_desktop_command_has_no_game_flags(self):
         self.assertEqual(supervisor.game_command('/wine','/game.exe'), ['/wine','explorer','/desktop=PlaymeltSpiderManTest,1280x720','/game.exe'])
 

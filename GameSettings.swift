@@ -178,22 +178,36 @@ final class GameSettingsStore {
         let graphics:Set<String> = ["graphics.upscaler","graphics.quality","graphics.dynamicFPS","graphics.frameGeneration","graphics.grain","graphics.sharpness"]
         let permitted = eligible(game) ? base.union(sm2(game) ? display.union(graphics) : []) : []
         let selected=Set(fields)
-        guard fields.count==selected.count,selected.isSubset(of:permitted) else { throw Issue.invalid("Champs à appliquer inconnus ou indisponibles") }
+        guard fields.count<=16,fields.count==selected.count,selected.isSubset(of:permitted) else { throw Issue.invalid("Champs à appliquer inconnus ou indisponibles") }
         return selected
     }
-    private func load(_ game: GameSettingsContext) throws -> ([String:Any],String,Set<String>) {
+    private func load(_ game: GameSettingsContext) throws -> ([String:Any],String,Set<String>,[String:String]) {
         let key=try safeKey(game),file=root.appendingPathComponent(key+".json")
         guard FileManager.default.fileExists(atPath:file.path) else {
             let initial=seeded(game),hex=SHA256.hash(data:try data(initial)).prefix(16).map { String(format:"%02x",$0) }.joined()
             let rev="\(hex.prefix(8))-\(hex.dropFirst(8).prefix(4))-\(hex.dropFirst(12).prefix(4))-\(hex.dropFirst(16).prefix(4))-\(hex.dropFirst(20).prefix(12))"
-            return (initial,rev,[])
+            return (initial,rev,[],[:])
         }
         let attr=try FileManager.default.attributesOfItem(atPath:file.path)
         guard attr[.type] as? FileAttributeType == .typeRegular, (attr[.size] as? NSNumber)?.intValue ?? 100_000 <= 64_000 else { throw Issue.invalid("Fichier de paramètres invalide") }
         let bytes=try Data(contentsOf:file);guard let value=try JSONSerialization.jsonObject(with:bytes) as? [String:Any] else { throw Issue.invalid("JSON invalide") }
         if value["schemaVersion"] as? Int == 1 { throw Issue.invalid("Ancien schéma 1 non pris en charge ; aucune préférence appliquée") }
-        guard Set(value.keys)==["schemaVersion","gameKey","revision","settings","applyFields"],let version=value["schemaVersion"] as? Int,version==2,let storedKey=value["gameKey"] as? String,storedKey==key,let rev=value["revision"] as? String,let uuid=UUID(uuidString:rev),uuid.uuidString.lowercased()==rev,let settings=value["settings"] as? [String:Any],let fields=value["applyFields"] as? [String] else { throw Issue.invalid("JSON invalide") }
-        return (try validate(settings,game:game),rev,try validFields(fields,game:game))
+        guard let v=value["schemaVersion"] as? NSNumber,CFGetTypeID(v) != CFBooleanGetTypeID(),v.doubleValue == 2 || v.doubleValue == 3 else { throw Issue.invalid("Version de paramètres inconnue") }
+        let version=v.intValue
+        let expectedKeys:Set<String> = version == 2 ? ["schemaVersion","gameKey","revision","settings","applyFields"] : ["schemaVersion","gameKey","revision","settings","applyFields","fieldRevisions"]
+        guard Set(value.keys)==expectedKeys,let storedKey=value["gameKey"] as? String,storedKey==key,let rev=value["revision"] as? String,let uuid=UUID(uuidString:rev),uuid.uuidString.lowercased()==rev,let settings=value["settings"] as? [String:Any],let fields=value["applyFields"] as? [String] else { throw Issue.invalid("JSON invalide") }
+        let applied=try validFields(fields,game:game)
+        var fieldRevisions:[String:String]=[:]
+        if version == 3 {
+            guard let stored=value["fieldRevisions"] as? [String:String],Set(stored.keys)==applied,stored.count<=16 else { throw Issue.invalid("Révisions de champs invalides") }
+            for (field,fieldRevision) in stored {
+                guard let uuid=UUID(uuidString:fieldRevision),uuid.uuidString.lowercased()==fieldRevision else { throw Issue.invalid("Révision de champ invalide") }
+                fieldRevisions[field]=fieldRevision
+            }
+        } else {
+            for field in applied { fieldRevisions[field]=rev }
+        }
+        return (try validate(settings,game:game),rev,applied,fieldRevisions)
     }
     private func measurements(_ game: GameSettingsContext) -> [String:Any] {
         guard sm2(game) else { return [:] }
@@ -227,7 +241,7 @@ final class GameSettingsStore {
     }
     func snapshot(game: GameSettingsContext, hardware: [String:Any], displays: [[String:Any]]) -> [String:Any] {
         do {
-            let (settings,rev,fields)=try load(game);let d=settings["display"] as! [String:Any];let g=settings["graphics"] as! [String:Any]
+            let (settings,rev,fields,_)=try load(game);let d=settings["display"] as! [String:Any];let g=settings["graphics"] as! [String:Any]
             let width=(d["width"] as! NSNumber).intValue,height=(d["height"] as! NSNumber).intValue,fps=(g["dynamicFPS"] as! NSNumber).intValue
             var caps=capabilities(game)
             let primary=displays.first(where: { ($0["isPrimary"] as? Bool)==true })
@@ -266,7 +280,7 @@ final class GameSettingsStore {
             guard fd >= 0 else { throw Issue.invalid("Verrou inaccessible") };defer { close(fd) }
             guard fstat(fd,&info)==0,(info.st_mode & S_IFMT)==S_IFREG,info.st_uid==getuid(),info.st_nlink==1,(info.st_mode & 0o077)==0 else { throw Issue.invalid("Verrou invalide") }
             guard flock(fd,LOCK_EX)==0 else { throw Issue.invalid("Verrou impossible") };defer { flock(fd,LOCK_UN) }
-            let (previous,current,previousFields)=try load(game)
+            let (previous,current,previousFields,previousFieldRevisions)=try load(game)
             guard let expected=expectedRevision,expected==current else { throw Issue.invalid("Révision modifiée : rechargez les paramètres") }
             var merged=previous
             for field in changed {
@@ -274,10 +288,13 @@ final class GameSettingsStore {
                 if parts.count==1 { merged[field]=valid[field] }
                 else { var group=merged[parts[0]] as! [String:Any];let requested=valid[parts[0]] as! [String:Any];group[parts[1]]=requested[parts[1]];merged[parts[0]]=group }
             }
-            let document:[String:Any]=["schemaVersion":2,"gameKey":key,"revision":UUID().uuidString.lowercased(),"settings":merged,"applyFields":previousFields.union(changed).sorted()];let bytes=try data(document);try writeAtomic(bytes,name:key+".json")
+            let nextRevision=UUID().uuidString.lowercased()
+            var fieldRevisions=previousFieldRevisions
+            for field in changed { fieldRevisions[field]=nextRevision }
+            let document:[String:Any]=["schemaVersion":3,"gameKey":key,"revision":nextRevision,"settings":merged,"applyFields":previousFields.union(changed).sorted(),"fieldRevisions":fieldRevisions];let bytes=try data(document);try writeAtomic(bytes,name:key+".json")
             var result=snapshot(game:game,hardware:[:],displays:[]);result["status"]="saved";return result
         } catch { return ["gameId":game.id,"status":"error","error":error.localizedDescription,"capabilities":capabilities(game),"measurements":[:],"calculation":[:]] }
     }
-    func launchArguments(for game: GameSettingsContext) -> [String] { guard eligible(game),let (settings,_,fields)=try? load(game),fields.contains("launchArgs"),let text=settings["launchArgs"] as? String else { return [] }; return (try? Self.parseArguments(text)) ?? [] }
-    func requestedBackend(for game: GameSettingsContext) -> String { guard eligible(game),let (settings,_,fields)=try? load(game),fields.contains("backend") else { return "auto" };return settings["backend"] as? String ?? "auto" }
+    func launchArguments(for game: GameSettingsContext) -> [String] { guard eligible(game),let (settings,_,fields,_)=try? load(game),fields.contains("launchArgs"),let text=settings["launchArgs"] as? String else { return [] }; return (try? Self.parseArguments(text)) ?? [] }
+    func requestedBackend(for game: GameSettingsContext) -> String { guard eligible(game),let (settings,_,fields,_)=try? load(game),fields.contains("backend") else { return "auto" };return settings["backend"] as? String ?? "auto" }
 }

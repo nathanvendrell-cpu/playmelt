@@ -1,0 +1,118 @@
+--- a/sm2-tpose-fix.c
++++ b/sm2-tpose-fix.c
+@@ -281,7 +281,10 @@
+     AcquireSRWLockShared(&g_lock);
+     for (i = 0; i < g_hook_count; i++)
+         if (g_hooks[i].vtbl == vtbl && g_hooks[i].index == index)
++        {
+             fn = g_hooks[i].orig;
++            break;
++        }
+     ReleaseSRWLockShared(&g_lock);
+     return fn;
+ }
+@@ -360,11 +363,15 @@
+ 
+ /* ------------------------------------------------------------ fog barrier (MGVF) */
+ 
+-static void note_fog_pso(const void *code, size_t size, void *pso)
++static void note_fog_pso(const void *code, size_t size, void *pso, uint64_t hash, BOOL hashed)
+ {
+     LONG n;
+ 
+-    if (!g_fog_barrier || !pso || !code || size < 32 || sm2_shader_hash(code, size) != FOG_COPY_HASH)
++    if (!g_fog_barrier || !pso || !code || size < 32)
++        return;
++    if (!hashed)
++        hash = sm2_shader_hash(code, size);
++    if (hash != FOG_COPY_HASH)
+         return;
+     AcquireSRWLockExclusive(&g_lock);
+     n = g_fog_pso_count;
+@@ -463,7 +470,7 @@
+ }
+ 
+ /* The rewritten copy of a shader, if it is one of the fix's. */
+-static const void *replacement(const void *code, size_t size, size_t *out_size)
++static const void *replacement(const void *code, size_t size, size_t *out_size, uint64_t *out_hash, BOOL *hashed)
+ {
+     uint64_t hash;
+     unsigned int i;
+@@ -471,6 +478,8 @@
+     if (!code || size < 32)
+         return NULL;
+     hash = sm2_shader_hash(code, size);
++    *out_hash = hash;
++    *hashed = TRUE;
+     for (i = 0; i < g_shader_count; i++)
+     {
+         if (g_shaders[i].hash == hash)
+@@ -489,8 +498,10 @@
+             = orig_fn(device, DEV_IDX(CreateComputePipelineState));
+     const void *alt;
+     size_t alt_size;
+-
+-    if (desc && (alt = replacement(desc->CS.pShaderBytecode, desc->CS.BytecodeLength, &alt_size)))
++    uint64_t hash = 0;
++    BOOL hashed = FALSE;
++
++    if (desc && (alt = replacement(desc->CS.pShaderBytecode, desc->CS.BytecodeLength, &alt_size, &hash, &hashed)))
+     {
+         D3D12_COMPUTE_PIPELINE_STATE_DESC copy = *desc;
+         HRESULT hr;
+@@ -498,8 +509,8 @@
+         copy.CS.pShaderBytecode = alt;
+         copy.CS.BytecodeLength = alt_size;
+         hr = orig(device, &copy, riid, pso);
+-        log_msg("Replaced shader %016llx: %s", (unsigned long long)sm2_shader_hash(desc->CS.pShaderBytecode,
+-                desc->CS.BytecodeLength), SUCCEEDED(hr) ? "ok" : "FAILED, using the game's own");
++        log_msg("Replaced shader %016llx: %s", (unsigned long long)hash,
++                SUCCEEDED(hr) ? "ok" : "FAILED, using the game's own");
+         if (SUCCEEDED(hr))
+         {
+             InterlockedIncrement(&g_pipelines);
+@@ -510,7 +521,7 @@
+         HRESULT hr = orig(device, desc, riid, pso);
+ 
+         if (SUCCEEDED(hr) && desc && pso)
+-            note_fog_pso(desc->CS.pShaderBytecode, desc->CS.BytecodeLength, *pso);
++            note_fog_pso(desc->CS.pShaderBytecode, desc->CS.BytecodeLength, *pso, hash, hashed);
+         return hr;
+     }
+ }
+@@ -522,10 +533,12 @@
+             = orig_fn(device, DEV_IDX(CreatePipelineState));
+     const void *code = NULL, *alt;
+     size_t size = 0, alt_size;
++    uint64_t hash = 0;
++    BOOL hashed = FALSE;
+     long at;
+ 
+     if (desc && sm2_stream_find_cs(desc->pPipelineStateSubobjectStream, desc->SizeInBytes, &code, &size) == SM2_STREAM_COMPUTE
+-            && (alt = replacement(code, size, &alt_size))
++            && (alt = replacement(code, size, &alt_size, &hash, &hashed))
+             && (at = sm2_stream_cs_offset(desc->pPipelineStateSubobjectStream, desc->SizeInBytes)) >= 0)
+     {
+         BYTE *copy = malloc(desc->SizeInBytes);
+@@ -541,7 +554,7 @@
+             patched.pPipelineStateSubobjectStream = copy;
+             hr = orig(device, &patched, riid, pso);
+             free(copy);
+-            log_msg("Replaced shader %016llx: %s", (unsigned long long)sm2_shader_hash(code, size),
++            log_msg("Replaced shader %016llx: %s", (unsigned long long)hash,
+                     SUCCEEDED(hr) ? "ok" : "FAILED, using the game's own");
+             if (SUCCEEDED(hr))
+             {
+@@ -554,10 +567,10 @@
+         HRESULT hr = orig(device, desc, riid, pso);
+ 
+         if (SUCCEEDED(hr) && pso && code)
+-            note_fog_pso(code, size, *pso);
++            note_fog_pso(code, size, *pso, hash, hashed);
+         else if (SUCCEEDED(hr) && pso && desc && g_fog_barrier
+                 && sm2_stream_find_cs(desc->pPipelineStateSubobjectStream, desc->SizeInBytes, &code, &size) == SM2_STREAM_COMPUTE)
+-            note_fog_pso(code, size, *pso);
++            note_fog_pso(code, size, *pso, hash, hashed);
+         return hr;
+     }
+ }

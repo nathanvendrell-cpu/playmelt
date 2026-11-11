@@ -50,12 +50,16 @@ class Inspector:
         if n <= 0: return None
         return {'pid':pid,'uid':info.uid,'start_sec':info.start_sec,'start_usec':info.start_usec,'path':os.fsdecode(buf.value),'status':info.status,'ppid':info.ppid}
 
-    def marker(self,pid,marker):
+    def marker(self,pid,marker,buffer=None):
         # Kernel saves argv+initial environment at exec; only exact NUL-delimited
         # marker is inspected, and bytes never enter logs or the receipt.
-        mib=(ctypes.c_int*3)(1,49,pid); size=ctypes.c_size_t(1024*1024); buf=ctypes.create_string_buffer(size.value)
-        if self.lib.sysctl(mib,3,buf,ctypes.byref(size),None,0) != 0: return None
-        return ('PLAYMELT_TEST_RUN='+marker).encode() in buf.raw[:size.value].split(b'\0')
+        buf=buffer if buffer is not None else ctypes.create_string_buffer(1024*1024)
+        mib=(ctypes.c_int*3)(1,49,pid); size=ctypes.c_size_t(ctypes.sizeof(buf))
+        if self.lib.sysctl(mib,3,buf,ctypes.byref(size),None,0) != 0 or size.value > ctypes.sizeof(buf): return None
+        data=ctypes.string_at(buf,size.value)
+        # KERN_PROCARGS2 begins with an argc integer and NUL-terminated data.
+        if len(data)<=ctypes.sizeof(ctypes.c_int) or not data.endswith(b'\0'): return None
+        return ('PLAYMELT_TEST_RUN='+marker).encode() in data.split(b'\0')
 
     def snapshot(self,marker):
         count=self.lib.proc_listpids(4,os.geteuid(),None,0)
@@ -63,14 +67,15 @@ class Inspector:
         cap=count+65536; buf=ctypes.create_string_buffer(cap)
         size=self.lib.proc_listpids(4,os.geteuid(),buf,cap)
         if size <= 0 or size>=cap or size%ctypes.sizeof(ctypes.c_int): raise RuntimeError('incomplete PID inventory')
-        pids=(ctypes.c_int*(size//4)).from_buffer_copy(buf.raw[:size]); found=[]; unknown=[]
+        pids=(ctypes.c_int*(size//4)).from_buffer_copy(ctypes.string_at(buf,size)); found=[]; unknown=[]
+        marker_buffer=ctypes.create_string_buffer(1024*1024)
         for pid in pids:
             if pid<=0 or pid==os.getpid(): continue
             identity=self.identity(pid)
             if identity is None:
                 unknown.append({'pid':pid,'reason':'identity_unavailable_or_process_exited'})
                 continue
-            match=self.marker(pid,marker)
+            match=self.marker(pid,marker,marker_buffer)
             if match is True: found.append(identity)
             elif match is None and (identity['path'].startswith(str(PROJECT)) or '/playmelt-wine10-dxmt-20261017/' in identity['path'] or identity['path'].startswith(str(GAME_DIR))): unknown.append(identity)
         return found,unknown
