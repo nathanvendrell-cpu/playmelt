@@ -8,7 +8,7 @@ export class Store {
     this.db = new DatabaseSync(path);
     this.db
       .exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,name TEXT NOT NULL DEFAULT '',stripe_customer TEXT UNIQUE,created INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,stripe_customer TEXT UNIQUE,created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS magic_links(hash TEXT PRIMARY KEY,email TEXT NOT NULL,expires INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),device_id TEXT,expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),label TEXT NOT NULL,revoked INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
@@ -22,8 +22,6 @@ export class Store {
       CREATE TABLE IF NOT EXISTS support_tickets(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),category TEXT NOT NULL,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS support_replies(id TEXT PRIMARY KEY,ticket_id TEXT NOT NULL REFERENCES support_tickets(id),body TEXT NOT NULL,created INTEGER NOT NULL,delivery TEXT NOT NULL DEFAULT 'pending');
       CREATE TABLE IF NOT EXISTS payment_reserves(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),payment_intent TEXT,amount INTEGER NOT NULL,currency TEXT NOT NULL,received INTEGER NOT NULL,reserved_until INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS profile_progress(user_id TEXT PRIMARY KEY REFERENCES users(id),json TEXT NOT NULL,updated INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS benchmarks(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'private',created INTEGER NOT NULL);
     `);
   }
   close() {

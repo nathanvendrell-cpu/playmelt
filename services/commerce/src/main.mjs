@@ -1,11 +1,11 @@
 import Stripe from "stripe";
 import nodemailer from "nodemailer";
 import { createPrivateKey } from "node:crypto";
-import { mkdirSync, readFileSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync, statSync } from "node:fs";
 import { Store } from "./store.mjs";
 import { plans } from "./billing.mjs";
 import { validatePrice } from "./catalog.mjs";
+import { validatePrivateStorage } from "./private-storage.mjs";
 import { createApp } from "./app.mjs";
 const requireEnv = (name) => {
   const value = process.env[name];
@@ -20,9 +20,14 @@ if (!new RegExp("^(sk|rk)_" + mode + "_").test(key))
 const db = requireEnv("PLAYMELT_DATABASE");
 if (!db.startsWith("/"))
   throw Error("Database must use a private absolute path");
-mkdirSync(dirname(db), { recursive: true, mode: 0o700 });
 process.umask(0o077);
 const signingPath = requireEnv("PLAYMELT_SIGNING_KEY_FILE");
+validatePrivateStorage({
+  root: requireEnv("PLAYMELT_PRIVATE_ROOT"),
+  documentRoot: requireEnv("PLAYMELT_DOCUMENT_ROOT"),
+  database: db,
+  signingKey: signingPath,
+});
 if (!signingPath.startsWith("/") || (statSync(signingPath).mode & 0o077) !== 0)
   throw Error("Signing key must be a private absolute file");
 const config = {
