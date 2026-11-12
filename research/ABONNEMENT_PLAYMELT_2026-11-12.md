@@ -2,7 +2,7 @@
 
 État au 12/11/2026. Rien n'est encaissé, aucun compte n'est créé, rien n'est publié.
 
-## Offres (proposition à valider)
+## Offres (validées par Nathan le 12/11/2026)
 
 Prix TTC, dégressifs sur la durée, base 19,99 €/mois.
 

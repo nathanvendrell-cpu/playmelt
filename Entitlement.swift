@@ -16,7 +16,7 @@ import Security
 enum PlaymeltPlan: String, CaseIterable {
     case monthly, quarterly, semiannual, annual, lifetime
 
-    /// Prix TTC en centimes d'euro — PROPOSITION à valider par Nathan.
+    /// Prix TTC en centimes d'euro — validés par Nathan le 12/11/2026.
     /// Dégressif : plus la durée est longue, plus le prix mensuel baisse.
     var priceCents: Int {
         switch self {
