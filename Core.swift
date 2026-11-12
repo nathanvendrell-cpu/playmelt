@@ -750,7 +750,7 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
     guard base.readyEngine else { return nil }
     if isDX12 {
         guard let metal = try? D3DMetalRuntime(store: D3DMetalStore()).descriptor(base: base), metal.readyEngine else { return nil }
-        if useNvidiaBridge, !D3DMetalStore().nvidiaBridgeAvailable() { return nil }
+        if useNvidiaBridge, !NvidiaBridgeStore.shared.available() { return nil }
     }
 
     var projName: String? = nil
@@ -778,7 +778,9 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
         """
     } else if isDX12 {
         extraArgs = localGameDX12Arguments(appID: game.appId, projectName: projName).map(shellLiteral).joined(separator: " ")
+        // Pont DLSS → MetalFX : exports runtime + répertoire wine du composant moteur.
         let bridgeExports = useNvidiaBridge ? "export D3DM_ENABLE_METALFX=\"1\"\nexport WINEDLLOVERRIDES=\"nvapi64,nvngx=b,n;$WINEDLLOVERRIDES\"\n" : ""
+        let bridgeWinePath = useNvidiaBridge ? ":" + shellLiteral(NvidiaBridgeStore.shared.winePath) : ""
         scriptContent = """
         #!/bin/bash
         # Lanceur direct Playmelt (Wine / D3DMetal DX12)
@@ -798,7 +800,7 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
         \(localGameEnvironmentExports(appID: game.appId))
         export D3DM_MTL4="1"
         export WINEDLLOVERRIDES="d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d"
-        \(bridgeExports)export WINEDLLPATH_PREPEND="$RENDERER_DIR/wine"
+        \(bridgeExports)export WINEDLLPATH_PREPEND="$RENDERER_DIR/wine\(bridgeWinePath)"
         export CX_D3DMETALPATH="$RENDERER_DIR/external"
         export DYLD_FALLBACK_LIBRARY_PATH="$RENDERER_DIR/external:$RENDERER_DIR/external/D3DMetal.framework/Versions/A/Resources:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks/GStreamer.framework/Versions/1.0/lib"
         export DYLD_FALLBACK_FRAMEWORK_PATH="$RENDERER_DIR/external:$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/frameworks"
@@ -852,6 +854,10 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
     }
     let runtimeDir = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/Runtime")
     RuntimeSetup.ensureVisualCRuntimeKeys(runtimeDir.appendingPathComponent(isDX12 ? "D3DMetal/prefix" : "prefix"))
+    if useNvidiaBridge {
+        // Clé NGXCore pour le plugin NGX d'Unreal Engine (FF7 Rebirth, etc.).
+        NvidiaBridgeStore.shared.ensurePrefixRegistryKeys(runtimeDir.appendingPathComponent("D3DMetal/prefix"))
+    }
     do {
         try scriptContent.write(to: scriptURL, atomically: true, encoding: .utf8)
         guard chmod(scriptURL.path, 0o755) == 0 else { return nil }

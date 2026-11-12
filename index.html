@@ -2708,6 +2708,7 @@
           "checkXbox",
           "disconnectXbox",
           "openGOG",
+          "installNvidiaBridge",
         ]);
         const renderProtectedActions = new Set([
           "launchGame",
@@ -3917,16 +3918,32 @@
               "text-button renderer-download",
             );
           }
-          // Pont DLSS → MetalFX : l'utilisateur doit savoir si le module est complet.
+          // Pont DLSS → MetalFX : composant moteur installable sans réimport du payload.
+          if (component?.imported && view.bridge !== "complete") {
+            command(
+              "Installer le pont DLSS → MetalFX",
+              "installNvidiaBridge",
+              view.busy,
+              {},
+              "button secondary",
+            );
+          }
           if (component?.imported) {
-            const bridgeHint = {
+            const componentMessage = component?.nvidiaBridgeComponent?.message;
+            const bridgeMessages = {
               absent:
-                "Pont DLSS → MetalFX : absent — réimportez le dossier redist/lib complet du Game Porting Toolkit 4 (shims nvngx requis).",
+                "Pont DLSS → MetalFX : absent — installez le composant moteur depuis le DMG Game Porting Toolkit 4 d'Apple.",
               partial:
-                "Pont DLSS → MetalFX : incomplet — réimportez le dossier redist/lib complet du Game Porting Toolkit 4.",
-              complete: "Pont DLSS → MetalFX : actif (DLSS et Frame Generation traduits).",
+                "Pont DLSS → MetalFX : incomplet — réinstallez-le depuis le DMG Game Porting Toolkit 4.",
+              complete:
+                "Pont DLSS → MetalFX : actif — DLSS et Frame Generation traduits par MetalFX.",
             }[view.bridge];
-            if (bridgeHint) labels.append(el("span", "renderer-bridge", bridgeHint));
+            if (bridgeMessages) {
+              const hint = el("span", "renderer-bridge", bridgeMessages);
+              if (typeof componentMessage === "string" && componentMessage && componentMessage !== bridgeMessages)
+                hint.title = componentMessage;
+              labels.append(hint);
+            }
           }
           box.append(labels, actions);
           return box;

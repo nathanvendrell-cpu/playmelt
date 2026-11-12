@@ -641,7 +641,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     let requestGate = SteamRequestGate()
     let clientLauncher = UserProcessLauncher()
     private let gameSettingsStore = GameSettingsStore(root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/GameSettings", isDirectory: true),
-                                                      nvidiaBridgeAvailable: { D3DMetalStore().nvidiaBridgeAvailable() })
+                                                      nvidiaBridgeAvailable: { NvidiaBridgeStore.shared.available() })
     private let gameSettingsQueue = DispatchQueue(label: "fr.playmelt.game-settings", qos: .utility)
     private var gameSettingsPayload: [String: Any]?
     private var gameSettingsRequest = UUID()
@@ -659,6 +659,8 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     private var epicLoginController: EpicLoginSheetController?
     private var installerCancelledByUser = false
     private var xboxCatalogTimer: Timer?
+    private var nvidiaBridgeStore: NvidiaBridgeStore { .shared }
+    private var nvidiaBridgeInstalling: Bool { nvidiaBridgeStore.status()["busy"] as? Bool == true }
 
     private var epicCacheURL: URL {
         let appSupport = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt")
@@ -791,6 +793,9 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Steam DirectX 12 est indisponible pendant cette opération."); return }
             openWindowsSteam(runtimeID: "playmelt-d3dmetal")
         case "importD3DMetal": importD3DMetal()
+        case "installNvidiaBridge":
+            guard !CommandLine.arguments.contains("--audit-read-only"), !anyRuntimeOperation else { result(false, "Installation indisponible pendant cette opération."); return }
+            installNvidiaBridge()
         case "openD3DMetalDownload":
             NSWorkspace.shared.open(URL(string: "https://developer.apple.com/games/game-porting-toolkit/")!)
         case "installSteamWindows":
@@ -947,7 +952,11 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         var directX12 = d3dMetalStore.snapshot()
         directX12.merge(d3dMetalRuntime.snapshot(base: runtimeSetup.descriptor())) { _, latest in latest }
         directX12.merge(d3dMetalSteamBootstrap.snapshot) { _, latest in latest }
-        directX12["busy"] = rendererImportBusy || d3dMetalIsBusy
+        directX12["busy"] = rendererImportBusy || d3dMetalIsBusy || nvidiaBridgeInstalling
+        // Le pont DLSS → MetalFX est un composant moteur séparé du payload Apple.
+        let bridge = nvidiaBridgeStore.status()
+        directX12["nvidiaBridge"] = (bridge["available"] as? Bool) == true ? "complete" : "absent"
+        directX12["nvidiaBridgeComponent"] = bridge
         state["d3dMetal"] = directX12
         state["renderProtectionEnabled"] = renderProtectionEnabled
         state["executionPolicy"] = WindowsExecutionPolicy.json
@@ -986,6 +995,30 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     func finishRendererImport(_ completion: @escaping () -> Void) {
         // A close waits for the exact import queue to finish or roll back staging.
         rendererImportQueue.async { DispatchQueue.main.async(execute: completion) }
+    }
+    /// Composant moteur : pont DLSS → MetalFX. Le DMG GPTK 4 (ou son dossier
+    /// redist/lib extrait) est monté et vérifié, puis les shims sont installés
+    /// dans un répertoire dédié, sans toucher au payload Apple.
+    func installNvidiaBridge() {
+        guard !closing, !anyRuntimeOperation, !CommandLine.arguments.contains("--audit-read-only"),
+              let window = webView?.window else { result(false, "Installation indisponible pendant cette opération."); return }
+        let picker = NSOpenPanel()
+        picker.title = "Installer le pont DLSS → MetalFX"
+        picker.message = "Sélectionnez le DMG Game Porting Toolkit 4 (ou son dossier redist/lib extrait)."
+        picker.prompt = "Installer"
+        picker.canChooseDirectories = true
+        picker.canChooseFiles = true
+        picker.allowsMultipleSelection = false
+        picker.canCreateDirectories = false
+        picker.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            guard !self.closing, response == .OK, let source = picker.url else { return }
+            self.nvidiaBridgeStore.install(source: source) { [weak self] ok, message in
+                guard let self, !self.closing else { return }
+                self.notifyRuntime()
+                self.result(ok, message)
+            }
+        }
     }
     func sendState() {
         model.epicAvailability = epicConnector.availability()
