@@ -116,13 +116,27 @@ final class SteamInstallCoordinator {
         onChange?(); return id
     }
 
+    @discardableResult
+    func beginEpicDirect(gameID: String, appID: String, title: String, accountID: String, autoLaunch: Bool = false) -> UUID? {
+        guard !closed, token == nil, !appID.isEmpty else { return nil }
+        let id = UUID(); token = id; readySignature = nil
+        job = ["id": id.uuidString, "gameId": gameID, "appId": appID, "title": title,
+               "store": "epic",
+               "status": "downloading", "phase": "Téléchargement Epic Games",
+               "message": "Préparation du téléchargement de \(title)…",
+               "bytesDownloaded": 0, "bytesTotal": 0,
+               "speed": "", "eta": "",
+               "progress": 0.0, "cancellable": true, "autoLaunch": autoLaunch, "accountId": accountID]
+        onChange?(); return id
+    }
+
     func acceptsDirect(id: UUID) -> Bool { !closed && token == id && job?["id"] as? String == id.uuidString }
     func permitsDirectAutoLaunch(id: UUID, accountID: String, executionBlocked: Bool) -> Bool {
         !closed && !executionBlocked && job?["id"] as? String == id.uuidString &&
         job?["accountId"] as? String == accountID && job?["autoLaunch"] as? Bool == true &&
         job?["status"] as? String == "launch-ready"
     }
-    func updateDirect(id: UUID, status: String, message: String, progress: Double?, downloaded: UInt64 = 0, total: UInt64 = 0, speed: String = "", phase: String = "") {
+    func updateDirect(id: UUID, status: String, message: String, progress: Double?, downloaded: UInt64 = 0, total: UInt64 = 0, speed: String = "", phase: String = "", eta: String = "") {
         guard acceptsDirect(id: id) else { return }
         job?["status"] = status
         job?["message"] = message
@@ -131,6 +145,7 @@ final class SteamInstallCoordinator {
         if total > 0 { job?["bytesTotal"] = total }
         if !speed.isEmpty { job?["speed"] = speed }
         if !phase.isEmpty { job?["phase"] = phase }
+        if !eta.isEmpty { job?["eta"] = eta }
         onChange?()
     }
 

@@ -104,7 +104,7 @@ def read_preferences(path=GAME_SETTINGS):
                 if type(value)!=str or str(uuid.UUID(value))!=value:raise ValueError()
             except (ValueError,AttributeError):raise RuntimeError('invalid field revision')
     s=data['settings'];fields(s,('launchArgs','backend','display','graphics'))
-    if s['backend'] not in ('auto','d3dmetal'):raise RuntimeError('unsupported backend')
+    if s['backend'] not in ('auto','d3dmetal','d3dmetal-nv'):raise RuntimeError('unsupported backend')
     args=s['launchArgs']
     if type(args)!=str or any(unicodedata.category(c) in ('Cc','Cf','Cs') and c!='\t' for c in args) or len(args.encode('utf-8'))>2048:raise RuntimeError('invalid launch arguments')
     argv=split_launch_args(args)
@@ -122,7 +122,7 @@ def read_preferences(path=GAME_SETTINGS):
     integer(d['refreshRate'],1,1000)
     for k in ('vsync','hdr'):boolean(d[k])
     g=s['graphics'];fields(g,('upscaler','quality','dynamicFPS','frameGeneration','grain','sharpness'))
-    if g['upscaler']!='fsr' or g['quality']!='quality' or type(g['dynamicFPS'])!=int or g['dynamicFPS'] not in (0,30,60):raise RuntimeError('unsupported graphics choice')
+    if g['upscaler'] not in ('fsr','dlss') or g['quality']!='quality' or type(g['dynamicFPS'])!=int or g['dynamicFPS'] not in (0,30,60):raise RuntimeError('unsupported graphics choice')
     boolean(g['frameGeneration'])
     for k in ('grain','sharpness'):
         if type(g[k]) not in (int,float) or not 0<=g[k]<=1:raise RuntimeError('invalid graphics strength')
@@ -152,6 +152,7 @@ def apply_preferences(plan,preferences):
     record_changed=bool(preferences and (revision!=old.get('revision') or old.get('appliedFieldRevisions')!=applied))
     d=preferences[0]['settings']['display'] if preferences else {}
     g=preferences[0]['settings']['graphics'] if preferences else {}
+    s_backend=preferences[0]['settings'].get('backend','auto') if preferences else 'auto'
     choice=d.get('retina','auto') if 'display.retina' in cumulative else 'auto'
     hints=plan.get('displayHints',{});primary=hints.get('primary') if isinstance(hints,dict) else None
     displays=hints.get('displays',[]) if isinstance(hints,dict) else []
@@ -191,7 +192,7 @@ def apply_preferences(plan,preferences):
     if 'display.screenID' in mask:
         if not isinstance(selected,dict) or type(selected.get('wineIndex'))!=int or not 0<=selected['wineIndex']<64:raise RuntimeError('selected display could not be resolved')
         vals['Monitor']=selected['wineIndex']
-    if 'graphics.upscaler' in mask:vals['UpscaleMethod']=3
+    if 'graphics.upscaler' in mask:vals['UpscaleMethod']=2 if (s_backend=='d3dmetal-nv' or g.get('upscaler')=='dlss') else 3
     if 'graphics.quality' in mask:vals['UpscaleQuality']=3
     if 'graphics.dynamicFPS' in mask:vals['DynamicResolutionTargetFPS']=g['dynamicFPS']
     if 'graphics.frameGeneration' in mask:vals['FrameGen']=int(g['frameGeneration'])
@@ -511,11 +512,17 @@ def wait_game(original,argv,env,directory,log,timeout,inspector,marker,seen,extr
     finally:sel.close()
 
 
-def game_environment(env,wine,hud):
+def game_environment(env,wine,hud,backend='auto'):
     if hud not in (None,'0','1'):raise RuntimeError('invalid PLAYMELT_METAL_HUD; expected 0 or 1')
     selected=dict(env);selected['PLAYMELT_WINE_EXECUTABLE']=wine
     for key in ('MTL_HUD_ENABLED','MTL_HUD_LOG_ENABLED'):selected.pop(key,None)
     if hud=='1':selected.update(MTL_HUD_ENABLED='1',MTL_HUD_LOG_ENABLED='1')
+    selected['D3DM_MTL4']='1'
+    selected['ROSETTA_ADVERTISE_AVX']='1'
+    selected['WINEDEBUG']='-all'
+    if backend=='d3dmetal-nv':
+        selected['D3DM_ENABLE_METALFX']='1'
+        selected['WINEDLLOVERRIDES']='nvapi64,nvngx=b,n;'+selected.get('WINEDLLOVERRIDES','')
     return selected
 
 # This exact combination showed lower synthetic sync overhead and survived two
@@ -572,7 +579,8 @@ def main():
         before=crash_snapshot();old_run=base.run_command;old_shutdown=base.bounded_shutdown;old_argv=sys.argv;old_copy_log=experiment.COPY_PREVIOUS_DIAGNOSTIC_LOG
         def run_adapter(argv,env,directory,log,timeout,inspector,marker,seen):
             if argv==[plan['wine'],str(GAME)]:
-                env=game_environment(env,plan['wine'],hud)
+                pref_backend=preferences[0]['settings'].get('backend','auto') if preferences else 'auto'
+                env=game_environment(env,plan['wine'],hud,backend=pref_backend)
                 return wait_game(old_run,argv,env,directory,log,timeout,inspector,marker,seen,preferences[1] if preferences else ())
             return old_run(argv,env,directory,log,timeout,inspector,marker,seen)
         def shutdown_adapter(server,env,directory,state):

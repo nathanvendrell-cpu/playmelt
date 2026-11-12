@@ -185,8 +185,13 @@ final class LibraryScanner {
                     guard let value = self.readVDF(local) else { return nil }
                     let apps = value.object("UserLocalConfigStore").object("Software").object("Valve").object("Steam").object("apps")
                     for (appKey, appVal) in apps {
-                        if let dict = appVal as? [String: Any], let lp = Int64(dict.string("LastPlayed")), lp > 0 {
-                            lastPlayedTimes[appKey] = max(lastPlayedTimes[appKey] ?? 0, lp)
+                        if let dict = appVal as? [String: Any] {
+                            if let lp = Int64(dict.string("LastPlayed")), lp > 0 {
+                                lastPlayedTimes[appKey] = max(lastPlayedTimes[appKey] ?? 0, lp)
+                            }
+                            if let pt = Int64(dict.string("Playtime")), pt > 0 {
+                                PlaytimeStore.shared.registerBaseline(key: appKey, totalSeconds: pt * 60)
+                            }
                         }
                     }
                     return Set(apps.keys.filter { LibraryModel.validAppID($0) && (UInt32($0) ?? 0) > 100 })
@@ -194,8 +199,13 @@ final class LibraryScanner {
                 if let value = self.readVDF(local) {
                     let apps = value.object("UserLocalConfigStore").object("Software").object("Valve").object("Steam").object("apps")
                     for (appKey, appVal) in apps {
-                        if let dict = appVal as? [String: Any], let lp = Int64(dict.string("LastPlayed")), lp > 0 {
-                            lastPlayedTimes[appKey] = max(lastPlayedTimes[appKey] ?? 0, lp)
+                        if let dict = appVal as? [String: Any] {
+                            if let lp = Int64(dict.string("LastPlayed")), lp > 0 {
+                                lastPlayedTimes[appKey] = max(lastPlayedTimes[appKey] ?? 0, lp)
+                            }
+                            if let pt = Int64(dict.string("Playtime")), pt > 0 {
+                                PlaytimeStore.shared.registerBaseline(key: appKey, totalSeconds: pt * 60)
+                            }
                         }
                     }
                 }
@@ -231,7 +241,6 @@ final class LibraryScanner {
                     game.id = "steam:\(m.appID):\(runtime.id)"; if !m.name.isEmpty { game.title = m.name }
                     game.installed = exists; game.path = path
                     game.lastPlayed = lastPlayedTimes[m.appID] ?? 0
-                    if isLocalPlaymelt { game.installSource = "local" }
                     if m.flags & 4 == 4 && m.flags & unfinished == 0 && exists {
                         metrics.binaryScans += 1
                         if platformSupported && containsLaunchBinary(path, platform: runtime.platform, cancelled: { self.stopped }) {
@@ -268,19 +277,56 @@ final class LibraryScanner {
                     if let data = try? Data(contentsOf: appidAlt), let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), LibraryModel.validAppID(str) { return str }
                     return nil
                 }()
+
+                // Marvel's Spider-Man 2 is the unique local custom game
+                if folder.lastPathComponent == "MarvelsSpiderMan2" || targetAppID == "2651280" {
+                    let script = findLaunchScript(in: folder)
+                    let hasBinary = containsLaunchBinary(folder, platform: "windows", cancelled: { self.stopped }) || script != nil
+                    var spiderman = Game(
+                        id: "local:2651280",
+                        appId: "2651280",
+                        title: "Marvel's Spider-Man 2",
+                        store: "local",
+                        installed: true,
+                        platform: "windows",
+                        runtimeId: "playmelt-d3dmetal",
+                        runtimeName: "D3DMetal (DirectX 12)",
+                        ownership: "installed-only",
+                        path: folder,
+                        complete: hasBinary,
+                        epicLaunchID: "",
+                        supportedPlatforms: ["windows"],
+                        customImageURL: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2651280/header.jpg",
+                        customPortraitURL: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2651280/library_600x900.jpg",
+                        lastPlayed: lastPlayedTimes["2651280"] ?? 0,
+                        installSource: "local"
+                    )
+                    assignWindowsRuntime(to: &spiderman)
+                    games.removeAll { $0.appId == "2651280" }
+                    games.append(spiderman)
+                    installedIDs.insert("2651280")
+                    continue
+                }
+
+                // Final Fantasy VII Rebirth is an Epic Games Store installation handled via legendaryInstalled
+                if folder.lastPathComponent == "FINALFANTASYVIIREBIRTH" {
+                    continue
+                }
+
                 guard let id = targetAppID else { continue }
                 let script = findLaunchScript(in: folder)
                 let hasBinary = containsLaunchBinary(folder, platform: "windows", cancelled: { self.stopped }) || script != nil
                 let localPaths = Set([folder.resolvingSymlinksInPath().path, folder.appendingPathComponent("Windows").resolvingSymlinksInPath().path])
                 let existingIdx = games.firstIndex {
-                    $0.appId == id && $0.platform == "windows" &&
+                    $0.appId == id && ($0.platform == "windows" || $0.store == "steam") &&
                     $0.path.map { localPaths.contains($0.resolvingSymlinksInPath().path) } == true
                 }
                 var localGame = existingIdx.map { games[$0] } ?? LibraryModel.makeGame(id, ownership: cachedIDs.contains(id) ? "account-cache" : "installed-only", metadata: metadata, runtimes: request.runtimes, availability: availability)
-                localGame.id = existingIdx.map { games[$0].id } ?? "local:\(id):\(folder.lastPathComponent)"
+                localGame.id = existingIdx.map { games[$0].id } ?? "steam:\(id)"
                 localGame.installed = true
                 localGame.complete = hasBinary
-                localGame.installSource = "local"
+                localGame.store = "steam"
+                localGame.installSource = "steam"
                 localGame.platform = "windows"
                 localGame.path = folder
                 localGame.lastPlayed = max(localGame.lastPlayed, lastPlayedTimes[id] ?? 0)
@@ -301,6 +347,45 @@ final class LibraryScanner {
             guard let game = epicManifests.read(file, metrics: &metrics, loader: { LibraryModel.readEpicManifest(file) }),
                   let path = game.path, FileManager.default.fileExists(atPath: path.path), epicIDs.insert(game.appId).inserted else { continue }
             epic.append(game)
+        }
+        // Epic games installed by Playmelt itself (Legendary): ~/.config/legendary/installed.json.
+        // They stay in the Epic store and are routed to the Windows engine through their launch script.
+        let epicCacheFile = request.home.appendingPathComponent("Library/Application Support/Playmelt/.epic_cache.json")
+        var epicImageURLs: [String: String] = [:]
+        if let data = try? Data(contentsOf: epicCacheFile),
+           let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let gameList = obj["games"] as? [[String: Any]] {
+            for item in gameList {
+                if let aName = item["appName"] as? String, let url = item["imageURL"] as? String, !url.isEmpty {
+                    epicImageURLs[aName] = url
+                }
+            }
+        }
+        let legendaryInstalled = request.home.appendingPathComponent(".config/legendary/installed.json")
+        if !stopped, let data = try? Data(contentsOf: legendaryInstalled), data.count < 8_000_000,
+           let rows = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            for (appName, raw) in rows {
+                guard let row = raw as? [String: Any], !appName.isEmpty, appName.utf8.count <= 512,
+                      let installPath = row["install_path"] as? String, installPath.hasPrefix("/"),
+                      epicIDs.insert(appName).inserted else { continue }
+                let path = URL(fileURLWithPath: installPath).resolvingSymlinksInPath()
+                guard FileManager.default.fileExists(atPath: path.path) else { continue }
+                let executable = row["executable"] as? String ?? ""
+                let platform = (row["platform"] as? String ?? "Windows").lowercased() == "mac" ? "mac" : "windows"
+                let hasExecutable = !executable.isEmpty && FileManager.default.fileExists(atPath: path.appendingPathComponent(executable.replacingOccurrences(of: "\\", with: "/")).path)
+                let artUrl = epicImageURLs[appName] ?? ""
+                var game = Game(id: "epic:" + appName, appId: appName,
+                                title: String((row["title"] as? String ?? appName).prefix(200)), store: "epic",
+                                installed: true, platform: platform, runtimeId: "", runtimeName: "",
+                                ownership: "installed-only", path: path,
+                                complete: hasExecutable && row["needs_verification"] as? Bool != true,
+                                epicLaunchID: "", supportedPlatforms: [platform],
+                                customImageURL: artUrl,
+                                customPortraitURL: artUrl,
+                                lastPlayed: 0, installSource: "epic")
+                if platform == "windows" { assignWindowsRuntime(to: &game) }
+                epic.append(game)
+            }
         }
         let saved = stopped ? nil : savedLibrary(request.readSavedSnapshot(selected), account: selected)
         metrics.elapsedMilliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1000

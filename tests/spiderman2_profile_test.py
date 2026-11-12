@@ -385,5 +385,18 @@ class PreferenceTests(unittest.TestCase):
             root=Path(td);prefix=root/'prefix';prefix.mkdir();reg=prefix/'user.reg';text='[Software\\\\Wine\\\\Mac Driver] 1\n"RetinaMode"="N"\n';reg.write_text(text)
             stack.enter_context(mock.patch.object(p,'PROFILE',root));stack.enter_context(mock.patch.object(p,'PREFIX',prefix));stack.enter_context(mock.patch.object(p.reuse,'require_idle_prefix'))
             p.apply_preferences({'displayHints':{'primary':{'scale':1.5}}},None);self.assertEqual(reg.read_text(),text)
+    def test_nvidia_bridge_backend_dlss_upscaling_and_environment(self):
+        with tempfile.TemporaryDirectory() as td,contextlib.ExitStack() as stack:
+            root=Path(td);prefix=root/'prefix';prefix.mkdir();reg=prefix/'user.reg'
+            reg.write_text('[Software\\\\Wine\\\\Mac Driver] 1\n"RetinaMode"="Y"\n\n[Software\\\\Insomniac Games\\\\Marvel\'s Spider-Man 2\\\\Graphics] 1\n"UpscaleMethod"=dword:00000000\n')
+            stack.enter_context(mock.patch.object(p,'PROFILE',root));stack.enter_context(mock.patch.object(p,'PREFIX',prefix));stack.enter_context(mock.patch.object(p.reuse,'require_idle_prefix'))
+            data=self.fixture();data['settings']['backend']='d3dmetal-nv';data['settings']['graphics']['upscaler']='dlss'
+            data['applyFields']=['graphics.upscaler']
+            p.apply_preferences({},(data,[]))
+            out=reg.read_text()
+            self.assertIn('"UpscaleMethod"=dword:00000002',out)
+        env=p.game_environment({'WINEDLLOVERRIDES':'d3d12=n,b;'},'/wine',None,backend='d3dmetal-nv')
+        self.assertEqual(env['D3DM_ENABLE_METALFX'],'1')
+        self.assertEqual(env['WINEDLLOVERRIDES'],'nvapi64,nvngx=b,n;d3d12=n,b;')
 
 if __name__=='__main__':unittest.main()

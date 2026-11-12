@@ -238,6 +238,13 @@ def establish_session(core, action, session, code=None):
         raise AccountChangedError()
     with core.lgd.userdata_lock as lock:
         lock.data = data
+    try:
+        from legendary.core import LegendaryCore
+        direct_core = LegendaryCore()
+        with direct_core.lgd.userdata_lock as dlock:
+            dlock.data = data
+    except Exception:
+        pass
     core.logged_in = True
     return data
 

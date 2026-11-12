@@ -19,7 +19,13 @@ struct GameSettingsContext {
 /// Preferences are inert until a caller explicitly integrates them into a launch.
 final class GameSettingsStore {
     let root: URL
-    init(root: URL) { self.root = root }
+    /// Injected by the app so this file stays compilable alone in tests and
+    /// fails closed (no option) when the caller does not provide a probe.
+    private let nvidiaBridgeAvailable: () -> Bool
+    init(root: URL, nvidiaBridgeAvailable: (() -> Bool)? = nil) {
+        self.root = root
+        self.nvidiaBridgeAvailable = nvidiaBridgeAvailable ?? { false }
+    }
     private func eligible(_ game: GameSettingsContext) -> Bool {
         game.platform.lowercased() == "windows" && game.installed && game.supportsLaunchArguments && !game.appID.isEmpty
     }
@@ -45,6 +51,10 @@ final class GameSettingsStore {
         var options: [[String:String]] = [["value":"auto","label":"Automatique"]]
         if special || (enabled && game.requiredRenderer.lowercased() == "d3dmetal") { options.append(["value":"d3dmetal","label":"D3DMetal"]) }
         else if enabled && game.requiredRenderer.lowercased() == "dxmt" { options.append(["value":"dxmt","label":"DXMT"]) }
+        if options.contains(where: { $0["value"] == "d3dmetal" }), nvidiaBridgeAvailable() {
+            // Honest label: the game still asks for DLSS; Apple translates it.
+            options.append(["value":"d3dmetal-nv","label":"D3DMetal · DLSS → MetalFX (pont NVIDIA)"])
+        }
         var result: [String:Any] = ["launchArgs":enabled,"backends":options,"display":special,"graphics":special]
         if !enabled { result["readOnlyReason"] = "Réglages de lancement indisponibles pour cette plateforme ou ce jeu non installé." }
         return result

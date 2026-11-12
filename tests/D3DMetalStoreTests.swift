@@ -201,7 +201,8 @@ import Darwin
         let license = Data("{\\rtf1 Synthetic license fixture}".utf8), acknowledgements = Data("{\\rtf1 Synthetic acknowledgements fixture}".utf8)
         try put(license, shared.appendingPathComponent("License.rtf"))
         try put(acknowledgements, shared.appendingPathComponent("Acknowledgements.rtf"))
-        // Unrequested NVIDIA shims are deliberately outside the Windows allowlist.
+        // NVIDIA shims are imported when present, but an incomplete set never
+        // unlocks the translation route.
         try put(pe(), sharedLib.appendingPathComponent("wine/x86_64-windows/nvngx.dll"))
         try put(pe(), sharedLib.appendingPathComponent("wine/x86_64-windows/nvapi64.dll"))
         let sharedRoot = temp.appendingPathComponent("shared/Renderers/D3DMetal"), sharedStore = D3DMetalStore(root: sharedRoot)
@@ -220,12 +221,33 @@ import Darwin
         expect(try Data(contentsOf: sharedPayload.appendingPathComponent("notices/License.rtf")) == license, "license contents preserved")
         expect(try Data(contentsOf: sharedPayload.appendingPathComponent("notices/Acknowledgements.rtf")) == acknowledgements, "acknowledgements contents preserved")
         expect(sharedFiles.filter { ($0["path"] as? String ?? "").hasPrefix("notices/") && ($0["sha256"] as? String)?.count == 64 }.count == 2, "both notices included in receipt hashes")
-        expect(!sharedFiles.contains { ($0["path"] as? String ?? "").contains("nvngx") || ($0["path"] as? String ?? "").contains("nvapi") }, "NVIDIA shims not imported")
+        expect(sharedFiles.contains { ($0["path"] as? String) == "wine/x86_64-windows/nvngx.dll" && ($0["sha256"] as? String)?.count == 64 }, "NVIDIA nvngx shim imported under canonical name")
+        expect(sharedFiles.contains { ($0["path"] as? String) == "wine/x86_64-windows/nvapi64.dll" }, "NVIDIA nvapi64 shim imported")
+        expect(sharedReport["nvidiaBridge"] as? String == "partial" && sharedStore.snapshot()["nvidiaBridge"] as? String == "partial", "partial bridge reported without unlocking")
+        expect(!sharedStore.nvidiaBridgeAvailable(), "partial bridge is never available")
         let sameShared = try sharedStore.importLocal(sourceURL: shared)
         expect(sameShared["contentHash"] as? String == sharedReport["contentHash"] as? String, "shared import remains idempotent")
         try put(Data("changed notice".utf8), shared.appendingPathComponent("License.rtf"))
         rejects("notice change participates in import identity") { _ = try sharedStore.importLocal(sourceURL: shared) }
         expect(try Data(contentsOf: sharedPayload.appendingPathComponent("notices/License.rtf")) == license, "different notice cannot replace existing import")
+
+        let bridgeSourceRoot = temp.appendingPathComponent("bridge-source"), bridgeLib = try sharedSource(bridgeSourceRoot)
+        try put(pe(suffix: 2), bridgeLib.appendingPathComponent("wine/x86_64-windows/nvngx-on-metalfx.dll"))
+        try put(macho(), bridgeLib.appendingPathComponent("wine/x86_64-unix/nvngx-on-metalfx.so"))
+        try put(pe(suffix: 3), bridgeLib.appendingPathComponent("wine/x86_64-windows/nvapi64.dll"))
+        let bridgeStoreRoot = temp.appendingPathComponent("bridge/Renderers/D3DMetal"), bridgeStore = D3DMetalStore(root: bridgeStoreRoot)
+        let bridgeReport = try bridgeStore.importLocal(sourceURL: bridgeSourceRoot)
+        let bridgeFiles = bridgeReport["files"] as? [[String:Any]] ?? []
+        expect(bridgeReport["nvidiaBridge"] as? String == "complete", "complete NVIDIA bridge imported")
+        expect((bridgeReport["nvidiaBridgeSourceNames"] as? [String:String])?["wine/x86_64-windows/nvngx.dll"] == "nvngx-on-metalfx.dll", "bridge alias stored under canonical name")
+        expect(["wine/x86_64-windows/nvngx.dll", "wine/x86_64-unix/nvngx.so", "wine/x86_64-windows/nvapi64.dll"].allSatisfy { path in
+            bridgeFiles.contains { ($0["path"] as? String) == path && ($0["sha256"] as? String)?.count == 64 }
+        }, "required bridge files hashed in receipt")
+        expect(bridgeStore.snapshot()["nvidiaBridge"] as? String == "complete" && bridgeStore.nvidiaBridgeAvailable(), "complete hashed bridge is available")
+        let bridgeEnvironment = D3DMetalStore.nvidiaBridgeEnvironment([:])
+        expect(bridgeEnvironment["D3DM_ENABLE_METALFX"] == "1" && bridgeEnvironment["WINEDLLOVERRIDES"] == "nvapi64,nvngx=b,n;d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d", "bridge launch environment")
+        try pe(suffix: 7).write(to: bridgeStoreRoot.appendingPathComponent("payload/wine/x86_64-windows/nvngx.dll"))
+        expect(!bridgeStore.nvidiaBridgeAvailable(), "tampered bridge is refused")
 
         for kind in ["arm", "truncated", "directory", "outside", "dependency", "external-arm"] {
             let bad = temp.appendingPathComponent("shared-invalid-" + kind), badLib = try sharedSource(bad)

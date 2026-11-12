@@ -10,6 +10,15 @@ import Foundation
         let store=GameSettingsStore(root:root)
         let first=store.snapshot(game:game,hardware:[:],displays:[])
         precondition(first["status"] as? String == "ready")
+        let bridgeRoot=root.appendingPathComponent("bridge");try FileManager.default.createDirectory(at:bridgeRoot,withIntermediateDirectories:false)
+        let bridgeStore=GameSettingsStore(root:bridgeRoot,nvidiaBridgeAvailable:{true})
+        let bridgeSnapshot=bridgeStore.snapshot(game:game,hardware:[:],displays:[])
+        func backends(_ snapshot:[String:Any]) -> [[String:String]] { (snapshot["capabilities"] as! [String:Any])["backends"] as! [[String:String]] }
+        precondition(backends(bridgeSnapshot).contains { $0["value"]=="d3dmetal-nv" && ($0["label"] ?? "").contains("DLSS → MetalFX") })
+        precondition(!backends(first).contains { $0["value"]=="d3dmetal-nv" })
+        var bridgeSettings=bridgeSnapshot["settings"] as! [String:Any];bridgeSettings["backend"]="d3dmetal-nv"
+        let bridgeSave=bridgeStore.save(game:game,payload:bridgeSettings,expectedRevision:bridgeSnapshot["revision"] as? String,changedFields:["backend"])
+        precondition(bridgeSave["status"] as? String == "saved" && bridgeStore.requestedBackend(for:game)=="d3dmetal-nv")
         var settings=first["settings"] as! [String:Any]
         settings["launchArgs"] = "--label 'two words' $(literal)"
         settings["backend"] = "d3dmetal"

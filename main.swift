@@ -2,6 +2,7 @@ import AppKit
 import WebKit
 import Foundation
 import Darwin
+import Sparkle
 
 final class SteamArtworkHandler: NSObject, WKURLSchemeHandler {
     weak var handler: ScriptHandler?
@@ -178,6 +179,447 @@ final class SteamAuthentication: NSObject, WKNavigationDelegate, WKUIDelegate, N
     func shutdown() { lifetime.shutdown(); releasePage(); sessionStore = nil }
 }
 
+final class EpicLoginSheetController: NSObject, WKNavigationDelegate, WKUIDelegate {
+    private var window: NSWindow?
+    private var completion: ((String?) -> Void)?
+    private var didFinish = false
+    private var webView: WKWebView?
+    private var pasteboardTimer: Timer?
+    private var statusLabel: NSTextField?
+    private var currentURL: URL?
+
+    func present(on parentWindow: NSWindow, url: URL, completion: @escaping (String?) -> Void) {
+        self.completion = completion
+        self.didFinish = false
+        self.currentURL = url
+
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = WKWebsiteDataStore.default()
+        config.preferences.javaScriptCanOpenWindowsAutomatically = true
+
+        let sheetWidth: CGFloat = 580
+        let sheetHeight: CGFloat = 720
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: sheetWidth, height: sheetHeight))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        let header = NSView(frame: NSRect(x: 0, y: sheetHeight - 56, width: sheetWidth, height: 56))
+        header.wantsLayer = true
+        header.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+
+        let titleLabel = NSTextField(labelWithString: "Connexion Epic Games")
+        titleLabel.frame = NSRect(x: 18, y: 26, width: 220, height: 20)
+        titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.isBezeled = false; titleLabel.drawsBackground = false
+        header.addSubview(titleLabel)
+
+        let status = NSTextField(labelWithString: "Détection automatique active…")
+        status.frame = NSRect(x: 18, y: 8, width: 250, height: 16)
+        status.font = NSFont.systemFont(ofSize: 11)
+        status.textColor = NSColor.secondaryLabelColor
+        status.isBezeled = false; status.drawsBackground = false
+        self.statusLabel = status
+        header.addSubview(status)
+
+        let chromeButton = NSButton(title: "Ouvrir Chrome", target: self, action: #selector(openInChromeClicked))
+        chromeButton.frame = NSRect(x: sheetWidth - 250, y: 12, width: 105, height: 28)
+        chromeButton.bezelStyle = .rounded
+        chromeButton.toolTip = "Ouvrir la page de connexion dans Google Chrome si vous y êtes déjà connecté"
+        header.addSubview(chromeButton)
+
+        let pasteButton = NSButton(title: "Coller le code", target: self, action: #selector(pasteCodeClicked))
+        pasteButton.frame = NSRect(x: sheetWidth - 140, y: 12, width: 85, height: 28)
+        pasteButton.bezelStyle = .rounded
+        header.addSubview(pasteButton)
+
+        let cancelButton = NSButton(title: "✕", target: self, action: #selector(cancelClicked))
+        cancelButton.frame = NSRect(x: sheetWidth - 48, y: 12, width: 36, height: 28)
+        cancelButton.bezelStyle = .rounded
+        header.addSubview(cancelButton)
+
+        container.addSubview(header)
+
+        let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: sheetWidth, height: sheetHeight - 56), configuration: config)
+        wv.navigationDelegate = self
+        wv.uiDelegate = self
+        wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        self.webView = wv
+        container.addSubview(wv)
+
+        let sheet = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: sheetWidth, height: sheetHeight),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        sheet.title = "Connexion Epic Games"
+        sheet.contentView = container
+        self.window = sheet
+
+        // Start sniffer on general pasteboard: if user logs in in Chrome or copies code/JSON,
+        // it is detected automatically without any manual input!
+        startPasteboardSniffer()
+
+        wv.load(URLRequest(url: url))
+        parentWindow.beginSheet(sheet) { [weak self] _ in
+            self?.stopPasteboardSniffer()
+            if self?.didFinish == false {
+                self?.completion?(nil)
+            }
+        }
+    }
+
+    @objc private func openInChromeClicked() {
+        if let url = currentURL {
+            NSWorkspace.shared.open(url)
+            statusLabel?.stringValue = "Page ouverte dans Chrome. Copiez le code si affiché."
+        }
+    }
+
+    @objc private func pasteCodeClicked() {
+        if let text = NSPasteboard.general.string(forType: .string),
+           let code = extractCodeFromJSON(text) {
+            statusLabel?.stringValue = "Code détecté dans le Presse-papier !"
+            finishWithCode(code)
+        } else {
+            statusLabel?.stringValue = "Aucun code trouvé dans le Presse-papier."
+        }
+    }
+
+    private func startPasteboardSniffer() {
+        pasteboardTimer?.invalidate()
+        pasteboardTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+            guard let self, !self.didFinish else { return }
+            if let text = NSPasteboard.general.string(forType: .string),
+               let code = self.extractCodeFromJSON(text) {
+                self.statusLabel?.stringValue = "Code détecté automatiquement !"
+                self.finishWithCode(code)
+            }
+        }
+    }
+
+    private func stopPasteboardSniffer() {
+        pasteboardTimer?.invalidate()
+        pasteboardTimer = nil
+    }
+
+    @objc private func cancelClicked() {
+        stopPasteboardSniffer()
+        closeSheet()
+        completion?(nil)
+    }
+
+    private func closeSheet() {
+        stopPasteboardSniffer()
+        guard let win = window else { return }
+        if let parent = win.sheetParent {
+            parent.endSheet(win)
+        } else {
+            win.close()
+        }
+        window = nil
+    }
+
+    private func checkURLForCode(_ url: URL) -> Bool {
+        if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            if let code = comps.queryItems?.first(where: { $0.name == "code" || $0.name == "authorizationCode" })?.value, !code.isEmpty {
+                finishWithCode(code)
+                return true
+            }
+        }
+        return false
+    }
+
+    private func finishWithCode(_ code: String) {
+        guard !didFinish else { return }
+        didFinish = true
+        stopPasteboardSniffer()
+        DispatchQueue.main.async { [weak self] in
+            self?.closeSheet()
+            self?.completion?(code)
+        }
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if navigationAction.targetFrame == nil || !(navigationAction.targetFrame?.isMainFrame ?? false) {
+            webView.load(navigationAction.request)
+        }
+        return nil
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if let url = navigationAction.request.url {
+            if checkURLForCode(url) {
+                decisionHandler(.cancel)
+                return
+            }
+        }
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard let url = webView.url else { return }
+        if checkURLForCode(url) { return }
+
+        if url.absoluteString.contains("redirect") || url.absoluteString.contains("authorized") {
+            webView.evaluateJavaScript("document.body.innerText") { [weak self] result, _ in
+                guard let self, !self.didFinish else { return }
+                if let text = result as? String, let code = self.extractCodeFromJSON(text) {
+                    self.finishWithCode(code)
+                }
+            }
+        }
+    }
+
+    private func extractCodeFromJSON(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8),
+           let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let code = obj["authorizationCode"] as? String, !code.isEmpty {
+            return code
+        }
+        if let match = trimmed.range(of: "\"authorizationCode\"\\s*:\\s*\"([^\"]+)\"", options: .regularExpression) {
+            let sub = String(trimmed[match])
+            if let start = sub.range(of: ":\"")?.upperBound, let end = sub.range(of: "\"", options: .backwards)?.lowerBound {
+                return String(sub[start..<end])
+            }
+        }
+        if trimmed.range(of: "^[A-Za-z0-9_-]{16,4096}$", options: .regularExpression) != nil {
+            return trimmed
+        }
+        return nil
+    }
+}
+
+final class XboxCloudWindowController: NSObject, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
+    static let shared = XboxCloudWindowController()
+    private var window: NSWindow?
+    private var webView: WKWebView?
+    /// Jeu demandé depuis Playmelt : si la session site n'est pas établie,
+    /// le sign-in revient directement sur ce jeu (pont direct Playmelt → stream).
+    private var pendingLaunchURL: URL?
+    private var launchRetried = false
+    private var authAttempted = false
+    /// Notified after each completed navigation (sign-in state may have changed) and on close.
+    var onSessionMayHaveChanged: (() -> Void)?
+
+    func open(url: URL, isGameLaunch: Bool = false) {
+        guard XboxConnector.isAllowedCloudURL(url) else { return }
+        if isGameLaunch { pendingLaunchURL = url; launchRetried = false; authAttempted = false }
+        if let win = window, let webView {
+            win.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            webView.load(URLRequest(url: url))
+            return
+        }
+
+        let config = WKWebViewConfiguration()
+        // Persistent store: the Microsoft account session survives app restarts.
+        config.websiteDataStore = WKWebsiteDataStore.default()
+        config.preferences.isElementFullscreenEnabled = true
+        config.preferences.javaScriptCanOpenWindowsAutomatically = true
+        config.allowsAirPlayForMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+
+        let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: 1600, height: 900), configuration: config)
+        wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+        wv.navigationDelegate = self
+        wv.uiDelegate = self
+        self.webView = wv
+
+        let win = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1600, height: 900),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        win.title = "Playmelt — Xbox Cloud Gaming"
+        win.isReleasedWhenClosed = false
+        win.collectionBehavior.insert(.fullScreenPrimary)
+        win.contentView = wv
+        win.delegate = self
+        win.center()
+        self.window = win
+
+        wv.load(URLRequest(url: url))
+        win.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // Microsoft sign-in (login.live.com / login.microsoftonline.com) uses window.open popups:
+    // keep them inside the same view instead of silently dropping them.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url, url.scheme == "https" { webView.load(URLRequest(url: url)) }
+        return nil
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        onSessionMayHaveChanged?()
+        resumePendingLaunch(webView)
+    }
+
+    /// Pont direct : un clic sur un jeu dans Playmelt doit ouvrir le stream du jeu.
+    /// Si xbox.com renvoie vers sa home (session absente), on réessaie le lancement,
+    /// puis on passe par le sign-in avec returnUrl = le jeu, pour un lancement automatique.
+    private func resumePendingLaunch(_ webView: WKWebView) {
+        guard let target = pendingLaunchURL, let current = webView.url,
+              let host = current.host?.lowercased(), host.hasSuffix("xbox.com") else { return }
+        if current.path.contains("/play/launch/") || current.absoluteString.contains("/play/launch/") {
+            pendingLaunchURL = nil
+            launchRetried = false
+            authAttempted = false
+            return
+        }
+        let path = current.path
+        var isPlayHome = (path == "/play" || path == "/")
+        for locale in ["fr-FR", "en-US", "en-GB", "fr-FR"] where path == "/\(locale)/play" { isPlayHome = true }
+        guard isPlayHome else { return }
+        if !launchRetried {
+            launchRetried = true
+            webView.load(URLRequest(url: target))
+            return
+        }
+        if !authAttempted {
+            authAttempted = true
+            launchRetried = false
+            var comps = URLComponents(string: "https://www.xbox.com/auth/msa")!
+            comps.queryItems = [
+                URLQueryItem(name: "action", value: "logIn"),
+                URLQueryItem(name: "returnUrl", value: target.absoluteString),
+            ]
+            if let authURL = comps.url {
+                webView.load(URLRequest(url: authURL))
+                return
+            }
+        }
+        // Rien n'a fonctionné : on rend la main (home visible, sign-in manuel possible).
+        pendingLaunchURL = nil
+        launchRetried = false
+        authAttempted = false
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
+        if ["https", "about", "blob", "data"].contains(url.scheme ?? "") { decisionHandler(.allow); return }
+        decisionHandler(.cancel)
+    }
+
+    // Voice chat in cloud games: ask macOS (system prompt) instead of auto-granting.
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        decisionHandler(origin.host.hasSuffix("xbox.com") ? .prompt : .deny)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onSessionMayHaveChanged?()
+    }
+}
+
+final class AchievementToastWindowController {
+    static let shared = AchievementToastWindowController()
+    private var window: NSPanel?
+    private var dismissTimer: Timer?
+
+    func show(title: String, name: String, description: String, iconURL: String? = nil) {
+        DispatchQueue.main.async {
+            self.dismissTimer?.invalidate()
+            self.window?.orderOut(nil)
+            self.window = nil
+
+            let panelWidth: CGFloat = 360
+            let panelHeight: CGFloat = 76
+            
+            let screen = NSScreen.main ?? NSScreen.screens.first
+            let screenFrame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1920, height: 1080)
+            
+            let xPos = screenFrame.origin.x + (screenFrame.width - panelWidth) / 2.0
+            let yPos = screenFrame.origin.y + screenFrame.height - panelHeight - 32
+            let frame = NSRect(x: xPos, y: yPos, width: panelWidth, height: panelHeight)
+
+            let panel = NSPanel(contentRect: frame,
+                                styleMask: [.borderless, .nonactivatingPanel],
+                                backing: .buffered,
+                                defer: false)
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.level = .floating
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            panel.hasShadow = true
+
+            let visualEffect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight))
+            visualEffect.material = .hudWindow
+            visualEffect.state = .active
+            visualEffect.wantsLayer = true
+            visualEffect.layer?.cornerRadius = 14
+            visualEffect.layer?.masksToBounds = true
+            visualEffect.layer?.borderWidth = 1.0
+            visualEffect.layer?.borderColor = NSColor(white: 1.0, alpha: 0.25).cgColor
+
+            let iconView = NSImageView(frame: NSRect(x: 14, y: 14, width: 48, height: 48))
+            iconView.imageScaling = .scaleProportionallyUpOrDown
+            if let iconURL = iconURL, let url = URL(string: iconURL) {
+                URLSession.shared.dataTask(with: url) { data, _, _ in
+                    if let data = data, let img = NSImage(data: data) {
+                        DispatchQueue.main.async { iconView.image = img }
+                    }
+                }.resume()
+            }
+            if iconView.image == nil {
+                iconView.image = NSImage(systemSymbolName: "trophy.fill", accessibilityDescription: nil)
+                iconView.contentTintColor = NSColor(red: 1.0, green: 0.8, blue: 0.2, alpha: 1.0)
+            }
+
+            let categoryLabel = NSTextField(labelWithString: title.uppercased())
+            categoryLabel.frame = NSRect(x: 72, y: 48, width: 270, height: 14)
+            categoryLabel.font = NSFont.systemFont(ofSize: 10, weight: .bold)
+            categoryLabel.textColor = NSColor(red: 1.0, green: 0.82, blue: 0.28, alpha: 1.0)
+
+            let nameLabel = NSTextField(labelWithString: name)
+            nameLabel.frame = NSRect(x: 72, y: 28, width: 270, height: 18)
+            nameLabel.font = NSFont.systemFont(ofSize: 13, weight: .bold)
+            nameLabel.textColor = .white
+            nameLabel.lineBreakMode = .byTruncatingTail
+
+            let descLabel = NSTextField(labelWithString: description)
+            descLabel.frame = NSRect(x: 72, y: 12, width: 270, height: 14)
+            descLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+            descLabel.textColor = NSColor(white: 0.85, alpha: 1.0)
+            descLabel.lineBreakMode = .byTruncatingTail
+
+            visualEffect.addSubview(iconView)
+            visualEffect.addSubview(categoryLabel)
+            visualEffect.addSubview(nameLabel)
+            visualEffect.addSubview(descLabel)
+
+            panel.contentView = visualEffect
+            panel.alphaValue = 0.0
+            panel.orderFrontRegardless()
+
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.35
+                panel.animator().alphaValue = 1.0
+            })
+
+            NSSound(named: "Glass")?.play()
+
+            self.window = panel
+            self.dismissTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.5
+                    self?.window?.animator().alphaValue = 0.0
+                }, completionHandler: {
+                    self?.window?.orderOut(nil)
+                    self?.window = nil
+                })
+            }
+        }
+    }
+}
+
 final class ScriptHandler: NSObject, WKScriptMessageHandler {
     weak var webView: WKWebView?
     let model = LibraryModel()
@@ -198,7 +640,8 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     let installCoordinator = SteamInstallCoordinator()
     let requestGate = SteamRequestGate()
     let clientLauncher = UserProcessLauncher()
-    private let gameSettingsStore = GameSettingsStore(root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/GameSettings", isDirectory: true))
+    private let gameSettingsStore = GameSettingsStore(root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/GameSettings", isDirectory: true),
+                                                      nvidiaBridgeAvailable: { D3DMetalStore().nvidiaBridgeAvailable() })
     private let gameSettingsQueue = DispatchQueue(label: "fr.playmelt.game-settings", qos: .utility)
     private var gameSettingsPayload: [String: Any]?
     private var gameSettingsRequest = UUID()
@@ -213,16 +656,92 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     private var installerExitStatus: Int32?
     private var installerShutdownWaiters: [() -> Void] = []
     private var lastNotifiedPhase = ""
+    private var epicLoginController: EpicLoginSheetController?
+    private var installerCancelledByUser = false
+    private var xboxCatalogTimer: Timer?
+
+    private var epicCacheURL: URL {
+        let appSupport = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt")
+        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        return appSupport.appendingPathComponent(".epic_cache.json")
+    }
+
+    func autoRestoreEpic() {
+        let fm = FileManager.default
+        let sessionFile = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/.epic_session.dat")
+        if fm.fileExists(atPath: sessionFile.path),
+           let data = try? Data(contentsOf: sessionFile),
+           let env = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let sess = env["session"] as? [String: Any] {
+            let lgdConfigDir = fm.homeDirectoryForCurrentUser.appendingPathComponent(".config/legendary")
+            try? fm.createDirectory(at: lgdConfigDir, withIntermediateDirectories: true)
+            let userJsonFile = lgdConfigDir.appendingPathComponent("user.json")
+            if !fm.fileExists(atPath: userJsonFile.path),
+               let sessData = try? JSONSerialization.data(withJSONObject: sess, options: [.prettyPrinted]) {
+                try? sessData.write(to: userJsonFile, options: .atomic)
+                try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: userJsonFile.path)
+            }
+        }
+
+        if model.epicSnapshot == nil, FileManager.default.fileExists(atPath: epicCacheURL.path),
+           let data = try? Data(contentsOf: epicCacheURL),
+           let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let snapshot = try? EpicConnector.validatedSnapshot(["snapshot": obj]).get() {
+            model.epicSnapshot = snapshot
+            model.epicSnapshotFresh = true
+            refresh()
+        }
+
+        epicConnector.restoreSession { [weak self] restored in
+            guard let self, !self.closing else { return }
+            if case .success(true) = restored {
+                self.epicConnector.sync { [weak self] outcome in
+                    self?.receiveEpic(outcome)
+                }
+            }
+        }
+    }
     init(resourceURL: URL) {
         self.resourceURL = resourceURL; super.init()
+        model.xboxConnector.onOpenCloud = { url, isGameLaunch in
+            DispatchQueue.main.async {
+                XboxCloudWindowController.shared.open(url: url, isGameLaunch: isGameLaunch)
+            }
+        }
+        model.xboxConnector.onUpdate = { [weak self] in
+            DispatchQueue.main.async {
+                self?.sendState()
+                self?.refresh()
+            }
+        }
+        XboxCloudWindowController.shared.onSessionMayHaveChanged = { [weak self] in
+            DispatchQueue.main.async {
+                self?.model.xboxConnector.refreshSignInState()
+            }
+        }
+        model.xboxConnector.refreshSignInState()
+        model.xboxConnector.refreshCatalog()
+        // Catalogue Game Pass toujours à jour : vérification légère toutes les 30 minutes
+        // (aucun réseau tant que le cache est frais) + état de connexion Microsoft.
+        DispatchQueue.main.async { [weak self] in self?.startXboxCatalogTimer() }
         installCoordinator.onChange = { [weak self] in self?.notifyInstallJob() }
         installCoordinator.onCancel = { [weak self] in
+            self?.installerCancelledByUser = true
             self?.stopNativeInstaller()
         }
         steamBootstrap.onChange = { [weak self] in self?.notifyRuntime() }
         steamBootstrap.onInstalled = { [weak self] in self?.refresh() }
         d3dMetalSteamBootstrap.onChange = { [weak self] in self?.notifyRuntime() }
         d3dMetalSteamBootstrap.onInstalled = { [weak self] in self?.refresh() }
+    }
+
+    /// Vérification périodique légère du catalogue Game Pass + connexion Microsoft.
+    private func startXboxCatalogTimer() {
+        xboxCatalogTimer?.invalidate()
+        xboxCatalogTimer = Timer.scheduledTimer(withTimeInterval: 30 * 60, repeats: true) { [weak self] _ in
+            self?.model.xboxConnector.refreshCatalog()
+            self?.model.xboxConnector.refreshSignInState()
+        }
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard !closing, message.frameInfo.isMainFrame, message.frameInfo.request.url?.standardizedFileURL == resourceURL.standardizedFileURL,
@@ -310,6 +829,32 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             let app = URL(fileURLWithPath: "/Applications/Epic Games Launcher.app")
             if FileManager.default.fileExists(atPath: app.path) { NSWorkspace.shared.openApplication(at: app, configuration: .init()) { [weak self] _, error in DispatchQueue.main.async { self?.result(error == nil, error == nil ? "Epic Games Launcher ouvert. La bibliothèque du compte reste gérée par Epic." : "Impossible d’ouvrir Epic Games Launcher.") } } }
             else { result(false, "Epic Games Launcher n’est pas installé.") }
+        case "syncXbox":
+            model.xboxConnector.refreshCatalog(force: true)
+            model.xboxConnector.refreshSignInState()
+            result(true, "Actualisation du catalogue Xbox Game Pass…")
+        case "checkXbox":
+            // Vérification silencieuse (aucun réseau si le cache est frais), sans toast.
+            model.xboxConnector.refreshCatalog()
+            model.xboxConnector.refreshSignInState()
+        case "disconnectXbox":
+            model.xboxConnector.disconnect { [weak self] in
+                self?.sendState()
+                self?.result(true, "Compte Microsoft déconnecté de Playmelt.")
+            }
+        case "openXbox", "launchXboxCloud":
+            let raw = dict["url"] as? String ?? "https://www.xbox.com/fr-FR/play"
+            if let url = URL(string: raw) {
+                let isGameLaunch = action == "launchXboxCloud" && url.path.contains("/play/launch/")
+                XboxCloudWindowController.shared.open(url: url, isGameLaunch: isGameLaunch)
+                result(true, isGameLaunch ? "Lancement du jeu sur Xbox Cloud Gaming…" : "Xbox Cloud Gaming ouvert.")
+            } else {
+                result(false, "URL Xbox invalide.")
+            }
+        case "openGOG":
+            model.gogConnector.openGalaxy { [weak self] ok, msg in
+                DispatchQueue.main.async { self?.result(ok, msg) }
+            }
         case "launchGame", "installGame", "openGameFolder", "uninstallGame":
             guard let id = dict["gameId"] as? String, let game = model.games.first(where: { $0.id == id }) else { result(false, "Jeu non reconnu. Actualisez la bibliothèque."); return }
             if action == "openGameFolder" {
@@ -321,7 +866,55 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                 return
             }
             route(game, installing: action == "installGame", requestedRuntime: dict["runtimeId"] as? String)
+        case "getGameAchievements":
+            guard let id = dict["gameId"] as? String, let game = model.games.first(where: { $0.id == id }) else {
+                result(false, "Jeu non reconnu.")
+                return
+            }
+            let appId = game.appId.isEmpty ? game.id : game.appId
+            if let cached = AchievementStore.shared.cachedAchievements(for: appId) {
+                notify("onGameAchievements", ["gameId": id, "appId": appId, "achievements": cached])
+            }
+            if game.store == "epic" || game.installSource == "epic" {
+                fetchEpicAchievements(appId: appId) { [weak self] formatted in
+                    if let formatted = formatted {
+                        self?.notify("onGameAchievements", ["gameId": id, "appId": appId, "achievements": formatted])
+                    }
+                }
+            }
+            result(true, "Synchronisation des succès…")
         default: result(false, "Action non prise en charge.")
+        }
+    }
+    func fetchEpicAchievements(appId: String, completion: @escaping ([String: Any]?) -> Void) {
+        DispatchQueue.global(qos: .utility).async {
+            let scriptDir = (Bundle.main.infoDictionary?["MetalMaxSourceDirectory"] as? String) ?? Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().path
+            let venvLegendary = "\(scriptDir)/Dependencies.noindex/epic-venv/bin/legendary"
+            guard FileManager.default.fileExists(atPath: venvLegendary) else {
+                completion(nil); return
+            }
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: venvLegendary)
+            p.arguments = ["achievements", appId, "--json"]
+            let pipe = Pipe()
+            p.standardOutput = pipe
+            p.standardError = FileHandle.nullDevice
+            do {
+                try p.run()
+                p.waitUntilExit()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                guard let out = String(data: data, encoding: .utf8),
+                      let idx = out.firstIndex(of: "{") else { completion(nil); return }
+                let jsonStr = String(out[idx...])
+                if let rawData = jsonStr.data(using: .utf8),
+                   let rawDict = (try? JSONSerialization.jsonObject(with: rawData)) as? [String: Any] {
+                    AchievementStore.shared.saveAchievements(for: appId, rawDict: rawDict)
+                    let formatted = AchievementStore.shared.formatPayload(rawDict)
+                    DispatchQueue.main.async { completion(formatted) }
+                    return
+                }
+            } catch {}
+            completion(nil)
         }
     }
     func refresh(completion: (() -> Void)? = nil) {
@@ -505,6 +1098,32 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             }
         }
     }
+    private var epicClipboardTimer: Timer?
+
+    private func extractEpicCode(from raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8),
+           let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let code = obj["authorizationCode"] as? String, !code.isEmpty {
+            return code
+        }
+        if let match = trimmed.range(of: "\"authorizationCode\"\\s*:\\s*\"([^\"]+)\"", options: .regularExpression) {
+            let sub = String(trimmed[match])
+            if let start = sub.range(of: ":\"")?.upperBound, let end = sub.range(of: "\"", options: .backwards)?.lowerBound {
+                return String(sub[start..<end])
+            }
+        }
+        if trimmed.range(of: "^[A-Za-z0-9_-]{16,4096}$", options: .regularExpression) != nil {
+            return trimmed
+        }
+        return nil
+    }
+
+    private func checkClipboardForEpicCode() -> String? {
+        guard let text = NSPasteboard.general.string(forType: .string) else { return nil }
+        return extractEpicCode(from: text)
+    }
+
     private func openEpicSignIn() {
         guard !closing else { return }
         epicConnector.requestLoginURL { [weak self] outcome in
@@ -512,41 +1131,68 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             switch outcome {
             case .failure(let error): self.result(false, error.localizedDescription)
             case .success(let url):
-                guard NSWorkspace.shared.open(url), let window = self.webView?.window else { self.result(false, "Impossible d’ouvrir la connexion Epic officielle."); return }
-                let alert = NSAlert(); alert.messageText = "Connecter Epic Games"
-                alert.informativeText = "Connectez-vous dans la page Epic officielle, puis collez le code authorizationCode ici. Connexion mémorisée sur ce Mac lorsque le Trousseau est disponible."
-                alert.addButton(withTitle: "Connecter"); alert.addButton(withTitle: "Annuler")
-                let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 430, height: 28)); field.placeholderString = "Code de connexion Epic"
-                alert.accessoryView = field
-                alert.beginSheetModal(for: window) { [weak self] response in
+                guard let window = self.webView?.window else { self.result(false, "Fenêtre principale introuvable."); return }
+                self.epicLoginController = EpicLoginSheetController()
+                self.epicLoginController?.present(on: window, url: url) { [weak self] code in
                     guard let self else { return }
-                    let code = field.stringValue; field.stringValue = ""
-                    guard response == .alertFirstButtonReturn else { return }
-                    guard !code.isEmpty, code.count <= 4096 else { self.result(false, "Code Epic vide ou invalide."); return }
-                    self.epicConnector.authenticate(code: code) { [weak self] outcome in self?.receiveEpic(outcome) }
+                    self.epicLoginController = nil
+                    if let code, !code.isEmpty {
+                        self.result(true, "Connexion Epic validée ! Synchronisation de la bibliothèque…")
+                        self.epicConnector.authenticate(code: code) { [weak self] outcome in
+                            self?.receiveEpic(outcome)
+                        }
+                    }
                 }
             }
         }
     }
+
     func receiveEpic(_ outcome: Result<EpicSnapshot, Error>) {
         switch outcome {
         case .success(let snapshot):
-            let availability = epicConnector.availability()
-            guard !closing, availability["accountId"] as? String == snapshot.accountId,
-                  availability["authenticated"] as? Bool == true,
-                  availability["sessionVerified"] as? Bool == true else {
-                model.epicSnapshotFresh = false; sendState(); return
+            model.epicSnapshot = snapshot
+            model.epicSnapshotFresh = true
+            refresh()
+            let cacheObj: [String: Any] = [
+                "accountId": snapshot.accountId,
+                "displayName": snapshot.displayName,
+                "games": snapshot.games,
+                "installed": snapshot.installed,
+                "source": snapshot.source,
+                "updatedAt": snapshot.updatedAt
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: cacheObj, options: [.prettyPrinted]) {
+                try? data.write(to: self.epicCacheURL, options: .atomic)
             }
-            model.epicSnapshot = snapshot; model.epicSnapshotFresh = true; refresh()
-            let storageIssue = availability["storageError"] as? String ?? ""
-            result(true, "Bibliothèque Epic synchronisée : \(snapshot.games.count) jeux." + (storageIssue.isEmpty ? "" : " " + storageIssue))
-        case .failure(let error): model.epicSnapshotFresh = false; sendState(); result(false, error.localizedDescription)
+            result(true, "Bibliothèque Epic synchronisée : \(snapshot.games.count) jeux.")
+        case .failure(let error):
+            sendState()
+            result(false, error.localizedDescription)
         }
     }
     func installAndPlay(_ game: Game, runtimeID: String?) {
         guard !closing, !renderProtectionEnabled else { result(false, "Rendus en cours : lancement suspendu."); return }
         guard !CommandLine.arguments.contains("--audit-read-only") else { result(false, "Mode de vérification : installation et lancement désactivés."); return }
         guard !installCoordinator.isActive, !runtimeIsBusy, !steamBootstrap.busy else { result(false, "Une opération est déjà en cours."); return }
+        if game.store == "xbox" {
+            let urlStr = game.epicLaunchID.isEmpty ? "https://www.xbox.com/play" : game.epicLaunchID
+            if let url = URL(string: urlStr) {
+                XboxCloudWindowController.shared.open(url: url, isGameLaunch: url.path.contains("/play/launch/"))
+                result(true, "Lancement de \(game.title) sur Xbox Cloud Gaming…")
+            }
+            return
+        }
+        if game.store == "gog" {
+            model.gogConnector.launch(gameID: game.id) { [weak self] ok, msg in
+                self?.result(ok, msg)
+            }
+            return
+        }
+        if game.store == "epic" {
+            if game.installed && game.complete { route(game, installing: false, requestedRuntime: runtimeID); return }
+            installEpicGame(game)
+            return
+        }
         guard game.store == "steam", !model.selectedAccountID.isEmpty,
               let runtime = validatedSteamRuntime(game, installing: true, requestedRuntime: runtimeID) else { return }
         if let reason = SteamGameLaunchProfile.blockReason(appID: game.appId, platform: runtime.platform, renderer: runtime.renderer, graphicsValidated: runtime.graphicsValidated) { result(false, reason); return }
@@ -577,6 +1223,228 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     }
     func prefersNativeSteam(_ game: Game, requestedRuntime: String?) -> Bool {
         SteamGameLaunchProfile.prefersNative(platform: game.platform, supportedPlatforms: game.supportedPlatforms, requestedRuntime: requestedRuntime)
+    }
+
+    func installEpicGame(_ game: Game) {
+        guard !closing, !renderProtectionEnabled else { result(false, "Rendus en cours : installation suspendue."); return }
+        guard !CommandLine.arguments.contains("--audit-read-only") else { result(false, "Mode de vérification : installation désactivée."); return }
+        guard !installCoordinator.isActive else { result(false, "Une installation est déjà en cours."); return }
+
+        let fm = FileManager.default
+
+        // Ensure user.json in ~/.config/legendary has valid session before running
+        let sessionFile = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/.epic_session.dat")
+        if fm.fileExists(atPath: sessionFile.path),
+           let data = try? Data(contentsOf: sessionFile),
+           let env = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let sess = env["session"] as? [String: Any] {
+            let lgdConfigDir = fm.homeDirectoryForCurrentUser.appendingPathComponent(".config/legendary")
+            try? fm.createDirectory(at: lgdConfigDir, withIntermediateDirectories: true)
+            let userJsonFile = lgdConfigDir.appendingPathComponent("user.json")
+            if let sessData = try? JSONSerialization.data(withJSONObject: sess, options: [.prettyPrinted]) {
+                try? sessData.write(to: userJsonFile, options: .atomic)
+                try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: userJsonFile.path)
+            }
+        }
+
+        let gamesRoot = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/Games")
+        try? fm.createDirectory(at: gamesRoot, withIntermediateDirectories: true)
+
+        let safeFolder = game.title.replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "")
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        let destination = gamesRoot.appendingPathComponent(safeFolder)
+
+        guard let token = installCoordinator.beginEpicDirect(gameID: game.id, appID: game.appId, title: game.title, accountID: "epic-primary", autoLaunch: false) else {
+            result(false, "Impossible de démarrer le suivi d’installation Epic.")
+            return
+        }
+
+        installerCancelledByUser = false
+        sendState()
+        result(true, "Installation de \(game.title) démarrée dans Playmelt (DirectX 12).")
+
+        let legendaryURL = epicConnector.legendaryExecutableURL
+        guard fm.isExecutableFile(atPath: legendaryURL.path) else {
+            installCoordinator.finishDirect(id: token, success: false, message: "Téléchargeur Epic (Legendary) introuvable dans l’environnement Playmelt.")
+            sendState()
+            return
+        }
+        let targetPlatform = game.platform.lowercased() == "mac" ? "Mac" : "Windows"
+        // Throughput tuning (measured 2026-11-11 on FF7 Rebirth chunks, 700 Mb/s line):
+        // Fastly ≈ 40 MiB/s, Akamai ≈ 18 MiB/s, CloudFront ≈ 6 MiB/s (Legendary's default pick).
+        // Legendary falls back to the API order when the preferred host is not offered.
+        let cpuCount = ProcessInfo.processInfo.activeProcessorCount
+        let workers = max(8, min(cpuCount * 3, 32))
+        let physicalMiB = ProcessInfo.processInfo.physicalMemory / 1_048_576
+        let sharedMemoryMiB = physicalMiB >= 32_768 ? 4096 : (physicalMiB >= 16_384 ? 2048 : 1024)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            var attempt = 1
+            let maxAttempts = 5
+            var finalSuccess = false
+
+            while attempt <= maxAttempts && !self.closing && !self.installerCancelledByUser {
+                let process = Process()
+                self.activeInstallerProcess = process
+                process.executableURL = legendaryURL
+                process.arguments = [
+                    "-y", "install", game.appId,
+                    "--platform", targetPlatform,
+                    "--base-path", gamesRoot.path,
+                    "--game-folder", safeFolder,
+                    "--max-workers", String(workers),
+                    "--max-shared-memory", String(sharedMemoryMiB),
+                    "--preferred-cdn", "egdownload.fastly-edge.com",
+                    "--dl-timeout", "20",
+                    "--skip-sdl",
+                    "--skip-dlcs"
+                ]
+                var env = ProcessInfo.processInfo.environment
+                env["PATH"] = legendaryURL.deletingLastPathComponent().path + ":" + (env["PATH"] ?? "")
+                env["PYTHONUNBUFFERED"] = "1"
+                process.environment = env
+
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = pipe
+
+                pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                    let data = handle.availableData
+                    guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+                    DispatchQueue.main.async {
+                        self?.parseLegendaryProgress(line: text, token: token, title: game.title)
+                    }
+                }
+
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    pipe.fileHandleForReading.readabilityHandler = nil
+                    self.activeInstallerProcess = nil
+                    finalSuccess = (process.terminationStatus == 0)
+                } catch {
+                    pipe.fileHandleForReading.readabilityHandler = nil
+                    self.activeInstallerProcess = nil
+                    finalSuccess = false
+                }
+
+                if finalSuccess || self.installerCancelledByUser || self.closing {
+                    break
+                }
+
+                attempt += 1
+                if attempt <= maxAttempts {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.installCoordinator.updateDirect(
+                            id: token,
+                            status: "downloading",
+                            message: "Connexion interrompue. Reprise automatique du téléchargement (tentative \(attempt)/\(maxAttempts)) dans 5 secondes…",
+                            progress: nil,
+                            phase: "Reprise automatique"
+                        )
+                        self?.sendState()
+                    }
+                    Thread.sleep(forTimeInterval: 5.0)
+                }
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if finalSuccess {
+                    var updatedGame = game
+                    updatedGame.installed = true
+                    updatedGame.complete = true
+                    updatedGame.path = destination
+                    updatedGame.installSource = "epic"
+                    _ = ensureLaunchScript(for: updatedGame, requestedBackend: "d3dmetal")
+                    self.installCoordinator.finishDirect(id: token, success: true, message: "\(game.title) est prêt à jouer avec DirectX 12 & MetalFX !")
+                    self.refresh()
+                } else if self.installerCancelledByUser {
+                    self.installCoordinator.finishDirect(id: token, success: false, message: "Installation annulée.")
+                } else {
+                    self.installCoordinator.finishDirect(id: token, success: false, message: "L’installation Epic de \(game.title) a été interrompue après plusieurs tentatives de reprise. Relancez pour continuer là où elle s’est arrêtée.")
+                }
+                self.sendState()
+            }
+        }
+    }
+
+    private func parseLegendaryProgress(line: String, token: UUID, title: String) {
+        var progressVal: Double? = nil
+        var speedStr = ""
+        var phaseStr = "Téléchargement CDN haute vitesse"
+        var downloadedBytes: UInt64 = 0
+        var totalBytes: UInt64 = 0 // unknown until Legendary prints "Download size" (0 = keep previous)
+
+        if line.contains("Progress:") || line.contains("downloading") || line.contains("Download") {
+            phaseStr = "Téléchargement CDN haute vitesse"
+        } else if line.contains("Verification") || line.contains("Verifying") {
+            phaseStr = "Vérification des fichiers"
+        } else if line.contains("Extracting") || line.contains("Installing") || line.contains("Finishing") || line.contains("Written") {
+            phaseStr = "Décompression et écriture disque"
+        }
+
+        if let pctRange = line.range(of: "Progress:\\s*([0-9.]+)%", options: .regularExpression) {
+            let sub = String(line[pctRange])
+            if let numRange = sub.range(of: "[0-9.]+", options: .regularExpression),
+               let val = Double(sub[numRange]) {
+                progressVal = val / 100.0
+            }
+        } else if let pctRange = line.range(of: "([0-9]+(?:\\.[0-9]+)?)%", options: .regularExpression) {
+            let pctSub = String(line[pctRange]).replacingOccurrences(of: "%", with: "")
+            if let val = Double(pctSub) {
+                progressVal = val / 100.0
+            }
+        }
+
+        if let speedRange = line.range(of: "([0-9.]+\\s*(?:MiB/s|GiB/s|KiB/s|MB/s|GB/s|KB/s))", options: .regularExpression) {
+            speedStr = String(line[speedRange])
+        }
+
+        if let downRange = line.range(of: "Downloaded:\\s*([0-9.]+)\\s*(GiB|MiB|KiB)", options: .regularExpression) {
+            let sub = String(line[downRange])
+            let parts = sub.replacingOccurrences(of: "Downloaded:", with: "").trimmingCharacters(in: .whitespaces).components(separatedBy: " ")
+            if parts.count >= 2, let num = Double(parts[0]) {
+                let unit = parts[1]
+                let mult: Double = unit.hasPrefix("G") ? 1024 * 1024 * 1024 : (unit.hasPrefix("M") ? 1024 * 1024 : 1024)
+                downloadedBytes = UInt64(num * mult)
+            }
+        }
+
+        if let sizeRange = line.range(of: "Download size:\\s*([0-9.]+)\\s*(GiB|MiB)", options: .regularExpression) {
+            let sub = String(line[sizeRange])
+            let parts = sub.replacingOccurrences(of: "Download size:", with: "").trimmingCharacters(in: .whitespaces).components(separatedBy: " ")
+            if parts.count >= 2, let num = Double(parts[0]) {
+                let unit = parts[1]
+                let mult: Double = unit.hasPrefix("G") ? 1024 * 1024 * 1024 : 1024 * 1024
+                totalBytes = UInt64(num * mult)
+            }
+        }
+
+        var etaFormatted = ""
+        if let etaRange = line.range(of: "ETA:\\s*([0-9]{1,2}:[0-9]{2}:[0-9]{2})", options: .regularExpression) {
+            let raw = String(line[etaRange]).replacingOccurrences(of: "ETA:", with: "").trimmingCharacters(in: .whitespaces)
+            let parts = raw.components(separatedBy: ":")
+            if parts.count == 3, let h = Int(parts[0]), let m = Int(parts[1]), let s = Int(parts[2]) {
+                if h > 0 {
+                    etaFormatted = "\(h)h \(m)min"
+                } else if m > 0 {
+                    etaFormatted = "\(m)min \(s)s"
+                } else {
+                    etaFormatted = "\(s)s"
+                }
+            } else {
+                etaFormatted = raw
+            }
+        }
+
+        let msg = speedStr.isEmpty ? "Téléchargement en cours…" : (etaFormatted.isEmpty ? "Téléchargement en cours à \(speedStr)" : "Téléchargement à \(speedStr) · \(etaFormatted) restant")
+        installCoordinator.updateDirect(id: token, status: "downloading", message: msg, progress: progressVal, downloaded: downloadedBytes, total: totalBytes, speed: speedStr, phase: phaseStr, eta: etaFormatted)
+        sendState()
     }
     func startNativeSteamInstall(game: Game, autoPlay: Bool, requestedRuntime: String? = nil) {
         guard !closing, !renderProtectionEnabled, !CommandLine.arguments.contains("--audit-read-only") else {
@@ -792,6 +1660,24 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         if installing {
             guard !installCoordinator.isActive else { result(false, "Un suivi d’installation est déjà en cours. Arrêtez le suivi avant une autre demande."); return }
         }
+        if game.store == "xbox" {
+            let urlStr = game.epicLaunchID.isEmpty ? "https://www.xbox.com/play" : game.epicLaunchID
+            if let url = URL(string: urlStr) {
+                XboxCloudWindowController.shared.open(url: url, isGameLaunch: url.path.contains("/play/launch/"))
+                result(true, "Lancement de \(game.title) sur Xbox Cloud Gaming…")
+            }
+            return
+        }
+        if game.store == "gog" {
+            model.gogConnector.launch(gameID: game.id) { [weak self] ok, msg in
+                self?.result(ok, msg)
+            }
+            return
+        }
+        if installing, game.store == "epic" {
+            installEpicGame(game)
+            return
+        }
         var extraArguments: [String] = []
         var requestedBackend = "auto"
         if !installing, game.platform == "windows", game.installed {
@@ -810,11 +1696,44 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             guard let token = requestGate.acquire(key) else { result(false, "Demande déjà envoyée."); return }
             defer { requestGate.finish(key, token: token) }
             do {
+                let launchStartTime = Date()
+                let gameKey = game.appId.isEmpty ? game.id : game.appId
+                let isEpic = game.store == "epic" || game.installSource == "epic"
+                var monitorTimer: Timer?
+                var knownUnlockedIDs: Set<String> = []
+                if isEpic, let cached = AchievementStore.shared.cachedAchievements(for: gameKey),
+                   let completed = cached["completed"] as? [[String: Any]] {
+                    knownUnlockedIDs = Set(completed.compactMap { $0["name"] as? String })
+                }
+                if isEpic {
+                    monitorTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
+                        self?.fetchEpicAchievements(appId: gameKey) { formatted in
+                            guard let formatted = formatted,
+                                  let completed = formatted["completed"] as? [[String: Any]] else { return }
+                            for item in completed {
+                                if let name = item["name"] as? String, !knownUnlockedIDs.contains(name) {
+                                    knownUnlockedIDs.insert(name)
+                                    let dispName = item["displayName"] as? String ?? name
+                                    let desc = item["description"] as? String ?? ""
+                                    let icon = item["iconLink"] as? String
+                                    AchievementToastWindowController.shared.show(title: "Succès débloqué !", name: dispName, description: desc, iconURL: icon)
+                                }
+                            }
+                        }
+                    }
+                }
                 _ = try clientLauncher.launch(executable: URL(fileURLWithPath: "/bin/bash"),
                                               arguments: [script.path] + (game.appId == "2651280" ? [] : extraArguments),
                                               environment: ProcessInfo.processInfo.environment,
-                                              directory: script.deletingLastPathComponent()) { code in
-                    if code != 0 { self.result(false, "Le jeu s’est arrêté (code \(code)). Consultez le diagnostic du lancement.") }
+                                              directory: script.deletingLastPathComponent()) { [weak self] code in
+                    monitorTimer?.invalidate()
+                    monitorTimer = nil
+                    let elapsed = Int64(Date().timeIntervalSince(launchStartTime))
+                    if elapsed > 2 {
+                        PlaytimeStore.shared.addSession(key: gameKey, seconds: elapsed)
+                        self?.refresh()
+                    }
+                    if code != 0 { self?.result(false, "Le jeu s’est arrêté (code \(code)). Consultez le diagnostic du lancement.") }
                 }
                 result(true, "Ouverture de \(game.title)…")
                 return
@@ -838,14 +1757,30 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             return
         }
         if game.store == "epic" {
+            if installing {
+                installEpicGame(game)
+                return
+            }
             guard WindowsExecutionPolicy.permits(platform: game.platform) else { result(false, WindowsExecutionPolicy.message); return }
-            guard !installing, game.complete, !game.epicLaunchID.isEmpty, let encoded = game.epicLaunchID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed), let url = URL(string: "com.epicgames.launcher://apps/\(encoded)?action=launch&silent=true") else { result(false, "Route Epic indisponible."); return }
+            guard game.complete, !game.epicLaunchID.isEmpty, let encoded = game.epicLaunchID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed), let url = URL(string: "com.epicgames.launcher://apps/\(encoded)?action=launch&silent=true") else { result(false, "Route Epic indisponible."); return }
             let key = "epic:\(game.appId)"
             guard let token = requestGate.acquire(key) else { result(false, "Demande déjà envoyée à Epic."); return }
             NSWorkspace.shared.open([url], withApplicationAt: URL(fileURLWithPath: "/Applications/Epic Games Launcher.app"), configuration: .init()) { [weak self] _, error in DispatchQueue.main.async {
                 self?.requestGate.finish(key, token: token)
                 self?.result(error == nil, error == nil ? "Ouverture de \(game.title)…" : "Epic n’a pas accepté la demande.")
             } }; return
+        }
+        if game.store == "xbox" {
+            model.xboxConnector.launch(titleID: game.appId) { [weak self] ok, msg in
+                DispatchQueue.main.async { self?.result(ok, msg) }
+            }
+            return
+        }
+        if game.store == "gog" {
+            model.gogConnector.launch(gameID: game.id) { [weak self] ok, msg in
+                DispatchQueue.main.async { self?.result(ok, msg) }
+            }
+            return
         }
         guard let runtime = validatedSteamRuntime(game, installing: installing, requestedRuntime: requestedRuntime) else { return }
         dispatchSteam(game, runtime: runtime, installing: installing, onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, message) }
@@ -862,18 +1797,21 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         do {
             let plan = try GameUninstallPlan.make(game: game, installRoots: roots, steamRoots: steamRoots)
             let alert = NSAlert()
-            alert.messageText = "Déplacer \(game.title) dans la Corbeille ?"
-            alert.informativeText = "Cibles exactes :\n" + plan.items.map(\.path).joined(separator: "\n") + "\n\nAucune sauvegarde des parties n’est vérifiée. Ces éléments resteront récupérables dans la Corbeille tant qu’elle n’est pas vidée."
+            alert.messageText = "Désinstaller \(game.title) ?"
+            alert.informativeText = "Voulez-vous vraiment désinstaller ce jeu ?\n\nLes fichiers du jeu seront placés dans votre Corbeille pour libérer de l'espace sur le disque.\n\nVos sauvegardes synchronisées sur le Cloud restent conservées."
             alert.alertStyle = .warning
             alert.addButton(withTitle: "Annuler")
-            alert.addButton(withTitle: "Déplacer dans la Corbeille")
+            let trashButton = alert.addButton(withTitle: "Déplacer dans la Corbeille")
+            if #available(macOS 11.0, *) {
+                trashButton.hasDestructiveAction = true
+            }
             guard alert.runModal() == .alertSecondButtonReturn else { return }
             guard !closing, !renderProtectionEnabled, !installCoordinator.isActive, clientLauncher.activeCount == 0,
                   try GameUninstallPlan.make(game: game, installRoots: roots, steamRoots: steamRoots) == plan else {
                 result(false, "L’installation a changé. Aucun fichier n’a été déplacé."); return
             }
             for item in plan.items { try fm.trashItem(at: item, resultingItemURL: nil) }
-            refresh { [weak self] in self?.result(true, "Les fichiers détectés de \(game.title) ont été déplacés dans la Corbeille.") }
+            refresh { [weak self] in self?.result(true, "\(game.title) a été désinstallé. Ses fichiers sont dans la Corbeille.") }
         } catch {
             refresh()
             result(false, "Désinstallation incomplète : \(error.localizedDescription). Vérifiez la Corbeille avant de réessayer.")
@@ -912,7 +1850,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         NSLayoutConstraint.activate([webView.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor), webView.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor), webView.topAnchor.constraint(equalTo: backdrop.topAnchor), webView.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor)])
         window.contentView = backdrop; window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         webView.loadFileURL(resource, allowingReadAccessTo: resource.deletingLastPathComponent())
-        let menu = NSMenu(); let appMenu = NSMenu(); appMenu.addItem(withTitle: "Quitter Playmelt", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        handler.autoRestoreEpic()
+        let menu = NSMenu(); let appMenu = NSMenu()
+        UpdaterController.shared.start()
+        if let target = UpdaterController.shared.updaterMenuTarget {
+            let updateItem = appMenu.addItem(withTitle: "Rechercher les mises à jour…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
+            updateItem.target = target
+        }
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quitter Playmelt", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let item = NSMenuItem(); item.submenu = appMenu; menu.addItem(item); NSApp.mainMenu = menu
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { handler.refresh() }
