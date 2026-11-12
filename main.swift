@@ -645,6 +645,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     private let gameSettingsQueue = DispatchQueue(label: "fr.playmelt.game-settings", qos: .utility)
     /// Abonnement : inerte tant que PlaymeltPaywallEnabled n'est pas activé dans l'Info.plist.
     private let entitlementStore = EntitlementStore()
+    private let hubFeed = HubFeedStore()
     private var gameSettingsPayload: [String: Any]?
     private var gameSettingsRequest = UUID()
     var authentication: SteamAuthentication?
@@ -752,7 +753,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
               webView?.url?.standardizedFileURL == resourceURL.standardizedFileURL,
               let dict = message.body as? [String: Any], let action = dict["action"] as? String else { return }
         print("Playmelt action: \(action)"); fflush(stdout)
-        let duringScan: Set<String> = ["refresh", "setRenderProtection", "selectAccount", "cancelWindowsRuntime", "cancelD3DMetalRuntime", "cancelInstallAndPlay", "getGameSettings", "saveGameSettings"]
+        let duringScan: Set<String> = ["refreshHub", "openHubLink", "refresh", "setRenderProtection", "selectAccount", "cancelWindowsRuntime", "cancelD3DMetalRuntime", "cancelInstallAndPlay", "getGameSettings", "saveGameSettings"]
         guard !loading || duringScan.contains(action) else { result(false, "Lecture locale en cours. Réessayez dans un instant."); return }
         guard !RenderProtection.blocks(action, enabled: renderProtectionEnabled) else { result(false, "Rendus en cours : cette action est suspendue."); return }
         guard !WindowsExecutionPolicy.legacyActions.contains(action) else { result(false, WindowsExecutionPolicy.message); return }
@@ -768,6 +769,19 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             entitlementStore.deactivate { [weak self] ok in
                 DispatchQueue.main.async { self?.result(ok, ok ? "Ce Mac a été retiré de votre abonnement." : "Licence retirée de ce Mac ; le serveur n'a pas confirmé."); self?.sendState() }
             }
+        case "refreshHub":
+            // Accueil : la page envoie ses jeux suivis ; le flux en cache part tout de suite,
+            // l'actualisation réseau seulement s'il est périmé (ou sur demande, 1 fois par minute).
+            let refs = (dict["games"] as? [Any] ?? []).prefix(400).compactMap(HubGameRef.init)
+            let force = dict["force"] as? Bool ?? false
+            if !hubFeed.feed.isEmpty { notify("onHubFeed", hubFeed.feed) }
+            hubFeed.refresh(games: refs, force: force) { [weak self] feed in
+                guard let self, !self.closing else { return }
+                self.notify("onHubFeed", feed)
+            }
+        case "openHubLink":
+            guard let raw = dict["url"] as? String, raw.count <= 512, let url = HubFeedStore.allowedLink(raw) else { result(false, "Lien non autorisé."); return }
+            NSWorkspace.shared.open(url)
         case "openCheckout":
             guard let url = entitlementStore.configuration.checkoutURL, url.scheme == "https" else { result(false, "Boutique Playmelt pas encore ouverte."); return }
             NSWorkspace.shared.open(url)
