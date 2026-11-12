@@ -643,6 +643,8 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     private let gameSettingsStore = GameSettingsStore(root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/GameSettings", isDirectory: true),
                                                       nvidiaBridgeAvailable: { NvidiaBridgeStore.shared.available() })
     private let gameSettingsQueue = DispatchQueue(label: "fr.playmelt.game-settings", qos: .utility)
+    /// Abonnement : inerte tant que PlaymeltPaywallEnabled n'est pas activé dans l'Info.plist.
+    private let entitlementStore = EntitlementStore()
     private var gameSettingsPayload: [String: Any]?
     private var gameSettingsRequest = UUID()
     var authentication: SteamAuthentication?
@@ -757,6 +759,18 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         switch action {
         case "getGameSettings", "saveGameSettings":
             receiveGameSettings(action: action, payload: dict)
+        case "activateLicense":
+            guard let key = dict["key"] as? String, key.count <= 256 else { result(false, "Clé de licence invalide."); return }
+            entitlementStore.activate(key: key) { [weak self] decision in
+                DispatchQueue.main.async { self?.result(decision.allowsLaunch, decision.message); self?.sendState() }
+            }
+        case "deactivateLicense":
+            entitlementStore.deactivate { [weak self] ok in
+                DispatchQueue.main.async { self?.result(ok, ok ? "Ce Mac a été retiré de votre abonnement." : "Licence retirée de ce Mac ; le serveur n'a pas confirmé."); self?.sendState() }
+            }
+        case "openCheckout":
+            guard let url = entitlementStore.configuration.checkoutURL, url.scheme == "https" else { result(false, "Boutique Playmelt pas encore ouverte."); return }
+            NSWorkspace.shared.open(url)
         case "setRenderProtection":
             guard let enabled = dict["enabled"] as? Bool else { return }
             model.preferences.set(enabled, forKey: RenderProtection.preferenceKey)
@@ -1025,6 +1039,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         var state = model.state(); state["windowsRuntime"] = runtimePayload(); state["installJob"] = installCoordinator.snapshot ?? NSNull()
         state["renderProtectionEnabled"] = renderProtectionEnabled
         if let gameSettingsPayload { state["gameSettings"] = gameSettingsPayload }
+        state["subscription"] = entitlementStore.snapshot()
         notify("onNativeState", state)
     }
     private func gameSettingsContext(_ game: Game) -> GameSettingsContext {
@@ -1692,6 +1707,10 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         guard !CommandLine.arguments.contains("--audit-read-only") else { result(false, "Mode de vérification : installations et lancements désactivés."); return }
         if installing {
             guard !installCoordinator.isActive else { result(false, "Un suivi d’installation est déjà en cours. Arrêtez le suivi avant une autre demande."); return }
+        } else {
+            // Abonnement : sans effet tant que le paywall n'est pas activé.
+            let access = entitlementStore.decision()
+            guard access.allowsLaunch else { result(false, access.message); return }
         }
         if game.store == "xbox" {
             let urlStr = game.epicLaunchID.isEmpty ? "https://www.xbox.com/play" : game.epicLaunchID

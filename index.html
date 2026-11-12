@@ -865,6 +865,9 @@
       .settings-note { margin:0; color:#64748b; font-size:12px; line-height:1.5; }
       .settings-note + .settings-note { margin-top:8px; }
       .settings-guide { grid-column:1 / -1; display:grid; gap:8px; }
+      .subscription-plans { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin-bottom:14px; }
+      .subscription-plan { display:grid; gap:4px; padding:12px; border:1px solid rgba(148,163,184,.22); border-radius:14px; }
+      .subscription-price { font-size:18px; font-weight:700; font-variant-numeric:tabular-nums; color:#4A91FF; }
       .settings-guide > span { font-size:12px; color:#94a3b8; }
       .settings-guide-table { width:100%; border-collapse:collapse; font-size:12px; font-variant-numeric:tabular-nums; }
       .settings-guide-table th, .settings-guide-table td { text-align:left; padding:6px 8px; border-bottom:1px solid rgba(148,163,184,.18); }
@@ -2616,6 +2619,10 @@
     <dialog class="settings-dialog" id="gameSettingsDialog" aria-labelledby="gameSettingsTitle" aria-describedby="gameSettingsSubtitle">
       <div class="settings-head"><div><h2 id="gameSettingsTitle">Paramètres</h2><p class="settings-subtitle" id="gameSettingsSubtitle"></p></div><button class="settings-close" id="gameSettingsClose" aria-label="Fermer">×</button></div>
       <div class="settings-content" id="gameSettingsBody"></div>
+    </dialog>
+    <dialog class="settings-dialog" id="subscriptionDialog" aria-labelledby="subscriptionTitle">
+      <div class="settings-head"><div><h2 id="subscriptionTitle">Abonnement Playmelt</h2><p class="settings-subtitle" id="subscriptionStatus"></p></div><button class="settings-close" id="subscriptionClose" aria-label="Fermer">×</button></div>
+      <div class="settings-content" id="subscriptionBody"></div>
     </dialog>
     <div class="toast" id="toast" role="status" aria-live="polite" hidden>
       <span id="toastMessage"></span
@@ -5347,6 +5354,36 @@
           if (ui.view === "diagnostics") renderDiagnostics();
           else renderLibrary();
         }
+        // Abonnement : n'apparaît que si le paywall est activé côté app.
+        let subscriptionPrompted = false;
+        const euros = (cents) => (Number(cents) / 100).toFixed(2).replace(".", ",") + " €";
+        function openSubscription() {
+          const sub = state.subscription || {}, body = $("subscriptionBody");
+          $("subscriptionStatus").textContent = String(sub.message || "");
+          body.replaceChildren();
+          const plans = el("div", "subscription-plans");
+          (Array.isArray(sub.plans) ? sub.plans : []).forEach((plan) => {
+            const card = el("div", "subscription-plan");
+            card.append(el("strong", "", String(plan.label)), el("span", "subscription-price", euros(plan.priceCents)));
+            if (plan.monthlyEquivalentCents && plan.months > 1) card.append(el("span", "settings-note", euros(plan.monthlyEquivalentCents) + " / mois · −" + plan.savingPercent + " %"));
+            else if (plan.months === 1) card.append(el("span", "settings-note", "sans engagement"));
+            else card.append(el("span", "settings-note", "paiement unique"));
+            plans.append(card);
+          });
+          body.append(plans);
+          if (sub.checkoutURL) { const buy = el("button", "button", "Choisir une offre"); buy.addEventListener("click", () => send("openCheckout")); body.append(buy); }
+          const field = el("label", "settings-field full"); field.append(el("span", "", "Clé de licence reçue par e-mail"));
+          const input = el("input"); input.type = "text"; input.autocomplete = "off"; input.spellcheck = false; input.maxLength = 128; field.append(input);
+          const activate = el("button", "button secondary", "Activer sur ce Mac");
+          activate.addEventListener("click", () => { const key = input.value.trim(); if (key) send("activateLicense", { key }); });
+          body.append(field, activate);
+          if (sub.keySuffix) {
+            const remove = el("button", "button secondary", "Retirer ce Mac (clé …" + String(sub.keySuffix) + ")");
+            remove.addEventListener("click", () => send("deactivateLicense")); body.append(remove);
+          }
+          if (!$("subscriptionDialog").open) $("subscriptionDialog").showModal();
+        }
+        $("subscriptionClose").addEventListener("click", () => $("subscriptionDialog").close());
         window.onNativeState = (incoming) => {
           if (!incoming || typeof incoming !== "object") return;
           const nextGames = Array.isArray(incoming.games)
@@ -5372,6 +5409,10 @@
             epic: incoming.epic || state.epic,
             libraryStatus: incoming.libraryStatus || state.libraryStatus,
           };
+          if (incoming.subscription && incoming.subscription.enabled) {
+            if (!incoming.subscription.allowed && !subscriptionPrompted) { subscriptionPrompted = true; openSubscription(); }
+            else if ($("subscriptionDialog").open) openSubscription();
+          }
           if (typeof incoming.renderProtectionEnabled === "boolean")
             ui.pendingRenderProtection = null;
           received = true;
