@@ -1,0 +1,53 @@
+PLAYMELT — LICENCE PROPRIÉTAIRE / PROPRIETARY LICENSE
+Copyright (c) 2026 7AGENCY. Tous droits réservés. All rights reserved.
+
+FRANÇAIS (version qui fait foi)
+
+1. Le code source, les interfaces, les scripts, la documentation, les noms
+   « Playmelt » et « MetalMax », les logos et visuels de ce dépôt (le « Logiciel »)
+   sont la propriété exclusive de 7AGENCY et sont protégés par le Code de la
+   propriété intellectuelle et les conventions internationales.
+
+2. La publication de ce dépôt permet uniquement sa consultation. Elle ne
+   constitue ni une licence libre, ni une licence open source, ni une cession
+   de droits.
+
+3. Sauf accord écrit préalable de 7AGENCY, il est interdit de :
+   a) utiliser le Logiciel, en tout ou partie, à des fins commerciales,
+      notamment le vendre, le louer, le proposer par abonnement, l'intégrer à
+      un produit ou service payant, ou s'en servir pour générer un revenu ;
+   b) copier, reproduire, modifier, adapter, traduire ou créer des œuvres
+      dérivées du Logiciel ;
+   c) distribuer, publier, sous-licencier ou mettre à disposition le Logiciel
+      ou une version compilée, modifiée ou dérivée ;
+   d) contourner, désactiver ou retirer tout mécanisme de licence, d'abonnement
+      ou de vérification du Logiciel ;
+   e) utiliser les noms, marques ou visuels « Playmelt » ou « 7AGENCY ».
+
+4. L'utilisation de Playmelt n'est autorisée qu'au moyen des versions
+   officielles distribuées par 7AGENCY, dans les conditions de l'offre en
+   vigueur (abonnement ou licence).
+
+5. Les composants tiers listés dans THIRD_PARTY_NOTICES.md restent régis par
+   leurs propres licences. La présente licence ne restreint aucun droit que
+   ces licences accordent sur ces composants.
+
+6. Le Logiciel est fourni « en l'état », sans garantie d'aucune sorte.
+
+7. Toute violation pourra donner lieu à des poursuites, notamment pour
+   contrefaçon. Droit français applicable ; tribunaux compétents du ressort
+   du siège de 7AGENCY.
+
+Contact pour toute autorisation : via le site 7agency.fr.
+
+ENGLISH (convenience translation; the French version prevails)
+
+This repository is published for viewing only. It is not free or open-source
+software and grants no rights. Without prior written permission from 7AGENCY,
+you may not use the Software for any commercial purpose (including selling,
+renting, subscription or inclusion in any paid product or service); copy,
+modify or create derivative works; distribute, publish or sublicense it or
+any compiled or derived version; circumvent any licensing or subscription
+mechanism; or use the "Playmelt" or "7AGENCY" names and marks. Third-party
+components listed in THIRD_PARTY_NOTICES.md remain under their own licenses.
+The Software is provided "as is", without warranty of any kind.
