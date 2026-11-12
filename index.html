@@ -58,20 +58,10 @@
       [hidden] {
         display: none !important;
       }
-      .titlebar {
-        height: 36px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 11px;
-        color: #69727b;
-        letter-spacing: 0.02em;
-        user-select: none;
-      }
       .app {
         display: grid;
         grid-template-columns: 215px minmax(0, 1fr);
-        height: calc(100vh - 36px);
+        height: 100vh;
       }
       .sidebar {
         display: flex;
@@ -2345,10 +2335,14 @@
         opacity: 0.9;
         transform: translateY(-1px);
       }
+      /* Barre de fenêtre intégrée (fullSizeContentView) : la zone des boutons de
+         fenêtre (52 px, déplacement natif) reste libre de tout contrôle. */
+      :root { --chrome-top: 52px; }
+      .sidebar { padding-top: calc(var(--chrome-top) + 8px) !important; }
+      .main { padding-top: calc(var(--chrome-top) - 12px); }
     </style>
   </head>
   <body>
-    <div class="titlebar">Playmelt</div>
     <div class="app">
       <aside class="sidebar" aria-label="Navigation principale">
         <div class="brand">

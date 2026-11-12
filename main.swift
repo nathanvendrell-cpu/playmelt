@@ -1876,6 +1876,22 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// Bande de déplacement de la fenêtre, posée au-dessus du web dans la zone des
+/// boutons de fenêtre : glisser déplace, double-clic agrandit (réglage système).
+final class WindowDragStrip: NSView {
+    static let height: CGFloat = 52
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        if event.clickCount == 2 {
+            let action = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "Maximize"
+            if action == "Minimize" { window.performMiniaturize(nil) } else if action != "None" { window.performZoom(nil) }
+        } else {
+            window.performDrag(with: event)
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var window: NSWindow!
     var webView: WKWebView!
@@ -1893,13 +1909,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         webView = WKWebView(frame: .zero, configuration: config); webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground"); handler.webView = webView
         let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: min(1380, visible.width - 60), height: min(900, visible.height - 60)), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: min(1380, visible.width - 60), height: min(900, visible.height - 60)), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = Bundle.main.bundleIdentifier?.hasSuffix(".preview") == true ? "MetalMax Preview" : "Playmelt"
-        window.minSize = NSSize(width: 820, height: 600); window.titlebarAppearsTransparent = true; window.backgroundColor = .clear; window.isOpaque = false
+        // Barre intégrée : le contenu occupe toute la fenêtre, plus de bande transparente sur le bureau.
+        window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true; window.titlebarSeparatorStyle = .none
+        window.minSize = NSSize(width: 820, height: 600); window.backgroundColor = .clear; window.isOpaque = false
         window.appearance = NSAppearance(named: .aqua)
         let backdrop = NSVisualEffectView(); backdrop.material = .underWindowBackground; backdrop.blendingMode = .behindWindow; backdrop.state = .followsWindowActiveState
         backdrop.addSubview(webView); webView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([webView.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor), webView.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor), webView.topAnchor.constraint(equalTo: backdrop.topAnchor), webView.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor)])
+        let dragStrip = WindowDragStrip(); dragStrip.translatesAutoresizingMaskIntoConstraints = false; backdrop.addSubview(dragStrip)
+        NSLayoutConstraint.activate([dragStrip.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor), dragStrip.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor), dragStrip.topAnchor.constraint(equalTo: backdrop.topAnchor), dragStrip.heightAnchor.constraint(equalToConstant: WindowDragStrip.height)])
         window.contentView = backdrop; window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         webView.loadFileURL(resource, allowingReadAccessTo: resource.deletingLastPathComponent())
         handler.autoRestoreEpic()
