@@ -1,0 +1,11 @@
+{
+  "product": "prod_VcGnx9C9L5LHHq",
+  "prices": {
+    "monthly": "price_1Ub2FWRHi9FOsFqrpTiIdi53",
+    "quarterly": "price_1Ub2FWRHi9FOsFqrRoNQ8TDd",
+    "semiannual": "price_1Ub2FWRHi9FOsFqrPuh9Cn8J",
+    "annual": "price_1Ub2FWRHi9FOsFqrTyZEbTki",
+    "lifetime": "price_1Ub2FWRHi9FOsFqrB1FZj0aU"
+  },
+  "verification": "Observed in Stripe dashboard on 2026-11-12. No payment processed. API verification remains required before activation."
+}
