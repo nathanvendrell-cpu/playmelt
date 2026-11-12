@@ -1,0 +1,3 @@
+Options -Indexes
+RewriteEngine On
+RewriteRule ^$ /Playmelt/compte/#support [R=302,L,NE]

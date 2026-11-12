@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <base href="/Playmelt/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f3f5f7" />
+    <title>Playmelt — Votre bibliothèque. Votre Mac. À vous de jouer.</title>
+    <meta
+      name="description"
+      content="Steam, Epic Games, jeux Windows et Xbox Cloud : trouvez votre prochaine partie sur Mac. Découvrez les jeux, les accès et les formules Playmelt."
+    />
+    <link rel="icon" href="assets/images/PlaymeltIcon.png" />
+    <link rel="stylesheet" href="assets/css/playmelt.css?v=20261112-commerce-v4" />
+    <script src="assets/js/playmelt.js?v=20261112-commerce-v4" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#contenu">Aller au contenu</a>
+    <svg
+      class="icon-definitions"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <symbol id="i-arrow" viewBox="0 0 24 24">
+        <path d="M5 12h14m-6-6 6 6-6 6" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 3v12m-5-5 5 5 5-5M4 15v5h16v-5" />
+      </symbol>
+      <symbol id="i-grid" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      </symbol>
+      <symbol id="i-chip" viewBox="0 0 24 24">
+        <rect x="5" y="5" width="14" height="14" rx="3" />
+        <path d="M9 1v4m6-4v4M9 19v4m6-4v4M1 9h4m-4 6h4M19 9h4m-4 6h4" />
+        <rect x="9" y="9" width="6" height="6" rx="1" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path d="M3 7V4h6l3 3h9v13H3V7Z" />
+      </symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24">
+        <path
+          d="M5 3v5m0 4v9M12 3v11m0 4v3M19 3v3m0 4v11M2 8h6m1 10h6m1-12h6"
+        />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m16 16 5 5" />
+      </symbol>
+      <symbol id="i-apple" viewBox="0 0 24 24">
+        <path
+          d="M15 3c0 2-1 3-3 4 0-2 1-3 3-4Zm-3 5C7 5 3 9 5 15s4 7 7 5c3 2 5 0 7-4-4-2-4-6-1-8-2-2-4-2-6 0Z"
+        />
+      </symbol>
+    </svg>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="#" aria-label="Playmelt, accueil"
+          ><img
+            src="assets/images/PlaymeltLogo.png"
+            alt="Playmelt"
+            width="140"
+            height="40"
+        /></a>
+        <nav aria-label="Navigation principale">
+          <a href="#catalogue">Les jeux</a><a href="#fonctionnement">Comment ça marche</a><a href="#offres">Les formules</a><a href="compte/">Mon compte</a>
+        </nav>
+        <a
+          class="button button-small primary acquisition-link"
+          href="compte/?intent=download"
+          ><svg class="icon"><use href="#i-download" /></svg
+          ><span>Obtenir Playmelt</span><span class="mac-label">pour Mac</span></a
+        >
+      </div>
+    </header>
+    <main id="contenu">
+      <section class="hero" id="experience" aria-labelledby="hero-title">
+        <div class="hero-atmosphere" aria-hidden="true">
+          <div class="hero-scene"></div>
+          <div class="hero-orbit"></div>
+          <div class="hero-horizon"></div>
+          <div class="hero-ring"></div>
+          <div class="hero-spark spark-one"></div>
+          <div class="hero-spark spark-two"></div>
+        </div>
+        <div class="hero-copy container">
+          <p class="eyebrow">
+            <span class="status-dot"></span> STEAM · EPIC GAMES · XBOX CLOUD
+          </p>
+          <h1 id="hero-title">
+            Vos jeux.<br />Votre Mac.<br /><span>À vous de jouer.</span>
+          </h1>
+          <p class="hero-description">
+            Vos jeux Windows réunis sur Mac. Les grands univers Xbox à retrouver en cloud. Choisissez votre jeu, trouvez votre façon de jouer.
+          </p>
+          <div class="hero-actions">
+            <a
+              class="button primary"
+              href="#offres"
+              >Découvrir les formules <svg class="icon"><use href="#i-arrow" /></svg></a
+            ><a class="text-link" href="#catalogue"
+              >Explorer les jeux <span aria-hidden="true">↗</span></a
+            >
+          </div>
+          <p class="hero-footnote">
+            Apple Silicon · macOS 15 ou ultérieur
+            <span>Dès 19,99 €/mois · 30 jours d’essai prévus sur les abonnements. <a href="#offres">Conditions et ouverture</a>.</span>
+          </p>
+        </div>
+        <div class="hero-product container">
+          <div class="product-caption">
+            <span
+              ><span class="mini-line"></span> Explorez, c’est interactif</span
+            ><button
+              type="button"
+              id="motionToggle"
+              class="motion-toggle"
+              aria-pressed="false"
+              aria-label="Mettre les animations en pause"
+            >
+              <span class="motion-symbol" aria-hidden="true">Ⅱ</span
+              ><span id="motionLabel">Aperçu animé</span>
+            </button>
+          </div>
+          <div class="product-window">
+            <aside class="product-sidebar" aria-label="Parcourir l’aperçu">
+              <div class="window-lights" aria-hidden="true">
+                <i></i><i></i><i></i>
+              </div>
+              <img
+                class="preview-logo"
+                src="assets/images/PlaymeltLogo.png"
+                alt="Playmelt"
+              /><span class="sidebar-caption">VOTRE ESPACE</span
+              ><button
+                class="preview-nav selected"
+                type="button"
+                data-preview="library"
+                aria-pressed="true"
+              >
+                <svg class="icon"><use href="#i-grid" /></svg>
+                Bibliothèque</button
+              ><button
+                class="preview-nav"
+                type="button"
+                data-preview="game"
+                aria-pressed="false"
+              >
+                <svg class="icon"><use href="#i-folder" /></svg> Fiche du jeu</button
+              ><button
+                class="preview-nav"
+                type="button"
+                data-preview="access"
+                aria-pressed="false"
+              >
+                <svg class="icon"><use href="#i-chip" /></svg> Windows &amp; Cloud
+              </button>
+              <div class="sidebar-stores">
+                <span class="sidebar-caption">PLATEFORMES</span
+                ><span><i class="store-dot steam"></i> Steam</span
+                ><span><i class="store-dot epic"></i> Epic Games</span
+                ><span><i class="store-dot xbox"></i> Xbox Cloud</span>
+              </div>
+              <div class="sidebar-bottom">
+                <img
+                  src="assets/images/PlaymeltIcon.png"
+                  alt=""
+                  width="28"
+                  height="28"
+                /><span
+                  >Un espace pour jouer.<small>À votre façon.</small></span
+                >
+              </div>
+            </aside>
+            <div class="product-main">
+              <div class="product-toolbar">
+                <div>
+                  <span class="overline" id="previewEyebrow"
+                    >VOTRE PROCHAINE PARTIE</span
+                  >
+                  <h2 id="previewHeading">Le choix vous appartient.</h2>
+                </div>
+                <span class="preview-index" id="previewIndex">01 / 12</span>
+              </div>
+              <div class="preview-view" id="previewLibrary">
+                <div
+                  class="coverflow"
+                  id="coverflow"
+                  aria-label="Sélection de jeux"
+                >
+                  <p class="loading-note">Chargement du catalogue…</p>
+                </div>
+                <div class="selection-line">
+                  <div>
+                    <span class="game-status" id="selectedStatus"
+                      >Catalogue Playmelt</span
+                    >
+                    <h3 id="selectedTitle">Choisissez votre prochain jeu.</h3>
+                    <p id="selectedEngine">
+                      Des univers à retrouver sur votre Mac.
+                    </p>
+                  </div>
+                  <div class="selection-actions">
+                    <button
+                      class="round-button"
+                      id="previousGame"
+                      aria-label="Jeu précédent"
+                      type="button"
+                    >
+                      ←</button
+                    ><button
+                      class="round-button"
+                      id="nextGame"
+                      aria-label="Jeu suivant"
+                      type="button"
+                    >
+                      →</button
+                    ><button
+                      class="button primary"
+                      id="previewOpenGame"
+                      type="button"
+                    >
+                      Voir le jeu
+                      <svg class="icon"><use href="#i-arrow" /></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="preview-view" id="previewGame" hidden>
+                <div class="preview-game-banner" id="previewGameBanner">
+                  <div>
+                    <span class="game-status" id="previewGameStatus"></span>
+                    <h3 id="previewGameTitle"></h3>
+                  </div>
+                </div>
+                <div class="preview-game-bottom">
+                  <p id="previewGameNotes"></p>
+                  <button class="button" id="previewGameDetails" type="button">
+                    Voir les accès <span aria-hidden="true">↗</span>
+                  </button>
+                </div>
+              </div>
+              <div class="preview-view preview-engine" id="previewAccess" hidden>
+                <div class="preview-chip"><svg><use href="#i-apple" /></svg><span>À CHAQUE JEU, SON ACCÈS</span></div>
+                <h3>Sur votre Mac.<br />Ou depuis le cloud.</h3>
+                <p>Windows : vos jeux, un environnement adapté, une compatibilité à vérifier. Xbox Cloud : une sélection en streaming avec votre compte et un accès Xbox éligible.</p>
+                <a class="button" href="#catalogue">Trouver mon jeu <svg class="icon"><use href="#i-arrow" /></svg></a>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="hero-bottom container">
+          <span>Vos comptes. Vos jeux. Votre liberté.</span>
+          <a class="platform-name" href="#catalogue" data-catalogue-route="windows">Steam</a>
+          <a class="platform-name" href="#catalogue" data-catalogue-route="windows">Epic Games</a>
+          <a class="platform-name xbox-name" href="#catalogue" data-catalogue-route="cloud">Xbox Cloud <span>Game Pass</span></a>
+          <a href="#fonctionnement">Trouver mon accès <span aria-hidden="true">↓</span></a>
+        </div>
+      </section>
+      <section class="catalogue-section section-space" id="catalogue" aria-labelledby="catalogue-title">
+        <div class="container">
+          <div class="section-heading">
+            <div><p class="eyebrow">VOTRE PROCHAINE PARTIE</p><h2 id="catalogue-title">Voyez grand.</h2></div>
+            <p>Des mondes ouverts aux courses sans fin. Explorez une sélection de grands jeux et le mode d’accès de chacun.</p>
+          </div>
+          <div class="catalogue-toolbar">
+            <label class="catalogue-search"><svg class="icon"><use href="#i-search" /></svg><span class="sr-only">Rechercher un jeu</span><input id="gameSearch" type="search" placeholder="Cyberpunk, Forza, Spider-Man…" autocomplete="off" /></label>
+            <div class="catalogue-filters" role="group" aria-label="Filtrer les jeux par accès">
+              <button type="button" data-filter="all" aria-pressed="true">Tous les jeux</button>
+              <button type="button" data-filter="windows" aria-pressed="false">Windows</button>
+              <button type="button" data-filter="cloud" aria-pressed="false">Xbox Cloud</button>
+              <button type="button" data-filter="tested" aria-pressed="false">Essais sur Mac</button>
+            </div>
+          </div>
+          <div class="catalogue-meta"><p id="catalogueCount" role="status">Chargement de la sélection…</p><span>Ouvrez une fiche pour connaître ses conditions.</span></div>
+          <div class="game-grid" id="gameGrid"></div>
+          <p id="catalogueError" class="empty-state" hidden>La sélection n’a pas pu être chargée. <button type="button" id="reloadCatalogue">Réessayer</button></p>
+          <div class="catalogue-pagination"><span id="pageLabel"></span><div><button class="round-button" id="previousPage" type="button" aria-label="Page précédente">←</button><button class="round-button" id="nextPage" type="button" aria-label="Page suivante">→</button></div></div>
+          <div class="catalogue-context" id="catalogueContext"><strong>Une sélection, plusieurs façons de jouer.</strong><p>Windows : compatibilité, DRM et anti-triche variables selon le jeu. Xbox Cloud : catalogue et accès selon pays, compte et abonnement Xbox. Jeux, Game Pass et licences de plateformes non inclus dans Playmelt.</p><a href="https://www.xbox.com/fr-FR/play" target="_blank" rel="noopener">Le catalogue Xbox à jour ↗</a></div>
+        </div>
+      </section>
+      <section class="how-section section-space" id="fonctionnement" aria-labelledby="how-title">
+        <div class="container how-layout">
+          <div class="how-intro"><p class="eyebrow">COMMENT ÇA MARCHE</p><h2 id="how-title">Du choix à la partie.</h2><p>Gardez vos comptes et vos jeux. Playmelt organise votre bibliothèque et les environnements de vos jeux Windows.</p><a class="text-link" href="#offres">Choisir mon accès <span aria-hidden="true">↗</span></a></div>
+          <ol class="how-steps">
+            <li><span>01</span><div><h3>Créez votre compte.</h3><p>Vérifiez votre adresse e-mail et recevez le lien de téléchargement. Ouvrez le DMG, puis glissez Playmelt dans Applications. Apple Silicon, macOS 15 ou ultérieur.</p></div></li>
+            <li><span>02</span><div><h3>Retrouvez vos univers.</h3><p>Vos jeux Steam, Epic Games et locaux d’un côté. Les jeux Xbox Cloud sur le service officiel, avec votre compte Microsoft, de l’autre.</p></div></li>
+            <li><span>03</span><div><h3>Choisissez le bon chemin.</h3><p>Sur Mac, l’environnement et les réglages dépendent du titre. En cloud, prévoyez une bonne connexion et une manette compatible selon le jeu.</p></div></li>
+          </ol>
+        </div>
+      </section>
+      <section class="access-section" id="offres" aria-labelledby="access-title">
+        <div class="container access-layout">
+          <div class="access-copy">
+            <p class="eyebrow">L’ACCÈS PLAYMELT</p><h2 id="access-title">À votre rythme.</h2>
+            <p>Pour un mois, pour l’année ou pour longtemps : le même Playmelt, la durée qui vous convient.</p>
+            <ul class="access-benefits"><li>Votre bibliothèque et vos environnements Windows</li><li>Vos profils et réglages réunis par jeu</li><li>Votre compte pour retrouver et gérer votre accès</li></ul>
+            <a class="text-link" href="compte/">Déjà un compte ? Me connecter <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="access-offer">
+            <div class="plan-switch" role="group" aria-label="Durée de la formule">
+              <button type="button" data-plan="monthly" aria-pressed="true">1 mois</button>
+              <button type="button" data-plan="quarterly" aria-pressed="false">3 mois</button>
+              <button type="button" data-plan="semiannual" aria-pressed="false">6 mois</button>
+              <button type="button" data-plan="annual" aria-pressed="false">1 an</button>
+              <button type="button" data-plan="lifetime" aria-pressed="false">À vie</button>
+            </div>
+            <div class="plan-summary" aria-live="polite" aria-atomic="true">
+              <div class="access-period"><span id="planName">L’ABONNEMENT MENSUEL</span><span id="planBadge">30 jours d’essai</span></div>
+              <div class="access-price"><strong id="planPrice">19,99 €</strong><span id="planUnit">/ mois</span></div>
+              <p id="planBilling">Puis 19,99 € prélevés chaque mois. Renouvellement automatique.</p>
+              <p id="planTrial">Carte demandée au démarrage de l’essai. Annulez depuis votre compte avant le premier débit pour terminer l’essai sans frais d’abonnement.</p>
+            </div>
+            <a class="button primary" id="planCta" href="compte/?plan=monthly&amp;intent=download">Choisir cette formule <svg class="icon"><use href="#i-arrow" /></svg></a>
+            <p class="billing-status"><span class="status-dot"></span>Compte ouvert · paiements et essais bientôt disponibles.</p>
+            <p class="access-fine">Prix nets. TVA non applicable, art. 293 B du CGI. Jeux et abonnements aux plateformes vendus séparément. <a href="legal/conditions-de-vente/">Conditions de vente</a></p>
+          </div>
+        </div>
+        <div class="container download-strip" id="telecharger">
+          <img src="assets/images/PlaymeltIcon.png" alt="" width="52" height="52" />
+          <div><strong>Votre téléchargement, par e-mail.</strong><p>Créez votre compte, vérifiez votre e-mail et recevez le lien.<br />Version publique <span class="version-label">2.1.0</span> · Apple Silicon · macOS 15+ · <span id="downloadSize">8,2 Mo</span></p></div>
+          <a class="button primary acquisition-link" href="compte/?intent=download"><svg class="icon"><use href="#i-download" /></svg>Recevoir Playmelt</a>
+          <details class="download-integrity"><summary>Vérifier le fichier</summary><div><span id="downloadSource">Distribution officielle</span><code id="downloadHash">271f039cb64ca72531e708a0365c1f4fc363f6614eab390aa8a89f074ac6ca73</code><button type="button" class="text-link" id="copyHash">Copier l’empreinte</button></div></details>
+        </div>
+      </section>
+      <section class="faq-section section-space" id="questions" aria-labelledby="faq-title">
+        <div class="container faq-layout">
+          <div><p class="eyebrow">AVANT DE VOUS LANCER</p><h2 id="faq-title">Vos questions.</h2><p>Une question sur un jeu ou votre accès ?</p><a class="text-link" href="compte/">Mon compte &amp; support <span aria-hidden="true">↗</span></a></div>
+          <div class="faq-items">
+            <details><summary>Est-ce que tous les jeux fonctionnent ?<span aria-hidden="true">+</span></summary><p>La compatibilité Windows varie selon le jeu, son moteur, ses DRM, son anti-triche et votre Mac. La sélection est un point de départ : seules les fiches marquées « Essai sur Mac » correspondent à un essai Playmelt confirmé. Les autres titres Windows sont à évaluer. Aucune cadence ni qualité graphique universelle n’est garantie.</p></details>
+            <details><summary>Les jeux et le Game Pass sont-ils inclus ?<span aria-hidden="true">+</span></summary><p>Playmelt donne accès à l’application. Les jeux et licences Steam, Epic Games ou autres restent à acquérir auprès de leurs plateformes. Xbox Cloud est un service Microsoft séparé : un compte et un accès Xbox éligible sont nécessaires, avec Game Pass et/ou achat du jeu selon l’offre. Vérifiez le titre, le pays et les conditions chez Xbox avant de vous abonner.</p><a href="https://www.xbox.com/fr-FR/cloud-gaming" target="_blank" rel="noopener">Conditions Xbox Cloud Gaming ↗</a></details>
+            <details><summary>Quel Mac faut-il ?<span aria-hidden="true">+</span></summary><p>Playmelt nécessite un Mac Apple Silicon et macOS 15 ou ultérieur. Pour les jeux Windows, mémoire, espace disque et performances dépendent du titre et des réglages. Pour Xbox Cloud, vérifiez les appareils, navigateurs, connexions et manettes pris en charge par Microsoft.</p><a href="https://www.xbox.com/fr-FR/cloud-gaming#devices" target="_blank" rel="noopener">Vérifier les prérequis Xbox ↗</a></details>
+            <details><summary>Comment fonctionnent les 30 jours d’essai ?<span aria-hidden="true">+</span></summary><p>À l’ouverture des paiements, les abonnements comprendront 30 jours gratuits, avec carte bancaire demandée dès le départ. Le montant et l’échéance de votre formule seront indiqués avant confirmation. Sans annulation avant la fin de l’essai, le premier prélèvement aura lieu, puis l’abonnement se renouvellera à la période choisie. L’offre à vie, à 399 €, n’inclut pas d’essai.</p></details>
+            <details><summary>Puis-je changer de formule ou arrêter ?<span aria-hidden="true">+</span></summary><p>Votre compte est le point d’entrée pour gérer votre accès, vos informations et, à l’ouverture des paiements, votre abonnement. Une annulation arrête le prochain renouvellement ; les modalités et droits applicables sont détaillés dans les conditions de vente.</p><a href="legal/conditions-de-vente/">Lire les conditions de vente ↗</a></details>
+            <details><summary>Où saisir un code promotionnel ?<span aria-hidden="true">+</span></summary><p>À l’ouverture des paiements, le code promotionnel pourra être saisi dans le paiement Stripe. Son éligibilité, la remise et le montant final seront affichés avant confirmation. Aucun paiement n’est actuellement proposé depuis cette page.</p></details>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer><div class="container footer-inner">
+      <a class="brand" href="#" aria-label="Playmelt, accueil"><img src="assets/images/PlaymeltLogo.png" alt="Playmelt" width="120" height="34" /></a>
+      <span>7AGENCY — Nathan VENDRELL EI · 2026</span>
+      <a href="compte/">Mon compte</a><a href="#telecharger">Recevoir Playmelt</a><a href="legal/mentions-legales/">Mentions légales</a><a href="legal/conditions-de-vente/">Conditions de vente</a><a href="legal/confidentialite/">Confidentialité</a>
+      <p class="footer-rights">Jeux et visuels © leurs éditeurs respectifs. Playmelt est indépendant de Valve, Epic Games et Microsoft.</p>
+    </div></footer>
+    <dialog class="game-sheet" id="gameDialog" aria-labelledby="dialogTitle">
+      <div class="sheet-shell">
+        <div class="sheet-hero" id="dialogHero"><button class="sheet-back" id="closeDialog" type="button"><span aria-hidden="true">←</span> Le catalogue</button><div class="sheet-hero-content"><span class="game-status" id="dialogStatus"></span><h2 id="dialogTitle"></h2><span id="dialogPlatform"></span></div></div>
+        <div class="sheet-actionbar"><div><span class="overline">VOTRE MODE D’ACCÈS</span><strong id="dialogEngine"></strong></div><a class="button" id="dialogStore" href="#" rel="noopener" target="_blank">Voir le jeu ↗</a></div>
+        <div class="sheet-content">
+          <div class="sheet-report"><span class="eyebrow" id="dialogReportLabel">À VOUS DE JOUER</span><h3 id="dialogReportTitle"></h3><p id="dialogDescription"></p><p id="dialogNotes"></p><div class="sheet-observations" id="dialogObservations"><div><span>Mac de l’essai</span><strong id="dialogChip"></strong></div><div><span>Définition de l’essai</span><strong id="dialogResolution"></strong></div></div></div>
+          <aside class="sheet-evidence"><span class="overline" id="dialogEvidenceLabel">AVANT DE VOUS LANCER</span><h3 id="dialogEvidenceTitle"></h3><p id="dialogEvidenceDescription"></p><a class="text-link" id="dialogSource" href="#" target="_blank" rel="noopener">Source officielle ↗</a><details id="dialogTestDetails"><summary>Détails de l’essai <span aria-hidden="true">+</span></summary><dl><div><dt>Cadence</dt><dd id="dialogFps"></dd></div><div><dt>Reconstruction</dt><dd id="dialogMetalFx"></dd></div><div><dt>Mémoire</dt><dd id="dialogMemory"></dd></div></dl></details></aside>
+        </div>
+        <div class="sheet-footer"><svg class="icon"><use href="#i-sliders" /></svg><p id="dialogFootnote"></p><a class="text-link" id="dialogOffer" href="#offres">Découvrir Playmelt <span aria-hidden="true">↗</span></a></div>
+      </div>
+    </dialog>
+    <p class="toast" id="notice" role="status" hidden></p>
+    <noscript><div class="noscript-note">Activez JavaScript pour explorer la sélection et changer de formule. Votre compte et la demande de téléchargement par e-mail restent accessibles.</div></noscript>
+    <script src="compte/metrics.js" data-endpoint="/Playmelt/compte/v1/metrics/pageview" data-page="site" defer></script>
+  </body>
+</html>

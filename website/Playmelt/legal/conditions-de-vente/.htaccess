@@ -1,0 +1,3 @@
+Header unset Content-Security-Policy
+Header always set Content-Security-Policy "default-src 'none'; style-src 'sha256-Y+2eNPwbxer7RrioWdnh58J7dbrg8/ikIZwUj+0bXno='; img-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+Header always set Cache-Control "no-cache, no-transform"
