@@ -398,5 +398,9 @@ class PreferenceTests(unittest.TestCase):
         env=p.game_environment({'WINEDLLOVERRIDES':'d3d12=n,b;'},'/wine',None,backend='d3dmetal-nv')
         self.assertEqual(env['D3DM_ENABLE_METALFX'],'1')
         self.assertEqual(env['WINEDLLOVERRIDES'],'nvapi64,nvngx=b,n;d3d12=n,b;')
+        self.assertNotIn('D3DM_SUPPORT_DXR',env)
+        rt=p.game_environment({'WINEDLLOVERRIDES':'d3d12=n,b;'},'/wine',None,backend='d3dmetal-nv-rt')
+        self.assertEqual((rt['D3DM_ENABLE_METALFX'],rt['D3DM_SUPPORT_DXR']),('1','1'))
+        self.assertNotIn('D3DM_SUPPORT_DXR',p.game_environment({},'/wine',None,backend='d3dmetal'))
 
 if __name__=='__main__':unittest.main()

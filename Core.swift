@@ -707,8 +707,8 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
     let fm = FileManager.default
     guard LibraryModel.validAppID(game.appId) || game.store == "epic" || game.installSource == "local" || !game.appId.isEmpty else { return nil }
     let requiredBackend = SteamGameLaunchProfile.requiredRenderer(appID: game.appId)
-    let bridgeRequested = requestedBackend == "d3dmetal-nv"
-    guard ["auto", "dxmt", "d3dmetal", "d3dmetal-nv"].contains(requestedBackend),
+    let bridgeRequested = requestedBackend == "d3dmetal-nv" || requestedBackend == "d3dmetal-nv-rt"
+    guard ["auto", "dxmt", "d3dmetal", "d3dmetal-nv", "d3dmetal-nv-rt"].contains(requestedBackend),
           requestedBackend == "auto" || requiredBackend == "auto" || requestedBackend == requiredBackend ||
             (bridgeRequested && requiredBackend == "d3dmetal") else { return nil }
     guard (game.installSource == "local" || game.store == "steam" || game.store == "epic"), let folder = game.path else { return nil }
@@ -729,6 +729,10 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
            (game.appId.lowercased().contains("rebirth") && !content.contains("r.SSR.Quality=4")) ||
            (content.contains("# Lanceur direct Playmelt") && !content.contains("# Playmelt launcher v3")) {
             // Needs regeneration below
+        } else if requestedBackend == "auto",
+                  let content = try? String(contentsOf: existing, encoding: .utf8),
+                  content.contains("D3DM_ENABLE_METALFX") || content.contains("D3DM_SUPPORT_DXR") {
+            // Retour en automatique : ne pas garder le pont NVIDIA / DXR d'un ancien choix.
         } else if requestedBackend == "auto" {
             return existing
         } else if !contentIsOwnedLaunchScript(existing) {
@@ -744,8 +748,10 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
     let isUnity = chosen.lowercased().contains("unity") || files.contains(where: { $0.lowercased().hasSuffix("_data") || $0.lowercased().contains("unityplayer.dll") })
     let dx12Markers = files.contains(where: { $0.lowercased().contains("d3d12core.dll") || $0.lowercased().contains("d3d12sdklayers.dll") || $0.lowercased().contains("plugins/nne") })
     let selectedBackend = requestedBackend == "auto" ? SteamGameLaunchProfile.localRenderer(appID: game.appId, unity: isUnity, dx12Markers: dx12Markers) : requestedBackend
-    let isDX12 = selectedBackend == "d3dmetal" || selectedBackend == "d3dmetal-nv"
-    let useNvidiaBridge = selectedBackend == "d3dmetal-nv"
+    let isDX12 = ["d3dmetal", "d3dmetal-nv", "d3dmetal-nv-rt"].contains(selectedBackend)
+    let useNvidiaBridge = selectedBackend == "d3dmetal-nv" || selectedBackend == "d3dmetal-nv-rt"
+    // Ray tracing DXR : opt-in par jeu, uniquement avec le pont (Ray Reconstruction).
+    let useDXR = selectedBackend == "d3dmetal-nv-rt"
     let base = RuntimeSetup().descriptor()
     guard base.readyEngine else { return nil }
     if isDX12 {
@@ -779,7 +785,8 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
     } else if isDX12 {
         extraArgs = localGameDX12Arguments(appID: game.appId, projectName: projName).map(shellLiteral).joined(separator: " ")
         // Pont DLSS → MetalFX : exports runtime + répertoire wine du composant moteur.
-        let bridgeExports = useNvidiaBridge ? "export D3DM_ENABLE_METALFX=\"1\"\nexport WINEDLLOVERRIDES=\"nvapi64,nvngx=b,n;$WINEDLLOVERRIDES\"\n" : ""
+        let bridgeExports = (useNvidiaBridge ? "export D3DM_ENABLE_METALFX=\"1\"\nexport WINEDLLOVERRIDES=\"nvapi64,nvngx=b,n;$WINEDLLOVERRIDES\"\n" : "")
+            + (useDXR ? "export D3DM_SUPPORT_DXR=\"1\"\n" : "")
         let bridgeWinePath = useNvidiaBridge ? ":" + shellLiteral(NvidiaBridgeStore.shared.winePath) : ""
         scriptContent = """
         #!/bin/bash

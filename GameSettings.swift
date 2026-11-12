@@ -54,11 +54,29 @@ final class GameSettingsStore {
         if options.contains(where: { $0["value"] == "d3dmetal" }), nvidiaBridgeAvailable() {
             // Honest label: the game still asks for DLSS; Apple translates it.
             options.append(["value":"d3dmetal-nv","label":"D3DMetal · DLSS → MetalFX (pont NVIDIA)"])
+            // Ray tracing DX12 (DXR) traduit par D3DMetal ; requis pour que le jeu
+            // propose le Ray Reconstruction (DLSSD → débruiteur MetalFX).
+            options.append(["value":"d3dmetal-nv-rt","label":"D3DMetal · DLSS → MetalFX + ray tracing (DXR)"])
         }
         var result: [String:Any] = ["launchArgs":enabled,"backends":options,"display":special,"graphics":special]
+        if options.contains(where: { $0["value"] == "d3dmetal-nv" }) { result["resolutionGuide"] = Self.resolutionGuide }
         if !enabled { result["readOnlyReason"] = "Réglages de lancement indisponibles pour cette plateforme ou ce jeu non installé." }
         return result
     }
+    /// Mode DLSS conseillé (à choisir dans le jeu) pour une sortie 2K ou 4K.
+    /// Coûts mesurés le 12/11/2026 sur M3 Max, macOS 27.0.1, MetalFX seul
+    /// (`probes/metalfx-2k-4k-cost.swift`, médiane GPU de 30 images) : ce n'est
+    /// pas le coût du jeu, seulement celui de la traduction DLSS → MetalFX.
+    static let resolutionGuide: [String:Any] = [
+        "source": "MetalFX seul, M3 Max, 12/11/2026 — le rendu du jeu s'ajoute",
+        "rows": [
+            ["output":"2K · 2560×1440","rayTracing":false,"dlssMode":"Qualité","render":"1707×960","metalFXMs":0.60],
+            ["output":"2K · 2560×1440","rayTracing":true,"dlssMode":"Performance","render":"1280×720","metalFXMs":4.51],
+            ["output":"4K · 3840×2160","rayTracing":false,"dlssMode":"Performance","render":"1920×1080","metalFXMs":1.06],
+            ["output":"4K · 3840×2160","rayTracing":true,"dlssMode":"Ultra performance","render":"1280×720","metalFXMs":5.48],
+        ] as [[String:Any]],
+        "note": "Avec ray tracing, le débruiteur (Ray Reconstruction) coûte 6,8 ms en 2K Qualité et 15,2 ms en 4K Qualité : un mode plus bas garde la fluidité.",
+    ]
     private func keys(_ object: [String:Any], _ expected: Set<String>) throws {
         guard Set(object.keys) == expected else { throw Issue.invalid("Champs manquants ou inconnus") }
     }

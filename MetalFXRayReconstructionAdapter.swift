@@ -1,17 +1,25 @@
 import Foundation
 import Metal
 import MetalFX
-import ObjectiveC
+import simd
 
-/// Native MetalFX Ray Reconstruction (DLSS 3.5 RR / Temporal Denoising Scaler).
-/// Bridges noisy ray-traced radiance buffers, surface geometry G-buffers
-/// (albedo, normal, roughness, hit distance) and camera matrices to Apple
-/// Silicon's native MetalFX Temporal Denoised Scaler and Neural Engine.
-@available(macOS 14.0, *)
+/// Adaptateur Playmelt vers le débruiteur-agrandisseur MetalFX
+/// (`MTLFXTemporalDenoisedScaler`, macOS 26+), l'équivalent Apple du
+/// DLSS Ray Reconstruction.
+///
+/// Portée réelle :
+/// - Pour les **jeux Windows DX12**, cet adaptateur n'est PAS le chemin utilisé :
+///   D3DMetal (GPTK 4) traduit lui-même les appels NGX « DLSSD » vers ce même
+///   débruiteur, à l'intérieur du jeu, quand le pont NVIDIA est installé
+///   (`D3DM_ENABLE_METALFX=1`) et le ray tracing activé (`D3DM_SUPPORT_DXR=1`).
+/// - Cet adaptateur sert au futur moteur natif / post-traitement Playmelt, qui
+///   possède ses propres textures Metal. Il n'est branché à aucun jeu
+///   (`gameFrameProviderConnected == false`).
+/// - Apple ne documente pas l'unité de calcul utilisée par MetalFX : aucune
+///   accélération Neural Engine n'est revendiquée.
+@available(macOS 26.0, *)
 final class MetalFXRayReconstructionAdapter {
     struct Configuration: Equatable {
-        static let minimumOutputWidth = 1280
-        static let minimumOutputHeight = 720
         static let maximumDimension = 7680
 
         let inputWidth: Int
@@ -25,17 +33,20 @@ final class MetalFXRayReconstructionAdapter {
         var diffuseAlbedoFormat: MTLPixelFormat = .rgba16Float
         var specularAlbedoFormat: MTLPixelFormat = .rgba16Float
         var normalFormat: MTLPixelFormat = .rgba16Float
-        var roughnessFormat: MTLPixelFormat = .r8Unorm
-        var specularHitDistanceFormat: MTLPixelFormat = .r16Float
+        var roughnessFormat: MTLPixelFormat = .r16Float
         var outputFormat: MTLPixelFormat = .rgba16Float
+        /// Distance d'impact spéculaire : optionnelle, déclarée à la création.
+        var specularHitDistanceFormat: MTLPixelFormat? = nil
+        var depthReversed = false
+        var autoExposure = false
 
         func validate() throws {
             guard (1...Self.maximumDimension).contains(inputWidth),
                   (1...Self.maximumDimension).contains(inputHeight),
-                  (Self.minimumOutputWidth...Self.maximumDimension).contains(outputWidth),
-                  (Self.minimumOutputHeight...Self.maximumDimension).contains(outputHeight),
+                  (1...Self.maximumDimension).contains(outputWidth),
+                  (1...Self.maximumDimension).contains(outputHeight),
                   inputWidth <= outputWidth, inputHeight <= outputHeight else {
-                throw Failure.invalidConfiguration("Dimensions hors limites ou non-upscaling")
+                throw Failure.invalidConfiguration("Dimensions hors limites ou réduction demandée")
             }
             let inAspect = Double(inputWidth) / Double(inputHeight)
             let outAspect = Double(outputWidth) / Double(outputHeight)
@@ -46,33 +57,31 @@ final class MetalFXRayReconstructionAdapter {
     }
 
     struct Metadata {
-        let sequence: UUID
         let frameIndex: UInt64
         let resetHistory: Bool
+        /// Jitter de la caméra en pixels d'entrée, dans [-0,5 ; 0,5].
         var jitterX: Float
         var jitterY: Float
         var preExposure: Float = 1.0
         var motionScaleX: Float = 1.0
         var motionScaleY: Float = 1.0
-        var worldToViewMatrix: [Float]? = nil
-        var viewToClipMatrix: [Float]? = nil
+        /// Matrices caméra exigées par le débruiteur (colonnes majeures, simd).
+        var worldToView: simd_float4x4
+        var viewToClip: simd_float4x4
 
         func validate() throws {
-            guard jitterX.isFinite, jitterY.isFinite, abs(jitterX) <= 1.0, abs(jitterY) <= 1.0 else {
+            guard jitterX.isFinite, jitterY.isFinite, abs(jitterX) <= 0.5, abs(jitterY) <= 0.5 else {
                 throw Failure.invalidJitter
             }
-            guard preExposure.isFinite, preExposure > 0 else {
-                throw Failure.invalidExposure
-            }
-            if let w2v = worldToViewMatrix {
-                guard w2v.count == 16, w2v.allSatisfy({ $0.isFinite }) else {
-                    throw Failure.invalidMatrix("worldToView")
-                }
-            }
-            if let v2c = viewToClipMatrix {
-                guard v2c.count == 16, v2c.allSatisfy({ $0.isFinite }) else {
-                    throw Failure.invalidMatrix("viewToClip")
-                }
+            guard preExposure.isFinite, preExposure > 0 else { throw Failure.invalidExposure }
+            guard motionScaleX.isFinite, motionScaleY.isFinite else { throw Failure.invalidMotionScale }
+            guard Self.finite(worldToView) else { throw Failure.invalidMatrix("worldToView") }
+            guard Self.finite(viewToClip), viewToClip.determinant != 0 else { throw Failure.invalidMatrix("viewToClip") }
+        }
+
+        private static func finite(_ m: simd_float4x4) -> Bool {
+            [m.columns.0, m.columns.1, m.columns.2, m.columns.3].allSatisfy {
+                $0.x.isFinite && $0.y.isFinite && $0.z.isFinite && $0.w.isFinite
             }
         }
     }
@@ -82,9 +91,9 @@ final class MetalFXRayReconstructionAdapter {
         let depth: MTLTexture
         let motion: MTLTexture
         let diffuseAlbedo: MTLTexture
+        let specularAlbedo: MTLTexture
         let normal: MTLTexture
         let roughness: MTLTexture
-        var specularAlbedo: MTLTexture? = nil
         var specularHitDistance: MTLTexture? = nil
         let output: MTLTexture
         let metadata: Metadata
@@ -93,163 +102,143 @@ final class MetalFXRayReconstructionAdapter {
     enum Failure: Error, Equatable {
         case invalidConfiguration(String)
         case unsupportedDevice
-        case descriptorUnavailable
         case scalerCreationFailed
         case invalidJitter
         case invalidExposure
+        case invalidMotionScale
         case invalidMatrix(String)
-        case textureDimensionMismatch(String)
+        case textureMismatch(String)
+        case frameOutOfOrder
         case frameInFlight
     }
 
-    struct CapabilitySnapshot {
-        let nativeRayReconstructionAvailable: Bool
-        let neuralEngineAccelerated: Bool
-        let supportsSpecularHitDistance: Bool
-        let maxOutputResolution: String
+    struct CapabilitySnapshot: Equatable {
+        let temporalDenoisedScalerAvailable: Bool
+        /// Toujours faux : aucun fournisseur d'images de jeu n'est branché ici.
+        let gameFrameProviderConnected = false
+        /// Toujours faux : Apple ne documente pas l'unité de calcul de MetalFX.
+        let neuralEngineAccelerationVerified = false
+        /// Les jeux Windows DX12 passent par la traduction NGX de D3DMetal.
+        let windowsGamesPath = "D3DMetal (GPTK 4) : DLSSD → MTLFXTemporalDenoisedScaler, in-process"
     }
 
     static func supports(device: MTLDevice) -> Bool {
-        if #available(macOS 26.0, *) {
-            return MTLFXTemporalDenoisedScalerDescriptor.supportsDevice(device)
-        }
-        guard let descClass = NSClassFromString("MTLFXTemporalDenoisedScalerDescriptor") as AnyObject? else {
-            return false
-        }
-        let sel = NSSelectorFromString("supportsDevice:")
-        guard descClass.responds(to: sel) else { return false }
-        if let method = class_getClassMethod(object_getClass(descClass), sel) {
-            typealias Fn = @convention(c) (AnyObject, Selector, MTLDevice) -> Bool
-            let imp = unsafeBitCast(method_getImplementation(method), to: Fn.self)
-            return imp(descClass, sel, device)
-        }
-        return false
+        MTLFXTemporalDenoisedScalerDescriptor.supportsDevice(device)
     }
 
     static func capabilitySnapshot(device: MTLDevice?) -> CapabilitySnapshot {
-        let available = device.map { supports(device: $0) } ?? false
-        return CapabilitySnapshot(
-            nativeRayReconstructionAvailable: available,
-            neuralEngineAccelerated: available,
-            supportsSpecularHitDistance: available,
-            maxOutputResolution: "7680x4320 (8K)"
-        )
+        CapabilitySnapshot(temporalDenoisedScalerAvailable: device.map { supports(device: $0) } ?? false)
     }
 
     let configuration: Configuration
     let device: MTLDevice
-    private let scalerInstance: AnyObject
-    private let encodeSelector: Selector
-    private let encodeImp: @convention(c) (AnyObject, Selector, MTLCommandBuffer) -> Void
+    private let scaler: MTLFXTemporalDenoisedScaler
     private let lock = NSLock()
-    private var busy = false
+    private var lastFrameIndex: UInt64?
+
+    var inputContentScaleRange: ClosedRange<Float> { scaler.inputContentMinScale...scaler.inputContentMaxScale }
 
     init(configuration: Configuration, device: MTLDevice) throws {
         try configuration.validate()
-        guard Self.supports(device: device) else {
-            throw Failure.unsupportedDevice
-        }
-        guard let descClass = NSClassFromString("MTLFXTemporalDenoisedScalerDescriptor") as? NSObject.Type else {
-            throw Failure.descriptorUnavailable
-        }
+        guard Self.supports(device: device) else { throw Failure.unsupportedDevice }
 
-        let desc = descClass.init()
-        desc.setValue(configuration.colorFormat.rawValue, forKey: "colorTextureFormat")
-        desc.setValue(configuration.depthFormat.rawValue, forKey: "depthTextureFormat")
-        desc.setValue(configuration.motionFormat.rawValue, forKey: "motionTextureFormat")
-        desc.setValue(configuration.diffuseAlbedoFormat.rawValue, forKey: "diffuseAlbedoTextureFormat")
-        desc.setValue(configuration.normalFormat.rawValue, forKey: "normalTextureFormat")
-        desc.setValue(configuration.roughnessFormat.rawValue, forKey: "roughnessTextureFormat")
-        desc.setValue(configuration.outputFormat.rawValue, forKey: "outputTextureFormat")
-        desc.setValue(configuration.inputWidth, forKey: "inputWidth")
-        desc.setValue(configuration.inputHeight, forKey: "inputHeight")
-        desc.setValue(configuration.outputWidth, forKey: "outputWidth")
-        desc.setValue(configuration.outputHeight, forKey: "outputHeight")
-
-        if configuration.specularAlbedoFormat != .invalid {
-            desc.setValue(configuration.specularAlbedoFormat.rawValue, forKey: "specularAlbedoTextureFormat")
+        let desc = MTLFXTemporalDenoisedScalerDescriptor()
+        desc.colorTextureFormat = configuration.colorFormat
+        desc.depthTextureFormat = configuration.depthFormat
+        desc.motionTextureFormat = configuration.motionFormat
+        desc.diffuseAlbedoTextureFormat = configuration.diffuseAlbedoFormat
+        desc.specularAlbedoTextureFormat = configuration.specularAlbedoFormat
+        desc.normalTextureFormat = configuration.normalFormat
+        desc.roughnessTextureFormat = configuration.roughnessFormat
+        desc.outputTextureFormat = configuration.outputFormat
+        desc.inputWidth = configuration.inputWidth
+        desc.inputHeight = configuration.inputHeight
+        desc.outputWidth = configuration.outputWidth
+        desc.outputHeight = configuration.outputHeight
+        desc.isAutoExposureEnabled = configuration.autoExposure
+        if let hitFormat = configuration.specularHitDistanceFormat {
+            desc.specularHitDistanceTextureFormat = hitFormat
+            desc.isSpecularHitDistanceTextureEnabled = true
         }
-        if configuration.specularHitDistanceFormat != .invalid {
-            desc.setValue(configuration.specularHitDistanceFormat.rawValue, forKey: "specularHitDistanceTextureFormat")
-            desc.setValue(true, forKey: "specularHitDistanceTextureEnabled")
-        }
-
-        let createSel = NSSelectorFromString("newTemporalDenoisedScalerWithDevice:")
-        guard let method = class_getInstanceMethod(descClass, createSel) else {
-            throw Failure.descriptorUnavailable
-        }
-        typealias CreateFn = @convention(c) (AnyObject, Selector, MTLDevice) -> AnyObject?
-        let createImp = unsafeBitCast(method_getImplementation(method), to: CreateFn.self)
-        guard let scaler = createImp(desc, createSel, device) else {
+        guard let scaler = desc.makeTemporalDenoisedScaler(device: device) else {
             throw Failure.scalerCreationFailed
         }
+        scaler.isDepthReversed = configuration.depthReversed
 
-        let encSel = NSSelectorFromString("encodeToCommandBuffer:")
-        guard let encMethod = class_getInstanceMethod(object_getClass(scaler)!, encSel) else {
-            throw Failure.scalerCreationFailed
+        // MetalFX exprime l'échelle en facteur d'agrandissement (sortie / entrée).
+        let scale = Float(configuration.outputWidth) / Float(configuration.inputWidth)
+        guard scale >= scaler.inputContentMinScale - 1e-4, scale <= scaler.inputContentMaxScale + 1e-4 else {
+            throw Failure.invalidConfiguration(
+                "Échelle \(scale) hors de [\(scaler.inputContentMinScale), \(scaler.inputContentMaxScale)] acceptée par MetalFX")
         }
-
         self.configuration = configuration
         self.device = device
-        self.scalerInstance = scaler
-        self.encodeSelector = encSel
-        self.encodeImp = unsafeBitCast(method_getImplementation(encMethod), to: (@convention(c) (AnyObject, Selector, MTLCommandBuffer) -> Void).self)
+        self.scaler = scaler
     }
 
     func encode(commandBuffer: MTLCommandBuffer, frame: Frame) throws {
         try frame.metadata.validate()
         guard lock.try() else { throw Failure.frameInFlight }
         defer { lock.unlock() }
-
-        // Vérification des dimensions d'entrée
-        let inW = configuration.inputWidth, inH = configuration.inputHeight
-        guard frame.color.width == inW && frame.color.height == inH else {
-            throw Failure.textureDimensionMismatch("color")
-        }
-        guard frame.depth.width == inW && frame.depth.height == inH else {
-            throw Failure.textureDimensionMismatch("depth")
-        }
-        guard frame.motion.width == inW && frame.motion.height == inH else {
-            throw Failure.textureDimensionMismatch("motion")
-        }
-        guard frame.diffuseAlbedo.width == inW && frame.diffuseAlbedo.height == inH else {
-            throw Failure.textureDimensionMismatch("diffuseAlbedo")
-        }
-        guard frame.normal.width == inW && frame.normal.height == inH else {
-            throw Failure.textureDimensionMismatch("normal")
-        }
-        guard frame.roughness.width == inW && frame.roughness.height == inH else {
-            throw Failure.textureDimensionMismatch("roughness")
-        }
-        guard frame.output.width == configuration.outputWidth && frame.output.height == configuration.outputHeight else {
-            throw Failure.textureDimensionMismatch("output")
+        if !frame.metadata.resetHistory {
+            guard let last = lastFrameIndex, frame.metadata.frameIndex == last &+ 1 else {
+                throw Failure.frameOutOfOrder
+            }
         }
 
-        // Affectation des textures
-        scalerInstance.setValue(frame.color, forKey: "colorTexture")
-        scalerInstance.setValue(frame.depth, forKey: "depthTexture")
-        scalerInstance.setValue(frame.motion, forKey: "motionTexture")
-        scalerInstance.setValue(frame.diffuseAlbedo, forKey: "diffuseAlbedoTexture")
-        scalerInstance.setValue(frame.normal, forKey: "normalTexture")
-        scalerInstance.setValue(frame.roughness, forKey: "roughnessTexture")
-        scalerInstance.setValue(frame.output, forKey: "outputTexture")
-
-        if let spec = frame.specularAlbedo {
-            scalerInstance.setValue(spec, forKey: "specularAlbedoTexture")
+        let c = configuration
+        let inputs: [(String, MTLTexture, MTLPixelFormat, MTLTextureUsage)] = [
+            ("color", frame.color, c.colorFormat, scaler.colorTextureUsage),
+            ("depth", frame.depth, c.depthFormat, scaler.depthTextureUsage),
+            ("motion", frame.motion, c.motionFormat, scaler.motionTextureUsage),
+            ("diffuseAlbedo", frame.diffuseAlbedo, c.diffuseAlbedoFormat, scaler.diffuseAlbedoTextureUsage),
+            ("specularAlbedo", frame.specularAlbedo, c.specularAlbedoFormat, scaler.specularAlbedoTextureUsage),
+            ("normal", frame.normal, c.normalFormat, scaler.normalTextureUsage),
+            ("roughness", frame.roughness, c.roughnessFormat, scaler.roughnessTextureUsage),
+        ]
+        for (name, texture, format, usage) in inputs {
+            try Self.check(name, texture, width: c.inputWidth, height: c.inputHeight, format: format, usage: usage)
         }
-        if let hitDist = frame.specularHitDistance {
-            scalerInstance.setValue(hitDist, forKey: "specularHitDistanceTexture")
+        switch (c.specularHitDistanceFormat, frame.specularHitDistance) {
+        case let (format?, texture?):
+            try Self.check("specularHitDistance", texture, width: c.inputWidth, height: c.inputHeight,
+                           format: format, usage: scaler.specularHitDistanceTextureUsage)
+        case (nil, nil): break
+        default: throw Failure.textureMismatch("specularHitDistance déclarée à la création mais absente (ou l'inverse)")
         }
+        try Self.check("output", frame.output, width: c.outputWidth, height: c.outputHeight,
+                       format: c.outputFormat, usage: scaler.outputTextureUsage)
 
-        // Métadonnées temporelles et jitter
-        scalerInstance.setValue(frame.metadata.jitterX, forKey: "jitterOffsetX")
-        scalerInstance.setValue(frame.metadata.jitterY, forKey: "jitterOffsetY")
-        scalerInstance.setValue(frame.metadata.motionScaleX, forKey: "motionVectorScaleX")
-        scalerInstance.setValue(frame.metadata.motionScaleY, forKey: "motionVectorScaleY")
-        scalerInstance.setValue(frame.metadata.preExposure, forKey: "preExposure")
-        scalerInstance.setValue(frame.metadata.resetHistory, forKey: "reset")
+        scaler.colorTexture = frame.color
+        scaler.depthTexture = frame.depth
+        scaler.motionTexture = frame.motion
+        scaler.diffuseAlbedoTexture = frame.diffuseAlbedo
+        scaler.specularAlbedoTexture = frame.specularAlbedo
+        scaler.normalTexture = frame.normal
+        scaler.roughnessTexture = frame.roughness
+        scaler.specularHitDistanceTexture = frame.specularHitDistance
+        scaler.outputTexture = frame.output
 
-        // Encodage sur le command buffer
-        encodeImp(scalerInstance, encodeSelector, commandBuffer)
+        let m = frame.metadata
+        scaler.jitterOffsetX = m.jitterX
+        scaler.jitterOffsetY = m.jitterY
+        scaler.motionVectorScaleX = m.motionScaleX
+        scaler.motionVectorScaleY = m.motionScaleY
+        scaler.preExposure = m.preExposure
+        scaler.shouldResetHistory = m.resetHistory
+        scaler.worldToViewMatrix = m.worldToView
+        scaler.viewToClipMatrix = m.viewToClip
+
+        scaler.encode(commandBuffer: commandBuffer)
+        lastFrameIndex = m.frameIndex
+    }
+
+    private static func check(_ name: String, _ texture: MTLTexture, width: Int, height: Int,
+                              format: MTLPixelFormat, usage: MTLTextureUsage) throws {
+        guard texture.width == width, texture.height == height else {
+            throw Failure.textureMismatch("\(name) : \(texture.width)×\(texture.height) au lieu de \(width)×\(height)")
+        }
+        guard texture.pixelFormat == format else { throw Failure.textureMismatch("\(name) : format inattendu") }
+        guard texture.usage.contains(usage) else { throw Failure.textureMismatch("\(name) : usage Metal insuffisant") }
     }
 }

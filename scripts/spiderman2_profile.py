@@ -104,7 +104,7 @@ def read_preferences(path=GAME_SETTINGS):
                 if type(value)!=str or str(uuid.UUID(value))!=value:raise ValueError()
             except (ValueError,AttributeError):raise RuntimeError('invalid field revision')
     s=data['settings'];fields(s,('launchArgs','backend','display','graphics'))
-    if s['backend'] not in ('auto','d3dmetal','d3dmetal-nv'):raise RuntimeError('unsupported backend')
+    if s['backend'] not in ('auto','d3dmetal','d3dmetal-nv','d3dmetal-nv-rt'):raise RuntimeError('unsupported backend')
     args=s['launchArgs']
     if type(args)!=str or any(unicodedata.category(c) in ('Cc','Cf','Cs') and c!='\t' for c in args) or len(args.encode('utf-8'))>2048:raise RuntimeError('invalid launch arguments')
     argv=split_launch_args(args)
@@ -192,7 +192,7 @@ def apply_preferences(plan,preferences):
     if 'display.screenID' in mask:
         if not isinstance(selected,dict) or type(selected.get('wineIndex'))!=int or not 0<=selected['wineIndex']<64:raise RuntimeError('selected display could not be resolved')
         vals['Monitor']=selected['wineIndex']
-    if 'graphics.upscaler' in mask:vals['UpscaleMethod']=2 if (s_backend=='d3dmetal-nv' or g.get('upscaler')=='dlss') else 3
+    if 'graphics.upscaler' in mask:vals['UpscaleMethod']=2 if (s_backend in ('d3dmetal-nv','d3dmetal-nv-rt') or g.get('upscaler')=='dlss') else 3
     if 'graphics.quality' in mask:vals['UpscaleQuality']=3
     if 'graphics.dynamicFPS' in mask:vals['DynamicResolutionTargetFPS']=g['dynamicFPS']
     if 'graphics.frameGeneration' in mask:vals['FrameGen']=int(g['frameGeneration'])
@@ -520,9 +520,10 @@ def game_environment(env,wine,hud,backend='auto'):
     selected['D3DM_MTL4']='1'
     selected['ROSETTA_ADVERTISE_AVX']='1'
     selected['WINEDEBUG']='-all'
-    if backend=='d3dmetal-nv':
+    if backend in ('d3dmetal-nv','d3dmetal-nv-rt'):
         selected['D3DM_ENABLE_METALFX']='1'
         selected['WINEDLLOVERRIDES']='nvapi64,nvngx=b,n;'+selected.get('WINEDLLOVERRIDES','')
+    if backend=='d3dmetal-nv-rt':selected['D3DM_SUPPORT_DXR']='1'
     return selected
 
 # This exact combination showed lower synthetic sync overhead and survived two

@@ -160,7 +160,7 @@ Le `D3DMetal.framework` **déjà importé par Playmelt** contient la surface
 | **DLSS Super Resolution** | Pont `nvngx-on-metalfx` (Apple) | **Oui** | **Négatif** : le rendu interne baisse (≈66 % en Quality → pixels ×0,44), le FPS monte | **À débloquer en priorité** |
 | **DLSS Frame Generation** | Pont → interpolateur Metal 4 | **Oui** (macOS 26+, jeux DLSS 3+) | ~quelques ms Neural Engine, latence d'une frame | **À débloquer** (utile surtout à 120 Hz) |
 | **Reflex** | `NvAPI_*` de D3DMetal.framework | Partiel / à tester | Nul | Tester par jeu |
-| **DLSS Ray Reconstruction** (`nvngx_dlssd`) | Aucune traduction (ni Apple ni tierce qualifiée) | Non | — | Hors scope ; RT standard reste |
+| **DLSS Ray Reconstruction** (`nvngx_dlssd`) | ~~Aucune traduction~~ **Corrigé le 12/11 :** D3DMetal 4.0b3 traduit DLSSD → `MTLFXTemporalDenoisedScaler` (voir § 8) | À qualifier en jeu | 4,5–15 ms GPU selon mode (§ 8) | Route `d3dmetal-nv-rt` |
 | **DLSS 5 Neural Rendering** | Port MLX-DLSS (projet frère) | **Non** (voir §5) | 20–70 ms/frame | Recherche offline |
 | **FSR 3 / FG (natif jeux)** | Chemin compute D3DMetal existant | Déjà en prod (SM2) | Inclus | Conserver comme repli |
 
@@ -286,3 +286,46 @@ hitching) + CPU traduit allégé (stabilité du frame pacing)**.
 - [Apple — Game Porting Toolkit](https://developer.apple.com/games/game-porting-toolkit/) : GPTK 4.0 / Metal 4.
 - [NVIDIA — DLSS 5 research](https://research.nvidia.com/labs/adlr/DLSS5/) : définition NR (pas un upscaler).
 - MLX-DLSS (projet frère) `README.md`, `docs/embedding.md` § Performance, `docs/recovery-notes.md` : coûts d'inférence mesurés, gates de parité.
+
+---
+
+## 8. Correctif et mesures du 12 novembre 2026
+
+### Ray Reconstruction : la traduction existe dans D3DMetal 4.0b3
+
+Lecture du binaire importé (`Renderers/D3DMetal/payload/external/D3DMetal.framework`,
+contentHash du payload `00794464…ccc8`) : chaînes `DLSSD.SpecularHitDistance`,
+`DLSSD.ColorBeforeParticles`, `RayReconstruction.Hint.Render.Preset.*`,
+`SuperSamplingDenoising.Available`, classes `ngx::Denoiser` et
+`MDETemporalDenoisedScaler` reliées à `newTemporalDenoisedScalerWithDevice:`, message
+« Denoiser not present on this OS ». `libd3dshared.dylib` exporte toute la surface
+`NVSDK_NGX_D3D12_*`. Le ray tracing DX12 est traduit (`D3D12RaytracingStateObject`,
+`MapDXRInstanceDescsToMetalInstanceDescs`) et commandé par `D3DM_SUPPORT_DXR`.
+
+Ce qui manque encore : le shim PE `nvngx-on-metalfx.dll` du redist GPTK 4 (pont non
+installé sur le M3 au 12/11) et une qualification en jeu. Rien n'a été lancé en jeu.
+
+Changements : route par jeu `d3dmetal-nv-rt` (= pont + `D3DM_SUPPORT_DXR=1`) ;
+`MetalFXRayReconstructionAdapter` réécrit en API typée (matrices caméra, reset
+d'historique, contrôle formats/usages/échelle), sans revendication Neural Engine.
+Il reste hors du chemin des jeux Windows.
+
+### Coût MetalFX seul, M3 Max, macOS 27.0.1 (`probes/metalfx-2k-4k-cost.swift`)
+
+Médiane du temps GPU de 30 images après 10 de chauffe, textures privées. C'est le coût
+de la traduction seule ; le rendu du jeu s'y ajoute.
+
+| Sortie | Mode | Rendu interne | Super Resolution | Ray Reconstruction |
+|---|---|---|---|---|
+| 2K | Qualité | 1707×960 | 0,60 ms | 6,82 ms |
+| 2K | Équilibré | 1488×837 | 0,53 ms | 5,62 ms |
+| 2K | Performance | 1280×720 | 0,46 ms | 4,51 ms |
+| 2K | Ultra perf. | 853×480 | 0,35 ms | 2,68 ms |
+| 4K | Qualité | 2560×1440 | 1,35 ms | 15,22 ms |
+| 4K | Équilibré | 2233×1256 | 1,18 ms | 12,62 ms |
+| 4K | Performance | 1920×1080 | 1,06 ms | 10,15 ms |
+| 4K | Ultra perf. | 1280×720 | 0,79 ms | 5,48 ms |
+
+Le débruiteur n'accepte qu'une échelle exacte par configuration (×1,5 / ×1,72 / ×2 / ×3).
+Conseils affichés dans les réglages (« Guide 2K / 4K ») : 2K sans RT → Qualité ;
+2K avec RT → Performance ; 4K sans RT → Performance ; 4K avec RT → Ultra performance.
