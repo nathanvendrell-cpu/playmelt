@@ -1,8 +1,7 @@
 {
-  "canonical_source": "/Users/robtech/03_PROJECTS/0 - 7AGENCY Projet/2 - WEBSITE/WEBDESIGN/PLAYMELT",
   "public_url": "https://7agency.fr/Playmelt/",
   "scope": "Public static source only. Account/API source is in the private repository services/commerce. Persistent data and credentials are never included.",
-  "hosted_account_release": "2.2.0-account-login-20261112",
+  "hosted_account_release": "2.2.0-google-20261113",
   "distribution_manifest_is_legacy": true,
   "files": {
     "index.html": "d51cfbab6ef28516647585d76dd7c1cd3e7d05a8dcaecac33466b34d1e6b66bf",
@@ -14,7 +13,7 @@
     "legal/conditions-de-vente/.htaccess": "de8b30b03cd108c7d68778d5142daf1db637735e694379ac146c4bdf90e8fe8b",
     "legal/mentions-legales/index.html": "383492860f38c4f42b9b71fcd8304259718d34095d4306369270e951f5bc9650",
     "legal/mentions-legales/.htaccess": "6193a1754b23556ca5a3622ba47ff56461369e369189d6319a6e1c8c1a96bb65",
-    "legal/confidentialite/index.html": "ef50149d1892fa56ae1c832cb9a9cc0812d65fbf6a95786aa94248d9e3718b24",
+    "legal/confidentialite/index.html": "7db994d0d32b0dbc04150a2eb13b0e551526798c48df2c652c59f9683c655bde",
     "legal/confidentialite/.htaccess": "6193a1754b23556ca5a3622ba47ff56461369e369189d6319a6e1c8c1a96bb65",
     "admin/.htaccess": "c6c40e8f9ce92e74f79585a0b9bb6bdbd11919d81ebedea24640c7f6e011840d",
     "support/.htaccess": "2052ec3541e73d8b3e6d18aa9e48910a9dcee6a82b6286ca7d708b707299c9ae",
@@ -24,5 +23,6 @@
     "assets/images/app-preview-library.png": "26642c826a437692e0963093bd346c50c5fe1e509037e79fd998585c66154112",
     "assets/images/app-preview-sheet.png": "e624092fc2ada67c9f6b0444d32ffa72395e0fcd2bb2afc0d4aad559281b21dd",
     "data/release.json": "ca9decb376ff6b8d33fd0c6db4c86ba32a85583b7b8907a142e4b8c154303aa8"
-  }
+  },
+  "source_layout": "Public static source in website/Playmelt; account/API source is private."
 }
