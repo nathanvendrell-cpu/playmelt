@@ -2,12 +2,12 @@
   "public_url": "https://7agency.fr/Playmelt/",
   "scope": "Public static source only. Account/API source is in the private repository services/commerce. Persistent data and credentials are never included.",
   "hosted_account_release": "2.2.0-commerce-20261113",
-  "distribution_manifest_is_legacy": true,
+  "distribution_manifest_is_legacy": false,
   "files": {
-    "index.html": "d51cfbab6ef28516647585d76dd7c1cd3e7d05a8dcaecac33466b34d1e6b66bf",
+    "index.html": "77b1892ce3058d31c19e53db0de75dd1b6446fc1c38302845ab3733a9d1f0dae",
     "assets/css/playmelt.css": "ae2845e84460b4798e4bca514d60a6b336f73779e8bc8517f7e7e6e853bb7b24",
     "assets/css/legal.css": "9fb5a78ddaa2e9605951b8b70fe4ed9740042bf888a70ee185be5bf8020c22d4",
-    "assets/js/playmelt.js": "d342579f26d9b889e4cc9c52170f71c76800867234f8598ebf7815e2cb1d5684",
+    "assets/js/playmelt.js": "0cd30ab48128012ee3245000d9ba9818fb5e3bdab5dbd7f3d04a9065e09f2ba5",
     "data/compatibility.json": "0eb57f646261a8e05dd1c17e012803362515172da023c2299701bd003ef16c04",
     "legal/conditions-de-vente/index.html": "bab9c0152cf2a6e6686f8b4ec2f89fdad0202ff405da490e4010ab48a1250928",
     "legal/conditions-de-vente/.htaccess": "de8b30b03cd108c7d68778d5142daf1db637735e694379ac146c4bdf90e8fe8b",
@@ -22,7 +22,15 @@
     "assets/images/PlaymeltLogo.png": "466ce260e8dd79897d31cae669435e4c61b0667048e48315fb58abd94874f94d",
     "assets/images/app-preview-library.png": "26642c826a437692e0963093bd346c50c5fe1e509037e79fd998585c66154112",
     "assets/images/app-preview-sheet.png": "e624092fc2ada67c9f6b0444d32ffa72395e0fcd2bb2afc0d4aad559281b21dd",
-    "data/release.json": "ca9decb376ff6b8d33fd0c6db4c86ba32a85583b7b8907a142e4b8c154303aa8"
+    "data/release.json": "1abe8405fb65ad7f426596306df49a337d34883d17c2d30ee4b28b8e0c462be1"
   },
-  "source_layout": "Public static source in website/Playmelt; account/API source is private."
+  "source_layout": "Public static source in website/Playmelt; account/API source is private.",
+  "distribution": {
+    "availability": "preparing",
+    "delivery": "account",
+    "public_client_artifact_available": false,
+    "automatic_updates_available": false,
+    "legacy_public_downloads_closed": true,
+    "legacy_http_status_observed": 404
+  }
 }

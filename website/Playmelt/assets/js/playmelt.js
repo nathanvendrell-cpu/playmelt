@@ -160,12 +160,14 @@
     try {
       const response = await fetch("data/release.json"); if (!response.ok) return;
       const release = await response.json();
-      if (!/^\d+\.\d+\.\d+$/.test(release.version) || !/^[a-f0-9]{64}$/.test(release.sha256) || !Number.isSafeInteger(release.bytes) || release.bytes < 1) return;
+      if (release.availability !== "available" || release.delivery !== "account" || !/^\d+\.\d+\.\d+$/.test(release.version) || !/^[a-f0-9]{64}$/.test(release.sha256) || !Number.isSafeInteger(release.bytes) || release.bytes < 1) return;
       /* Acquisition always requires account and e-mail verification; release metadata never links directly to a file. */
       all(".acquisition-link").forEach(link => { link.href = new URL("compte/?intent=download", document.baseURI).href; });
-      all(".version-label").forEach(el => { el.textContent = release.version; });
-      text("downloadSize", `${(release.bytes / 1000000).toLocaleString("fr-FR", {maximumFractionDigits: 1})} Mo`);
+      text("downloadReleaseStatus", `Version ${release.version}`);
+      text("downloadSize", ` · ${(release.bytes / 1000000).toLocaleString("fr-FR", {maximumFractionDigits: 1})} Mo`);
       text("downloadHash", release.sha256);
+      $("downloadIntegrity").hidden = false;
+      $("copyHash").disabled = false;
     } catch { /* The account acquisition path remains usable. */ }
   }
   const plans = {
@@ -321,6 +323,7 @@
   $("nextPage").addEventListener("click", () => {state.page++; renderCatalogue();});
   all("[data-plan]").forEach(button => button.addEventListener("click", () => selectPlan(button.dataset.plan)));
   $("copyHash").addEventListener("click", async () => {
+    if (!/^[a-f0-9]{64}$/.test($("downloadHash").textContent.trim())) return;
     try {await navigator.clipboard.writeText($("downloadHash").textContent.trim()); notice("Empreinte copiée.");}
     catch {notice("Copie indisponible. L’empreinte reste consultable ci-dessus.");}
   });

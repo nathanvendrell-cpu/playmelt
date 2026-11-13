@@ -12,7 +12,7 @@
     />
     <link rel="icon" href="assets/images/PlaymeltIcon.png" />
     <link rel="stylesheet" href="assets/css/playmelt.css?v=20261112-commerce-v4" />
-    <script src="assets/js/playmelt.js?v=20261112-commerce-v4" defer></script>
+    <script src="assets/js/playmelt.js?v=0cd30ab48128" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#contenu">Aller au contenu</a>
@@ -321,9 +321,9 @@
         </div>
         <div class="container download-strip" id="telecharger">
           <img src="assets/images/PlaymeltIcon.png" alt="" width="52" height="52" />
-          <div><strong>Votre téléchargement, par e-mail.</strong><p>Créez votre compte, vérifiez votre e-mail et recevez le lien.<br />Version publique <span class="version-label">2.1.0</span> · Apple Silicon · macOS 15+ · <span id="downloadSize">8,2 Mo</span></p></div>
-          <a class="button primary acquisition-link" href="compte/?intent=download"><svg class="icon"><use href="#i-download" /></svg>Recevoir Playmelt</a>
-          <details class="download-integrity"><summary>Vérifier le fichier</summary><div><span id="downloadSource">Distribution officielle</span><code id="downloadHash">271f039cb64ca72531e708a0365c1f4fc363f6614eab390aa8a89f074ac6ca73</code><button type="button" class="text-link" id="copyHash">Copier l’empreinte</button></div></details>
+          <div><strong>Playmelt pour votre Mac.</strong><p>Retrouvez votre accès et vos téléchargements depuis votre compte.<br /><span id="downloadReleaseStatus">Version commerciale en préparation</span> · Apple Silicon · macOS 15+<span id="downloadSize"></span></p></div>
+          <a class="button primary acquisition-link" href="compte/?intent=download"><svg class="icon"><use href="#i-download" /></svg>Mon compte</a>
+          <details class="download-integrity" id="downloadIntegrity" hidden><summary>Vérifier le fichier</summary><div><span id="downloadSource">Distribution officielle</span><code id="downloadHash"></code><button type="button" class="text-link" id="copyHash" disabled>Copier l’empreinte</button></div></details>
         </div>
       </section>
       <section class="faq-section section-space" id="questions" aria-labelledby="faq-title">

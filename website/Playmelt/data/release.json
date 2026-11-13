@@ -1,6 +1,10 @@
 {
-  "version": "2.1.0",
-  "downloadUrl": "downloads/Playmelt-2.1.0.dmg",
-  "bytes": 8199792,
-  "sha256": "271f039cb64ca72531e708a0365c1f4fc363f6614eab390aa8a89f074ac6ca73"
+  "schemaVersion": 1,
+  "availability": "preparing",
+  "delivery": "account",
+  "accountUrl": "compte/?intent=download",
+  "version": null,
+  "bytes": null,
+  "sha256": null,
+  "automaticUpdatesAvailable": false
 }

@@ -6,12 +6,12 @@ Playmelt réunit vos bibliothèques et vos jeux sur Mac Apple Silicon : jeux Win
 
 | Composant | État au 13 novembre 2026 |
 | --- | --- |
-| Site et compte | Version en ligne : création et connexion par Google ou e-mail/mot de passe, téléchargement personnel par e-mail, gestion des appareils et assistance. |
+| Site et compte | Création et connexion par Google ou e-mail/mot de passe, gestion des appareils et assistance. Le nouveau téléchargement commercial reste fermé pendant sa qualification. |
 | Client Mac 2.2.0 | Développement et validation en cours. Aucune nouvelle distribution commerciale n’est annoncée ici. |
 | Paiements et essai | Activation commerciale encore en validation ; aucun paiement n’est déclenché par la création d’un compte. |
 | Ce dépôt | Présentation publique et sources statiques du site sous `website/Playmelt/`. Le développement actuel du client et du service de comptes est conservé dans un dépôt privé. |
 
-Le code historique du client présent à la racine ne constitue pas la version actuelle de l’application. Pour une version officielle, passez par votre compte sur le site ; aucun fichier d’installation n’est ajouté dans ce lot GitHub. La connexion Google est active sur le compte en ligne, avec identification et e-mail uniquement. LinkedIn reste indisponible.
+Le code historique du client présent à la racine ne constitue pas la version actuelle de l’application. Pour une version officielle, passez par votre compte sur le site ; aucun fichier d’installation n’est ajouté dans ce lot GitHub. Les mises à jour de la première version commerciale passeront par le compte personnel ; aucun téléchargement public ni mise à jour automatique ne sont annoncés pour cette version. La connexion Google est active sur le compte en ligne, avec identification et e-mail uniquement. LinkedIn reste indisponible.
 
 La publication de ce dépôt ne constitue pas une licence libre. Consultez [LICENSE](LICENSE) et [les notices des composants tiers](THIRD_PARTY_NOTICES.md).
 
