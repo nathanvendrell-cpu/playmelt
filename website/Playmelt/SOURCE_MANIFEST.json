@@ -1,7 +1,7 @@
 {
   "public_url": "https://7agency.fr/Playmelt/",
   "scope": "Public static source only. Account/API source is in the private repository services/commerce. Persistent data and credentials are never included.",
-  "hosted_account_release": "2.2.0-google-20261113",
+  "hosted_account_release": "2.2.0-commerce-20261113",
   "distribution_manifest_is_legacy": true,
   "files": {
     "index.html": "d51cfbab6ef28516647585d76dd7c1cd3e7d05a8dcaecac33466b34d1e6b66bf",
@@ -9,7 +9,7 @@
     "assets/css/legal.css": "9fb5a78ddaa2e9605951b8b70fe4ed9740042bf888a70ee185be5bf8020c22d4",
     "assets/js/playmelt.js": "d342579f26d9b889e4cc9c52170f71c76800867234f8598ebf7815e2cb1d5684",
     "data/compatibility.json": "0eb57f646261a8e05dd1c17e012803362515172da023c2299701bd003ef16c04",
-    "legal/conditions-de-vente/index.html": "bb42d9e45cb64d82980960c44723cba784247c3125c04e55956d3090c699688f",
+    "legal/conditions-de-vente/index.html": "bab9c0152cf2a6e6686f8b4ec2f89fdad0202ff405da490e4010ab48a1250928",
     "legal/conditions-de-vente/.htaccess": "de8b30b03cd108c7d68778d5142daf1db637735e694379ac146c4bdf90e8fe8b",
     "legal/mentions-legales/index.html": "383492860f38c4f42b9b71fcd8304259718d34095d4306369270e951f5bc9650",
     "legal/mentions-legales/.htaccess": "6193a1754b23556ca5a3622ba47ff56461369e369189d6319a6e1c8c1a96bb65",
