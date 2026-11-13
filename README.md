@@ -1,18 +1,33 @@
 ![Playmelt](website/Playmelt/assets/images/PlaymeltLogo.png)
 
-Playmelt réunit vos bibliothèques et vos jeux sur Mac Apple Silicon : jeux Windows via une couche de compatibilité, jeux natifs et accès aux services cloud pris en charge. Les jeux et les abonnements aux plateformes restent séparés de Playmelt ; la compatibilité dépend du titre, du Mac et du moteur utilisé.
+# Votre bibliothèque, sur Mac.
+
+Playmelt réunit vos bibliothèques et vos jeux sur Mac Apple Silicon : jeux natifs, jeux Windows via les moteurs compatibles et services cloud pris en charge. La compatibilité dépend du jeu, du Mac et du moteur utilisé. Les jeux et les abonnements aux plateformes restent séparés de Playmelt.
 
 [Découvrir Playmelt](https://7agency.fr/Playmelt/) · [Créer un compte](https://7agency.fr/Playmelt/compte/?mode=signup) · [Assistance](https://7agency.fr/Playmelt/support/)
 
-| Composant | État au 13 novembre 2026 |
-| --- | --- |
-| Site et compte | Création et connexion par Google ou e-mail/mot de passe, gestion des appareils et assistance. Le nouveau téléchargement commercial reste fermé pendant sa qualification. |
-| Client Mac 2.2.0 | Développement et validation en cours. Aucune nouvelle distribution commerciale n’est annoncée ici. |
-| Paiements et essai | Activation commerciale encore en validation ; aucun paiement n’est déclenché par la création d’un compte. |
-| Ce dépôt | Présentation publique et sources statiques du site sous `website/Playmelt/`. Le développement actuel du client et du service de comptes est conservé dans un dépôt privé. |
+## Télécharger Playmelt
 
-Le code historique du client présent à la racine ne constitue pas la version actuelle de l’application. Pour une version officielle, passez par votre compte sur le site ; aucun fichier d’installation n’est ajouté dans ce lot GitHub. Les mises à jour de la première version commerciale passeront par le compte personnel ; aucun téléchargement public ni mise à jour automatique ne sont annoncés pour cette version. La connexion Google est active sur le compte en ligne, avec identification et e-mail uniquement. LinkedIn reste indisponible.
+Le téléchargement officiel passe par votre [compte Playmelt](https://7agency.fr/Playmelt/compte/). Sa disponibilité et les formules actives y sont indiquées.
+
+| Repère | Distribution cliente |
+| --- | --- |
+| Version préparée | Playmelt 2.2.0 · build 30 |
+| Configuration | Mac Apple Silicon · macOS 15 ou ultérieur |
+| Accès aux fonctions sous licence | Compte Playmelt et droit d’accès valide |
+| Distribution | Téléchargement personnel depuis le compte ; paquets conservés hors de ce dépôt |
+| Mises à jour | Canal signé et authentifié, en cours de qualification sur le service hébergé |
+
+Cette préversion est signée ad hoc et n’est pas notariée par Apple. macOS peut en bloquer l’ouverture. La validation sur un Mac neuf et l’installation complète d’une mise à jour automatique restent à confirmer.
+
+## Ce que contient ce dépôt
+
+Le site public se trouve sous `website/Playmelt/`. Les sources historiques du client à la racine correspondent à une version antérieure. Le client commercial actuel et le service de comptes sont développés dans un dépôt privé.
 
 La publication de ce dépôt ne constitue pas une licence libre. Consultez [LICENSE](LICENSE) et [les notices des composants tiers](THIRD_PARTY_NOTICES.md).
+
+## Aide et informations
+
+Le support est joignable à [contact@7agency.fr](mailto:contact@7agency.fr) et depuis [votre compte](https://7agency.fr/Playmelt/compte/#support).
 
 [Conditions de vente](https://7agency.fr/Playmelt/legal/conditions-de-vente/) · [Confidentialité](https://7agency.fr/Playmelt/legal/confidentialite/) · [Mentions légales](https://7agency.fr/Playmelt/legal/mentions-legales/)
