@@ -1,3 +1,4 @@
+import { confirmContract } from "./contracts.mjs";
 export const plans = {
   monthly: { cents: 1999, months: 1, label: "1 mois" },
   quarterly: { cents: 5399, months: 3, label: "3 mois" },
@@ -6,6 +7,8 @@ export const plans = {
   lifetime: { cents: 39900, label: "À vie" },
 };
 const id = (x) => (typeof x === "string" ? x : x?.id);
+const subscriptionOfInvoice = (invoice) => id(invoice.subscription) ||
+  (invoice.parent?.type === "subscription_details" ? id(invoice.parent.subscription_details?.subscription) : null);
 function reservePayment(
   store,
   userID,
@@ -61,19 +64,21 @@ export async function reconcileSubscription(
   prices,
 ) {
   const sub = await stripe.subscriptions.retrieve(subscriptionID, {
-    expand: ["latest_invoice", "default_payment_method"],
+    expand: ["latest_invoice"],
   });
   const user = store.get(
     "SELECT * FROM users WHERE stripe_customer=?",
     id(sub.customer),
   );
   if (!user) return;
-  const item = sub.items?.data?.find((x) =>
-    Object.values(prices).includes(id(x.price)),
-  );
-  if (!item) {
+  const items = sub.items?.data;
+  const item = Array.isArray(items) && items.length === 1 && !sub.items.has_more ? items[0] : null;
+  const validItem = item && (item.quantity === undefined || item.quantity === 1);
+  const accountMatches = !sub.metadata?.playmelt_user || sub.metadata.playmelt_user === user.id;
+  if (!validItem || !accountMatches || !Object.values(prices).includes(id(item.price))) {
     store.run(
-      "UPDATE entitlements SET status='unrecognized_price',updated=? WHERE id=?",
+      "UPDATE entitlements SET status=?,updated=? WHERE id=?",
+      !accountMatches ? "account_mismatch" : !validItem ? "invalid_subscription" : "unrecognized_price",
       store.now(),
       sub.id,
     );
@@ -86,7 +91,9 @@ export async function reconcileSubscription(
     invoice &&
     typeof invoice !== "string" &&
     invoice.paid === true &&
-    invoice.status === "paid";
+    invoice.status === "paid" &&
+    (!id(invoice.customer) || id(invoice.customer) === user.stripe_customer) &&
+    (!subscriptionOfInvoice(invoice) || subscriptionOfInvoice(invoice) === sub.id);
   if (paid && invoice.id)
     reservePayment(
       store,
@@ -116,13 +123,16 @@ export async function reconcileSubscription(
     id(sub.default_payment_method) &&
     trial?.subscription_id === sub.id &&
     trialEnd === trial.until &&
+    trialStart <= store.now() &&
     trialEnd > store.now() &&
-    trialEnd - trialStart <= 31 * 86400;
+    trialEnd - trialStart <= 30 * 86400;
   const until =
     sub.status === "trialing"
       ? trialEnd
       : (sub.current_period_end ?? item.current_period_end);
-  if (!Number.isSafeInteger(until)) throw Error("Subscription period missing");
+  // A terminal Stripe status must revoke access even if its period is absent.
+  if (!Number.isSafeInteger(until) && ["active", "trialing"].includes(sub.status))
+    throw Error("Subscription period missing");
   const active = sub.status === "active" && paid && !sub.pause_collection;
   store.run(
     `INSERT INTO entitlements(id,user_id,plan,status,until,invoice,payment_intent,updated) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,until=excluded.until,invoice=excluded.invoice,payment_intent=excluded.payment_intent,plan=excluded.plan,updated=excluded.updated`,
@@ -136,7 +146,7 @@ export async function reconcileSubscription(
         : ["active", "trialing"].includes(sub.status)
           ? "unpaid"
           : sub.status,
-    until,
+    Number.isSafeInteger(until) ? until : store.now(),
     id(invoice) ?? null,
     id(invoice?.payment_intent) ?? null,
     store.now(),
@@ -159,24 +169,28 @@ export function processEvent(store, stripe, event, config) {
 }
 async function reconcileEvent(store, stripe, event, { prices, live }) {
   if (event.livemode !== live) throw Error("Wrong Stripe mode");
-  const prior = store.get("SELECT * FROM billing_events WHERE id=?", event.id);
-  if (prior?.status === "complete") return { duplicate: true };
-  if (prior?.status === "processing" && prior.updated > store.now() - 120)
-    throw Error("Event already processing");
-  store.run(
-    `INSERT INTO billing_events VALUES(?,'processing',?) ON CONFLICT(id) DO UPDATE SET status='processing',updated=excluded.updated`,
-    event.id,
-    store.now(),
-  );
+  const claimed = store.transaction(() => {
+    const prior = store.get("SELECT * FROM billing_events WHERE id=?", event.id);
+    if (prior?.status === "complete") return false;
+    if (prior?.status === "processing" && prior.updated > store.now() - 120)
+      throw Error("Event already processing");
+    store.run(
+      `INSERT INTO billing_events VALUES(?,'processing',?) ON CONFLICT(id) DO UPDATE SET status='processing',updated=excluded.updated`,
+      event.id,
+      store.now(),
+    );
+    return true;
+  });
+  if (!claimed) return { duplicate: true };
   try {
     const object = event.data.object;
     if (event.type.startsWith("customer.subscription."))
       await reconcileSubscription(store, stripe, object.id, prices);
-    else if (event.type.startsWith("invoice.") && id(object.subscription))
+    else if (event.type.startsWith("invoice.") && subscriptionOfInvoice(object))
       await reconcileSubscription(
         store,
         stripe,
-        id(object.subscription),
+        subscriptionOfInvoice(object),
         prices,
       );
     else if (
@@ -220,6 +234,48 @@ async function reconcileEvent(store, stripe, event, { prices, live }) {
             session.amount_total,
             session.currency,
           );
+        }
+        const entitlement = store.get(
+          "SELECT * FROM entitlements WHERE id=? AND user_id=?",
+          session.mode === "subscription"
+            ? id(session.subscription)
+            : session.id,
+          user.id,
+        );
+        if (entitlement && plans[entitlement.plan]) {
+          confirmContract(
+            store,
+            session,
+            user,
+            entitlement,
+            plans[entitlement.plan],
+          );
+          // Only this verified, settled Checkout may release its cached URL.
+          // A newer request (including an uncertain pending creation) stays intact.
+          if (
+            session.status === "complete" &&
+            ["paid", "no_payment_required"].includes(session.payment_status) &&
+            (session.mode === "subscription" ||
+              (session.mode === "payment" && validLifetimePurchase(session, prices.lifetime))) &&
+            ["active", "trialing"].includes(entitlement.status) &&
+            (entitlement.until === null ||
+              (Number.isSafeInteger(entitlement.until) && entitlement.until > store.now())) &&
+            (!entitlement.payment_intent || !store.get(
+              "SELECT payment_intent FROM blocked_payments WHERE payment_intent=?",
+              entitlement.payment_intent,
+            )) &&
+            store.get(
+              "SELECT checkout_id FROM checkout_contracts WHERE checkout_id=? AND user_id=? AND plan=? AND confirmed IS NOT NULL",
+              session.id,
+              user.id,
+              entitlement.plan,
+            )
+          )
+            store.run(
+              "UPDATE checkout_requests SET expires=0 WHERE user_id=? AND checkout_id=?",
+              user.id,
+              session.id,
+            );
         }
       }
     } else if (

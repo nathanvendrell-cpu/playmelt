@@ -1,0 +1,45 @@
+- generic [active] [ref=e1]:
+  - link "Aller au compte" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=e3]:
+    - link "Playmelt, accueil" [ref=e4] [cursor=pointer]:
+      - /url: /Playmelt/
+      - img "Playmelt" [ref=e5]
+    - link "Retour au site" [ref=e6] [cursor=pointer]:
+      - /url: /Playmelt/
+      - text: Retour au site ↗
+  - main [ref=e7]:
+    - generic [ref=e9]:
+      - text: ESPACE PERSONNEL
+      - heading "Mon compte" [level=1] [ref=e10]
+    - region "Connexion au compte" [ref=e11]:
+      - heading "Bienvenue sur Playmelt" [level=2] [ref=e12]
+      - paragraph [ref=e13]: Connectez-vous pour retrouver votre accès et votre application.
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - generic [ref=e16]: Adresse e-mail
+          - textbox "Adresse e-mail" [ref=e17]
+        - generic [ref=e18]:
+          - generic [ref=e19]: Mot de passe
+          - textbox "Mot de passe" [ref=e20]
+        - button "Se connecter" [ref=e21] [cursor=pointer]
+      - generic [ref=e22]:
+        - link "Créer un compte" [ref=e23] [cursor=pointer]:
+          - /url: http://127.0.0.1:3095/Playmelt/compte/?mode=signup
+        - link "Mot de passe oublié ?" [ref=e24] [cursor=pointer]:
+          - /url: http://127.0.0.1:3095/Playmelt/compte/?mode=forgot
+      - paragraph [ref=e25]:
+        - text: Votre adresse sert à votre compte et à vos téléchargements.
+        - link "Confidentialité" [ref=e26] [cursor=pointer]:
+          - /url: http://127.0.0.1:3095/Playmelt/legal/confidentialite/
+  - contentinfo [ref=e27]:
+    - generic [ref=e28]: Playmelt · 7AGENCY — Nathan VENDRELL EI
+    - navigation "Informations légales" [ref=e29]:
+      - link "Mentions légales" [ref=e30] [cursor=pointer]:
+        - /url: /Playmelt/legal/mentions-legales/
+      - link "Conditions de vente" [ref=e31] [cursor=pointer]:
+        - /url: /Playmelt/legal/conditions-de-vente/
+      - link "Confidentialité" [ref=e32] [cursor=pointer]:
+        - /url: /Playmelt/legal/confidentialite/
+      - link "Contact" [ref=e33] [cursor=pointer]:
+        - /url: mailto:contact@7agency.fr

@@ -1,0 +1,43 @@
+- generic [active] [ref=e1]:
+  - link "Aller au compte" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=e3]:
+    - link "Playmelt, accueil" [ref=e4] [cursor=pointer]:
+      - /url: /Playmelt/
+      - img "Playmelt" [ref=e5]
+    - link "Retour au site" [ref=e6] [cursor=pointer]:
+      - /url: /Playmelt/
+      - text: Retour au site ↗
+  - main [ref=e7]:
+    - generic [ref=e9]:
+      - text: ESPACE PERSONNEL
+      - heading "Mon compte" [level=1] [ref=e10]
+    - region "Connexion au compte" [ref=e11]:
+      - heading "Créer mon compte" [level=2] [ref=e34]
+      - paragraph [ref=e35]: Un compte gratuit pour télécharger Playmelt et retrouver votre accès.
+      - generic [ref=e36]:
+        - generic [ref=e37]:
+          - generic [ref=e38]: Adresse e-mail
+          - textbox "Adresse e-mail" [ref=e39]
+        - generic [ref=e40]:
+          - generic [ref=e41]: Mot de passe
+          - textbox "Mot de passe" [ref=e42]
+          - paragraph [ref=e43]: 15 à 128 caractères. Les espaces sont acceptés.
+        - button "Créer mon compte" [ref=e44] [cursor=pointer]
+      - link "J’ai déjà un compte" [ref=e46] [cursor=pointer]:
+        - /url: http://127.0.0.1:3095/Playmelt/compte/
+      - paragraph [ref=e47]:
+        - text: Votre adresse sert à votre compte et à vos téléchargements.
+        - link "Confidentialité" [ref=e48] [cursor=pointer]:
+          - /url: http://127.0.0.1:3095/Playmelt/legal/confidentialite/
+  - contentinfo [ref=e27]:
+    - generic [ref=e28]: Playmelt · 7AGENCY — Nathan VENDRELL EI
+    - navigation "Informations légales" [ref=e29]:
+      - link "Mentions légales" [ref=e30] [cursor=pointer]:
+        - /url: /Playmelt/legal/mentions-legales/
+      - link "Conditions de vente" [ref=e31] [cursor=pointer]:
+        - /url: /Playmelt/legal/conditions-de-vente/
+      - link "Confidentialité" [ref=e32] [cursor=pointer]:
+        - /url: /Playmelt/legal/confidentialite/
+      - link "Contact" [ref=e33] [cursor=pointer]:
+        - /url: mailto:contact@7agency.fr

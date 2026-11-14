@@ -3,116 +3,57 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
     <meta name="api-base" content="%%BASE%%" />
     <meta name="robots" content="noindex,nofollow" />
-    <title>Votre compte · Playmelt</title>
+    <title>Mon compte · Playmelt</title>
+    <link rel="icon" href="/Playmelt/assets/images/PlaymeltLogo.png" type="image/png" />
     <link rel="stylesheet" href="%%BASE%%/account.css" />
     <script defer src="%%BASE%%/account.js"></script>
+    <script defer src="%%BASE%%/metrics.js" data-endpoint="%%BASE%%/v1/metrics/pageview" data-page="account"></script>
   </head>
   <body>
-    <a class="skip" href="#account">Aller au compte</a>
-    <header>
-      <a class="brand" href="/Playmelt/"
-        ><img
-          src="/Playmelt/assets/images/PlaymeltLogo.png"
-          alt="Playmelt"
-          width="140"
-          height="40" /></a
-      ><a href="/Playmelt/">Retour au site ↗</a>
+    <a class="skip" href="#main">Aller au compte</a>
+    <header class="site-header">
+      <a class="brand" href="/Playmelt/" aria-label="Playmelt, accueil"><img src="/Playmelt/assets/images/PlaymeltLogo.png" alt="Playmelt" width="124" height="36" /></a>
+      <a class="back-link" href="/Playmelt/">Retour au site <span aria-hidden="true">↗</span></a>
     </header>
-    <main>
-      <section class="hero">
-        <span class="eyebrow">VOTRE COMPTE</span>
-        <h1>Votre accès Playmelt.</h1>
-        <p>
-          Votre abonnement et vos appareils, au même endroit. Le paiement est
-          traité par Stripe.
-        </p>
-      </section>
-      <section id="account" class="panel">
-        <h2>Se connecter</h2>
-        <p>
-          Recevez un lien de connexion par e-mail. Aucun mot de passe à retenir.
-        </p>
-        <form id="login">
-          <label for="email">Adresse e-mail</label
-          ><input
-            id="email"
-            type="email"
-            autocomplete="email"
-            required
-            maxlength="254"
-          /><button type="submit">Recevoir mon lien</button>
-        </form>
-        <p class="fine">
-          Cette adresse sert à votre compte et au suivi de vos achats.
-          <a href="/Playmelt/legal/confidentialite/">Confidentialité</a>
-        </p>
-      </section>
-      <p id="status" role="status" aria-live="polite"></p>
-      <section id="plans" hidden>
-        <h2>Choisir votre accès</h2>
-        <div id="plan-consent"></div>
-        <div class="plans-grid" id="plan-list"></div>
-        <p class="fine">
-          TVA non applicable, art. 293 B du CGI. Jeux et abonnements aux
-          plateformes vendus séparément. La compatibilité dépend du jeu et du
-          Mac.
-        </p>
-      </section>
-      <section id="device" class="panel" hidden>
-        <h2>Connecter votre Mac</h2>
-        <p>
-          Saisissez le code affiché dans Playmelt pour autoriser cet appareil.
-        </p>
-        <form id="device-form">
-          <label for="code">Code de l’application</label
-          ><input
-            id="code"
-            maxlength="12"
-            autocomplete="off"
-            required
-            spellcheck="false"
-          /><button type="submit">Autoriser cet appareil</button>
-        </form>
-      </section>
-      <section id="support" class="panel" hidden>
-        <h2>Besoin d’aide ?</h2>
-        <p>Le support reste accessible lorsque votre licence est inactive.</p>
-        <form id="support-form">
-          <label for="support-category">Votre demande</label
-          ><select id="support-category">
-            <option value="licence">Licence ou activation</option>
-            <option value="paiement">Paiement ou abonnement</option>
-            <option value="retractation">Rétractation ou remboursement</option>
-            <option value="compatibilite">Compatibilité d’un jeu</option>
-            <option value="donnees">Mes données personnelles</option></select
-          ><label for="support-message">Message</label
-          ><textarea
-            id="support-message"
-            minlength="10"
-            maxlength="5000"
-            required
-            rows="5"
-          ></textarea>
-          <p class="fine">
-            Ne transmettez aucun numéro de carte, mot de passe ou secret. Les
-            demandes sont traitées par 7AGENCY, avec assistance IA sous son
-            contrôle.
-          </p>
-          <button type="submit">Envoyer ma demande</button>
-        </form>
-        <div id="support-history"></div>
-      </section>
+    <main id="main">
+      %%ENVIRONMENT_NOTICE%%
+      <div class="page-heading">
+        <div><span class="eyebrow">ESPACE PERSONNEL</span><h1 id="page-title">Mon compte</h1></div>
+        <span id="account-email" class="account-email" hidden></span>
+      </div>
+      <p id="status" role="status" aria-live="polite" tabindex="-1"></p>
+      <section id="account" class="auth-panel" aria-label="Connexion au compte"><noscript>Activez JavaScript pour vous connecter à votre compte Playmelt.</noscript></section>
+      <div id="workspace" hidden>
+        <div class="overview-grid">
+          <section id="licence" class="panel licence-panel" aria-labelledby="licence-title"></section>
+          <section id="download-panel" class="panel download-panel" aria-labelledby="download-title"></section>
+        </div>
+        <section id="devices" class="panel devices-panel" aria-labelledby="devices-title"></section>
+        <section id="network" class="network-section" aria-labelledby="network-title" hidden></section>
+        <section id="device" class="panel" hidden></section>
+        <details id="plans" class="utility" hidden>
+          <summary>Choisir un accès <span aria-hidden="true">+</span></summary>
+          <div class="utility-content"><div id="plan-list"></div><div id="plan-consent"></div><p class="fine">TVA non applicable, art. 293 B du CGI. Jeux et abonnements aux plateformes vendus séparément. La compatibilité dépend du jeu et du Mac.</p></div>
+        </details>
+        <details id="password-panel" class="utility"><summary>Sécurité et mot de passe <span aria-hidden="true">+</span></summary><div id="password-content" class="utility-content"></div></details>
+        <details id="support" class="utility">
+          <summary>Contacter l’assistance <span aria-hidden="true">+</span></summary>
+          <div class="utility-content">
+            <p>L’assistance reste accessible lorsque votre accès est inactif.</p>
+            <form id="support-form" class="form-grid">
+              <div class="field"><label for="support-category">Votre demande</label><select id="support-category"><option value="licence">Licence ou activation</option><option value="paiement">Paiement ou abonnement</option><option value="retractation">Rétractation ou remboursement</option><option value="compatibilite">Compatibilité d’un jeu</option><option value="donnees">Mes données personnelles</option></select></div>
+              <div class="field"><label for="support-message">Message</label><textarea id="support-message" minlength="10" maxlength="5000" required rows="4"></textarea></div>
+              <p class="fine">N’envoyez aucun numéro de carte, mot de passe ou secret. Les demandes sont traitées par 7AGENCY, avec assistance IA sous son contrôle.</p>
+            </form>
+            <div id="support-history"></div>
+          </div>
+        </details>
+        <div id="account-actions" class="account-actions"></div>
+      </div>
     </main>
-    <footer>
-      <span>Playmelt · 7AGENCY — Nathan VENDRELL EI</span>
-      <nav aria-label="Informations légales">
-        <a href="/Playmelt/legal/mentions-legales/">Mentions légales</a
-        ><a href="/Playmelt/legal/conditions-de-vente/">Conditions de vente</a
-        ><a href="/Playmelt/legal/confidentialite/">Confidentialité</a
-        ><a href="mailto:contact@7agency.fr">Nous contacter</a>
-      </nav>
-    </footer>
+    <footer class="site-footer"><span>Playmelt · 7AGENCY — Nathan VENDRELL EI</span><nav aria-label="Informations légales"><a href="/Playmelt/legal/mentions-legales/">Mentions légales</a><a href="/Playmelt/legal/conditions-de-vente/">Conditions de vente</a><a href="/Playmelt/legal/confidentialite/">Confidentialité</a><a href="mailto:contact@7agency.fr">Contact</a></nav></footer>
   </body>
 </html>

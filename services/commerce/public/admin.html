@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow" />
+    <meta name="api-base" content="%%BASE%%" />
+    <title>Administration · Playmelt</title>
+    <link rel="stylesheet" href="%%BASE%%/account.css" />
+    <link rel="stylesheet" href="%%BASE%%/admin.css" />
+    <script defer src="%%BASE%%/admin.js"></script>
+  </head>
+  <body class="admin-page">
+    <a class="skip" href="#dashboard">Aller aux chiffres</a>
+    <header class="admin-header">
+      <a class="brand" href="/Playmelt/"
+        ><img
+          src="/Playmelt/assets/images/PlaymeltLogo.png"
+          alt="Playmelt"
+          width="140"
+          height="40"
+      /></a>
+      <h1>Administration</h1>
+      <nav class="admin-nav" aria-label="Dans l’administration">
+        <a href="#overview">Chiffres</a>
+        <a href="#visitors">Visiteurs</a>
+        <a href="#operations">Gestion</a>
+      </nav>
+      <a href="%%BASE%%/">Mon compte ↗</a>
+    </header>
+    <main id="dashboard" class="admin-main">
+      <div id="overview" class="dashboard-toolbar">
+        <div class="periods" role="group" aria-label="Période">
+          <button data-days="7" class="secondary" aria-pressed="false">
+            7 jours</button
+          ><button data-days="30" aria-pressed="true">30 jours</button
+          ><button data-days="90" class="secondary" aria-pressed="false">
+            90 jours
+          </button>
+        </div>
+        <div class="refresh">
+          <span id="updated">Chargement…</span
+          ><button id="refresh" class="secondary">Actualiser</button>
+        </div>
+      </div>
+      <p id="admin-status" role="status" aria-live="polite"></p>
+      <div id="admin-content" hidden>
+        <div class="kpi-grid" id="kpis"></div>
+        <div class="activity-grid">
+          <section class="panel graph-panel">
+            <div class="graph-head">
+              <div>
+                <h2 id="chart-title">Activité</h2>
+                <span class="fine">Par jour · UTC</span>
+              </div>
+              <label class="chart-selector" for="chart-view">
+                <span class="visually-hidden">Mesure</span>
+                <select id="chart-view">
+                  <option value="activity">Audience et comptes</option>
+                  <option value="downloads">Téléchargements</option>
+                  <option value="receipts">Encaissements</option>
+                </select>
+              </label>
+            </div>
+            <div id="chart-legend" class="chart-legend"></div>
+            <div class="chart-box">
+              <canvas
+                id="activity-chart"
+                tabindex="0"
+                role="img"
+                aria-label="Courbe de l’activité quotidienne. Les valeurs sont disponibles sous le graphique."
+              ></canvas>
+              <div id="chart-tooltip" class="chart-tooltip" hidden></div>
+              <p id="chart-empty" hidden>
+                Les courbes apparaîtront avec les premières activités.
+              </p>
+            </div>
+            <p class="fine" id="collection-start"></p>
+            <details class="daily-details">
+              <summary>Voir les chiffres journaliers</summary>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Jour</th>
+                      <th>Pages vues</th>
+                      <th>Connexions</th>
+                      <th>Créations</th>
+                      <th>Demandes de téléchargement</th>
+                      <th>Encaissements bruts</th>
+                    </tr>
+                  </thead>
+                  <tbody id="daily-values"></tbody>
+                </table>
+              </div>
+            </details>
+          </section>
+          <aside class="side-stack">
+            <section class="panel sources-panel" id="visitors">
+              <h2>Visiteurs · pages vues</h2>
+              <p id="visitor-summary" class="fine"></p>
+              <div id="visit-sources"></div>
+              <p class="fine" id="visitors-note">
+                Pages vues agrégées, sans identifiant de visiteur. Les visites
+                ne désignent pas des personnes uniques.
+              </p>
+            </section>
+            <section class="panel github-panel">
+              <div class="graph-head">
+                <h2>GitHub</h2>
+                <span id="github-state" class="fine">Chargement…</span>
+              </div>
+              <strong class="github-total" id="github-total">—</strong>
+              <p class="fine">
+                Téléchargements des DMG · cumul des versions publiées
+              </p>
+              <div id="github-assets"></div>
+            </section>
+          </aside>
+        </div>
+        <section class="panel operations" id="operations" aria-label="Gestion des comptes, paiements et demandes">
+          <div class="operation-tabs" role="tablist" aria-label="Gestion">
+            <button
+              role="tab"
+              aria-selected="true"
+              aria-controls="accounts-pane"
+              id="accounts-tab"
+              data-pane="accounts"
+            >
+              Comptes</button
+            ><button
+              role="tab"
+              aria-selected="false"
+              aria-controls="registrations-pane"
+              id="registrations-tab"
+              data-pane="registrations"
+              tabindex="-1"
+            >
+              Inscriptions</button
+            ><button
+              role="tab"
+              aria-selected="false"
+              aria-controls="payments-pane"
+              id="payments-tab"
+              data-pane="payments"
+              tabindex="-1"
+            >
+              Paiements</button
+            ><button
+              role="tab"
+              aria-selected="false"
+              aria-controls="support-pane"
+              id="support-tab"
+              data-pane="support"
+              tabindex="-1"
+            >
+              Service client
+            </button>
+          </div>
+          <div
+            id="accounts-pane"
+            role="tabpanel"
+            aria-labelledby="accounts-tab"
+          >
+            <div id="accounts-list">
+            <form id="account-filters" class="account-filters" role="search" aria-label="Rechercher un compte">
+              <label class="account-search" for="account-search">E-mail ou identifiant
+                <input id="account-search" name="q" type="search" maxlength="160" placeholder="Rechercher un client…" autocomplete="off" />
+              </label>
+              <label for="account-scope">Comptes
+                <select id="account-scope"><option value="all">Tous, internes compris</option><option value="customers">Clients</option><option value="internal">Internes</option></select>
+              </label>
+              <label for="account-access">Accès
+                <select id="account-access"><option value="all">Tous les accès</option><option value="active">Actif</option><option value="trialing">Essai en cours</option><option value="lifetime">À vie</option><option value="promotional">Promotionnel</option><option value="none">Sans accès actif</option></select>
+              </label>
+              <label for="account-method">Connexion observée
+                <select id="account-method"><option value="all">Toutes</option><option value="password">Mot de passe disponible</option><option value="google">Google associé</option><option value="email_link">Lien e-mail confirmé</option></select>
+              </label>
+              <label for="account-page-size">Par page
+                <select id="account-page-size"><option>25</option><option selected>50</option><option>100</option></select>
+              </label>
+              <button type="submit">Rechercher</button>
+              <button type="button" id="reset-accounts" class="secondary">Réinitialiser</button>
+            </form>
+            <div class="pane-title">
+              <p id="account-count" class="fine" role="status" aria-live="polite"></p>
+              <div class="pager">
+                <button id="previous-accounts" class="secondary">
+                  Précédent</button
+                ><button id="next-accounts" class="secondary">Suivant</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table class="records-table accounts-table">
+                <thead>
+                  <tr>
+                    <th>Compte</th>
+                    <th>Accès</th>
+                    <th>Créé le</th>
+                    <th>Dernière connexion</th>
+                    <th>Mac autorisés</th>
+                  </tr>
+                </thead>
+                <tbody id="accounts-rows"></tbody>
+              </table>
+            </div>
+            </div>
+            <section id="account-detail" class="account-detail" aria-label="Fiche client" tabindex="-1" hidden></section>
+          </div>
+          <div id="registrations-pane" role="tabpanel" aria-labelledby="registrations-tab" hidden>
+            <h2>Vérifications en attente</h2>
+            <p class="fine">Liens encore valides, sans compte créé. Un lien enregistré ne confirme ni l’envoi ni la réception du mail. Les demandes expirées ne sont pas comptées.</p>
+            <form id="registration-filters" class="account-filters" role="search" aria-label="Rechercher une inscription">
+              <label class="account-search" for="registration-search">E-mail
+                <input id="registration-search" type="search" maxlength="160" autocomplete="off" placeholder="Rechercher une adresse…" />
+              </label>
+              <button type="submit">Rechercher</button>
+            </form>
+            <div class="pane-title">
+              <p id="registration-count" class="fine" role="status" aria-live="polite"></p>
+              <div class="pager"><button id="previous-registrations" class="secondary">Précédent</button><button id="next-registrations" class="secondary">Suivant</button></div>
+            </div>
+            <div class="table-scroll"><table class="records-table"><thead><tr><th>E-mail</th><th>Demande</th><th>Liens valides</th><th>Dernière expiration</th></tr></thead><tbody id="registrations-rows"></tbody></table></div>
+          </div>
+          <div
+            id="payments-pane"
+            role="tabpanel"
+            aria-labelledby="payments-tab"
+            hidden
+          >
+            <p id="reserve-note" class="fine"></p>
+            <div class="table-scroll">
+              <table class="records-table payments-table">
+                <thead>
+                  <tr>
+                    <th>Compte</th>
+                    <th>Encaissement brut</th>
+                    <th>Date</th>
+                    <th>Réserve comptable jusqu’au</th>
+                    <th>État</th>
+                  </tr>
+                </thead>
+                <tbody id="payments-rows"></tbody>
+              </table>
+            </div>
+            <p class="fine">
+              100 derniers encaissements de la période. La réserve comptable ne
+              bloque pas les virements Stripe. Les remboursements et litiges
+              signalés restent à vérifier dans Stripe.
+            </p>
+          </div>
+          <div
+            id="support-pane"
+            role="tabpanel"
+            aria-labelledby="support-tab"
+            hidden
+          >
+            <div class="support-grid">
+              <div id="support-list"></div>
+              <div id="support-detail">
+                <p class="fine">
+                  Sélectionnez une demande pour la lire et y répondre.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

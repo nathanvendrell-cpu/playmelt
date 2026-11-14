@@ -1,0 +1,80 @@
+- generic [ref=f6e1]:
+  - link "Aller au compte" [ref=f6e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=f6e3]:
+    - link "Playmelt, accueil" [ref=f6e4] [cursor=pointer]:
+      - /url: /Playmelt/
+      - img "Playmelt" [ref=f6e5]
+    - link "Retour au site" [ref=f6e6] [cursor=pointer]:
+      - /url: /Playmelt/
+      - text: Retour au site ↗
+  - main [ref=f6e7]:
+    - generic [ref=f6e8]:
+      - generic [ref=f6e9]:
+        - text: ESPACE PERSONNEL
+        - heading "Mon compte" [level=1] [ref=f6e10]
+      - generic [ref=f6e11]: owner@example.test
+    - status [ref=f6e12]: Votre adresse est confirmée.
+    - generic [ref=f6e13]:
+      - generic [ref=f6e14]:
+        - region "Aucun accès actif" [ref=f6e15]:
+          - text: VOTRE ACCÈS
+          - generic [ref=f6e16]: Inactif
+          - heading "Aucun accès actif" [level=2] [ref=f6e17]
+          - paragraph [ref=f6e18]: Votre compte est connecté. Un accès actif est nécessaire pour utiliser Playmelt.
+          - group [ref=f6e19]:
+            - generic "J’ai un code d’activation" [ref=f6e20] [cursor=pointer]
+        - region "Playmelt pour Mac" [ref=f6e21]:
+          - generic [ref=f6e22]:
+            - generic [aria-hidden] [ref=f6e23]: ↓
+            - generic [ref=f6e24]:
+              - heading "Playmelt pour Mac" [level=2] [ref=f6e25]
+              - paragraph [ref=f6e26]: Version 2.1.0 · macOS
+          - paragraph [ref=f6e27]: Recevez votre lien personnel par e-mail. Le téléchargement ne nécessite pas de paiement.
+          - button "Recevoir mon lien de téléchargement" [ref=f6e28] [cursor=pointer]
+      - region "Vos appareils" [ref=f6e29]:
+        - generic [ref=f6e30]:
+          - heading "Vos appareils" [level=2] [ref=f6e31]
+          - generic [ref=f6e32]: 0 appareil
+        - paragraph [ref=f6e33]: Aucun Mac connecté pour le moment.
+        - paragraph [ref=f6e34]: Pour connecter un Mac, ouvrez Playmelt et connectez-vous à votre compte dans l’application.
+      - group [ref=f6e35]:
+        - generic "Choisir un accès" [ref=f6e36] [cursor=pointer]:
+          - text: Choisir un accès
+          - generic [aria-hidden] [ref=f6e37]: +
+      - group [ref=f6e38]:
+        - generic "Sécurité et mot de passe" [active] [ref=f6e39] [cursor=pointer]:
+          - text: Sécurité et mot de passe
+          - generic [aria-hidden] [ref=f6e40]: +
+        - generic [ref=f6e54]:
+          - paragraph [ref=f6e55]: Définissez votre mot de passe pour vous connecter au site et à l’application.
+          - generic [ref=f6e56]:
+            - generic [ref=f6e57]:
+              - generic [ref=f6e58]: Nouveau mot de passe
+              - textbox "Nouveau mot de passe" [ref=f6e59]
+              - paragraph [ref=f6e60]: 15 à 128 caractères. Les espaces sont acceptés.
+            - button "Définir mon mot de passe" [ref=f6e61] [cursor=pointer]
+      - group [ref=f6e41]:
+        - generic "Contacter l’assistance" [ref=f6e42] [cursor=pointer]:
+          - text: Contacter l’assistance
+          - generic [aria-hidden] [ref=f6e43]: +
+        - option "Licence ou activation" [selected]
+        - option "Paiement ou abonnement"
+        - option "Rétractation ou remboursement"
+        - option "Compatibilité d’un jeu"
+        - option "Mes données personnelles"
+      - generic [ref=f6e44]:
+        - button "Se déconnecter" [ref=f6e45] [cursor=pointer]
+        - link "Administration →" [ref=f6e46] [cursor=pointer]:
+          - /url: http://127.0.0.1:3095/Playmelt/compte/admin
+  - contentinfo [ref=f6e47]:
+    - generic [ref=f6e48]: Playmelt · 7AGENCY — Nathan VENDRELL EI
+    - navigation "Informations légales" [ref=f6e49]:
+      - link "Mentions légales" [ref=f6e50] [cursor=pointer]:
+        - /url: /Playmelt/legal/mentions-legales/
+      - link "Conditions de vente" [ref=f6e51] [cursor=pointer]:
+        - /url: /Playmelt/legal/conditions-de-vente/
+      - link "Confidentialité" [ref=f6e52] [cursor=pointer]:
+        - /url: /Playmelt/legal/confidentialite/
+      - link "Contact" [ref=f6e53] [cursor=pointer]:
+        - /url: mailto:contact@7agency.fr

@@ -1,0 +1,69 @@
+- generic [active] [ref=f1e1]:
+  - link "Aller au compte" [ref=f1e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=f1e3]:
+    - link "Playmelt, accueil" [ref=f1e4] [cursor=pointer]:
+      - /url: /Playmelt/
+      - img "Playmelt" [ref=f1e5]
+    - link "Retour au site" [ref=f1e6] [cursor=pointer]:
+      - /url: /Playmelt/
+      - text: Retour au site ↗
+  - main [ref=f1e7]:
+    - generic [ref=f1e8]:
+      - generic [ref=f1e9]:
+        - text: ESPACE PERSONNEL
+        - heading "Mon compte" [level=1] [ref=f1e10]
+      - generic [ref=f1e24]: buyer@example.test
+    - status [ref=f1e25]: Votre adresse est confirmée.
+    - generic [ref=f1e26]:
+      - generic [ref=f1e27]:
+        - region "Aucun accès actif" [ref=f1e28]:
+          - text: VOTRE ACCÈS
+          - generic [ref=f1e29]: Inactif
+          - heading "Aucun accès actif" [level=2] [ref=f1e30]
+          - paragraph [ref=f1e31]: Votre compte est connecté. Un accès actif est nécessaire pour utiliser Playmelt.
+          - group [ref=f1e32]:
+            - generic "J’ai un code d’activation" [ref=f1e33] [cursor=pointer]
+        - region "Playmelt pour Mac" [ref=f1e34]:
+          - generic [ref=f1e35]:
+            - generic [aria-hidden] [ref=f1e36]: ↓
+            - generic [ref=f1e37]:
+              - heading "Playmelt pour Mac" [level=2] [ref=f1e38]
+              - paragraph [ref=f1e39]: Version 2.1.0 · macOS
+          - paragraph [ref=f1e40]: Recevez votre lien personnel par e-mail. Le téléchargement ne nécessite pas de paiement.
+          - button "Recevoir mon lien de téléchargement" [ref=f1e41] [cursor=pointer]
+      - region "Vos appareils" [ref=f1e42]:
+        - generic [ref=f1e43]:
+          - heading "Vos appareils" [level=2] [ref=f1e44]
+          - generic [ref=f1e45]: 0 appareil
+        - paragraph [ref=f1e46]: Aucun Mac connecté pour le moment.
+        - paragraph [ref=f1e47]: Pour connecter un Mac, ouvrez Playmelt et connectez-vous à votre compte dans l’application.
+      - group [ref=f1e48]:
+        - generic "Choisir un accès" [ref=f1e49] [cursor=pointer]:
+          - text: Choisir un accès
+          - generic [aria-hidden] [ref=f1e50]: +
+      - group [ref=f1e51]:
+        - generic "Sécurité et mot de passe" [ref=f1e52] [cursor=pointer]:
+          - text: Sécurité et mot de passe
+          - generic [aria-hidden] [ref=f1e53]: +
+      - group [ref=f1e54]:
+        - generic "Contacter l’assistance" [ref=f1e55] [cursor=pointer]:
+          - text: Contacter l’assistance
+          - generic [aria-hidden] [ref=f1e56]: +
+        - option "Licence ou activation" [selected]
+        - option "Paiement ou abonnement"
+        - option "Rétractation ou remboursement"
+        - option "Compatibilité d’un jeu"
+        - option "Mes données personnelles"
+      - button "Se déconnecter" [ref=f1e58] [cursor=pointer]
+  - contentinfo [ref=f1e17]:
+    - generic [ref=f1e18]: Playmelt · 7AGENCY — Nathan VENDRELL EI
+    - navigation "Informations légales" [ref=f1e19]:
+      - link "Mentions légales" [ref=f1e20] [cursor=pointer]:
+        - /url: /Playmelt/legal/mentions-legales/
+      - link "Conditions de vente" [ref=f1e21] [cursor=pointer]:
+        - /url: /Playmelt/legal/conditions-de-vente/
+      - link "Confidentialité" [ref=f1e22] [cursor=pointer]:
+        - /url: /Playmelt/legal/confidentialite/
+      - link "Contact" [ref=f1e23] [cursor=pointer]:
+        - /url: mailto:contact@7agency.fr

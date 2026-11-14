@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { registerGameSupport, gameSupportDetail } from "./support-game.mjs";
 
 const categories = new Set([
   "licence",
@@ -13,12 +14,13 @@ export function registerSupport(api, { store, config, mailer, auth, fail }) {
   const staff = (req, reply) => {
     const user = auth(req, reply);
     if (!user) return null;
-    if (user.device_id || !(config.supportAdmins || []).includes(user.email)) {
+    if (user.device_id || !(config.adminEmails || []).includes(user.email) && !(config.supportAdmins || []).includes(user.email)) {
       fail(reply, 403, "staff_required");
       return null;
     }
     return user;
   };
+  registerGameSupport(api, { store, config, mailer, auth, fail, staff });
   api.get("/v1/support", async (req, reply) => {
     const user = auth(req, reply);
     if (!user) return;
@@ -65,7 +67,11 @@ export function registerSupport(api, { store, config, mailer, auth, fail }) {
     if (!staff(req, reply)) return;
     return store.all(
       "SELECT t.*,u.email FROM support_tickets t JOIN users u ON u.id=t.user_id ORDER BY t.created DESC LIMIT 200",
-    );
+    ).map((ticket) => ({
+      ...ticket,
+      game: gameSupportDetail(store, ticket.id),
+      replies: store.all("SELECT body,created,delivery FROM support_replies WHERE ticket_id=? ORDER BY created,rowid", ticket.id),
+    }));
   });
   api.get("/v1/admin/reserves", async (req, reply) => {
     if (!staff(req, reply)) return;

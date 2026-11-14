@@ -77,7 +77,7 @@ async function fixture(t) {
     store,
     stripe,
     config,
-    mailer: { sendMail: async (value) => mail.push(value) },
+    mailer: { sendMail: async (value) => { mail.push(value); return { accepted: [value.to.address] }; } },
   });
   t.after(() => app.close());
   const request = (method, path, payload, headers = {}) =>
