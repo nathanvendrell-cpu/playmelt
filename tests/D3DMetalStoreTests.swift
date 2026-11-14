@@ -124,7 +124,8 @@ import Darwin
         expect(!plan.canExecute && plan.blockedReasons.count >= 3, "unqualified route stays blocked")
         expect(plan.prefixURL != descriptor.prefixURL && plan.environment["WINEPREFIX"] == plan.prefixURL.path, "separate DX12 prefix")
         expect(plan.environment["WINEDLLPATH_PREPEND"] == payload.appendingPathComponent("wine").path, "one Apple overlay only")
-        expect(plan.environment["DXMT_ENABLE_NVEXT"] == nil && plan.environment["WINEDLLOVERRIDES"] == "winemenubuilder.exe=d", "no inherited DXMT flags/overrides")
+        expect(plan.environment["DXMT_ENABLE_NVEXT"] == nil && plan.environment["WINEDLLOVERRIDES"] == "d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d", "launch uses Apple native overrides without inherited DXMT flags")
+        expect(plan.preparationEnvironment["WINEDLLOVERRIDES"] == "winemenubuilder.exe=d", "preparation retains its boot overrides")
         expect(plan.environment["CX_D3DMETALPATH"] == payload.appendingPathComponent("external").path, "upstream Apple bridge contract")
         let wrong = try base(temp, environment: ["DYLD_FALLBACK_LIBRARY_PATH": "/Applications/CrossOver.app/Contents/lib"])
         rejects("application dependency") { _ = try store.launchPlan(base: wrong) }
@@ -136,6 +137,24 @@ import Darwin
         try unknownStore.importLocal(sourceURL: unknownSource)
         let unknownPlan = try unknownStore.launchPlan(base: descriptor)
         expect(unknownPlan.blockedReasons.contains { $0.contains("/opt/unknown/vendor.dylib") }, "unknown absolute dependency blocks plan")
+
+        let resourcesSource = temp.appendingPathComponent("resources-source")
+        let resourcesLib = try source(resourcesSource)
+        let resourcesFramework = resourcesLib.appendingPathComponent("external/D3DMetal.framework/Versions/A")
+        try put(macho(dependency: "@rpath/libdxccontainer.dylib"), resourcesFramework.appendingPathComponent("D3DMetal"))
+        try put(macho(dependency: "@rpath/libmetalirconverter.dylib"), resourcesFramework.appendingPathComponent("Resources/libdxccontainer.dylib"))
+        try put(macho(), resourcesFramework.appendingPathComponent("Resources/libmetalirconverter.dylib"))
+        let resourcesStore = D3DMetalStore(root: temp.appendingPathComponent("resources/Renderers/D3DMetal"))
+        try resourcesStore.importLocal(sourceURL: resourcesSource)
+        let resourcesPlan = try resourcesStore.launchPlan(base: descriptor)
+        let expectedResources = temp.appendingPathComponent("resources/Renderers/D3DMetal/payload/external/D3DMetal.framework/Resources").path
+        expect(resourcesPlan.preparationBlockers.isEmpty, "framework Resources resolves both @rpath dependencies")
+        expect(resourcesPlan.environment["DYLD_FALLBACK_LIBRARY_PATH"]?.split(separator: ":").contains(Substring(expectedResources)) == true, "framework Resources is in runtime search path")
+        try fm.removeItem(at: resourcesFramework.appendingPathComponent("Resources/libmetalirconverter.dylib"))
+        let missingResourcesStore = D3DMetalStore(root: temp.appendingPathComponent("missing-resources/Renderers/D3DMetal"))
+        try missingResourcesStore.importLocal(sourceURL: resourcesSource)
+        let missingResourcesPlan = try missingResourcesStore.launchPlan(base: descriptor)
+        expect(missingResourcesPlan.preparationBlockers.contains { $0.contains("@rpath/libmetalirconverter.dylib") }, "missing framework dependency still blocks preparation")
 
         let probe = temp.appendingPathComponent("probe.exe"); try put(pe(), probe)
         func response(_ request: D3DMetalProbeRequest, fields: [String:Any] = [:]) throws -> Data {
@@ -182,7 +201,8 @@ import Darwin
         let license = Data("{\\rtf1 Synthetic license fixture}".utf8), acknowledgements = Data("{\\rtf1 Synthetic acknowledgements fixture}".utf8)
         try put(license, shared.appendingPathComponent("License.rtf"))
         try put(acknowledgements, shared.appendingPathComponent("Acknowledgements.rtf"))
-        // Unrequested NVIDIA shims are deliberately outside the Windows allowlist.
+        // NVIDIA shims are imported when present, but an incomplete set never
+        // unlocks the translation route.
         try put(pe(), sharedLib.appendingPathComponent("wine/x86_64-windows/nvngx.dll"))
         try put(pe(), sharedLib.appendingPathComponent("wine/x86_64-windows/nvapi64.dll"))
         let sharedRoot = temp.appendingPathComponent("shared/Renderers/D3DMetal"), sharedStore = D3DMetalStore(root: sharedRoot)
@@ -201,12 +221,33 @@ import Darwin
         expect(try Data(contentsOf: sharedPayload.appendingPathComponent("notices/License.rtf")) == license, "license contents preserved")
         expect(try Data(contentsOf: sharedPayload.appendingPathComponent("notices/Acknowledgements.rtf")) == acknowledgements, "acknowledgements contents preserved")
         expect(sharedFiles.filter { ($0["path"] as? String ?? "").hasPrefix("notices/") && ($0["sha256"] as? String)?.count == 64 }.count == 2, "both notices included in receipt hashes")
-        expect(!sharedFiles.contains { ($0["path"] as? String ?? "").contains("nvngx") || ($0["path"] as? String ?? "").contains("nvapi") }, "NVIDIA shims not imported")
+        expect(sharedFiles.contains { ($0["path"] as? String) == "wine/x86_64-windows/nvngx.dll" && ($0["sha256"] as? String)?.count == 64 }, "NVIDIA nvngx shim imported under canonical name")
+        expect(sharedFiles.contains { ($0["path"] as? String) == "wine/x86_64-windows/nvapi64.dll" }, "NVIDIA nvapi64 shim imported")
+        expect(sharedReport["nvidiaBridge"] as? String == "partial" && sharedStore.snapshot()["nvidiaBridge"] as? String == "partial", "partial bridge reported without unlocking")
+        expect(!sharedStore.nvidiaBridgeAvailable(), "partial bridge is never available")
         let sameShared = try sharedStore.importLocal(sourceURL: shared)
         expect(sameShared["contentHash"] as? String == sharedReport["contentHash"] as? String, "shared import remains idempotent")
         try put(Data("changed notice".utf8), shared.appendingPathComponent("License.rtf"))
         rejects("notice change participates in import identity") { _ = try sharedStore.importLocal(sourceURL: shared) }
         expect(try Data(contentsOf: sharedPayload.appendingPathComponent("notices/License.rtf")) == license, "different notice cannot replace existing import")
+
+        let bridgeSourceRoot = temp.appendingPathComponent("bridge-source"), bridgeLib = try sharedSource(bridgeSourceRoot)
+        try put(pe(suffix: 2), bridgeLib.appendingPathComponent("wine/x86_64-windows/nvngx-on-metalfx.dll"))
+        try put(macho(), bridgeLib.appendingPathComponent("wine/x86_64-unix/nvngx-on-metalfx.so"))
+        try put(pe(suffix: 3), bridgeLib.appendingPathComponent("wine/x86_64-windows/nvapi64.dll"))
+        let bridgeStoreRoot = temp.appendingPathComponent("bridge/Renderers/D3DMetal"), bridgeStore = D3DMetalStore(root: bridgeStoreRoot)
+        let bridgeReport = try bridgeStore.importLocal(sourceURL: bridgeSourceRoot)
+        let bridgeFiles = bridgeReport["files"] as? [[String:Any]] ?? []
+        expect(bridgeReport["nvidiaBridge"] as? String == "complete", "complete NVIDIA bridge imported")
+        expect((bridgeReport["nvidiaBridgeSourceNames"] as? [String:String])?["wine/x86_64-windows/nvngx.dll"] == "nvngx-on-metalfx.dll", "bridge alias stored under canonical name")
+        expect(["wine/x86_64-windows/nvngx.dll", "wine/x86_64-unix/nvngx.so", "wine/x86_64-windows/nvapi64.dll"].allSatisfy { path in
+            bridgeFiles.contains { ($0["path"] as? String) == path && ($0["sha256"] as? String)?.count == 64 }
+        }, "required bridge files hashed in receipt")
+        expect(bridgeStore.snapshot()["nvidiaBridge"] as? String == "complete" && bridgeStore.nvidiaBridgeAvailable(), "complete hashed bridge is available")
+        let bridgeEnvironment = D3DMetalStore.nvidiaBridgeEnvironment([:])
+        expect(bridgeEnvironment["D3DM_ENABLE_METALFX"] == "1" && bridgeEnvironment["WINEDLLOVERRIDES"] == "nvapi64,nvngx=b,n;d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d", "bridge launch environment")
+        try pe(suffix: 7).write(to: bridgeStoreRoot.appendingPathComponent("payload/wine/x86_64-windows/nvngx.dll"))
+        expect(!bridgeStore.nvidiaBridgeAvailable(), "tampered bridge is refused")
 
         for kind in ["arm", "truncated", "directory", "outside", "dependency", "external-arm"] {
             let bad = temp.appendingPathComponent("shared-invalid-" + kind), badLib = try sharedSource(bad)

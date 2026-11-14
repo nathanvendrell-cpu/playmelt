@@ -4,27 +4,38 @@ import Foundation
 enum LibraryScanTests {
     static func main() throws {
         let fm = FileManager.default
-        let scratch = fm.temporaryDirectory.appendingPathComponent("playmelt-library-tests-" + UUID().uuidString)
+        let scratch = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("playmelt-library-tests-" + UUID().uuidString)
         try fm.createDirectory(at: scratch, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: scratch) }
         let suite = "PlaymeltLibraryTests." + UUID().uuidString
         let prefs = UserDefaults(suiteName: suite)!
         defer { prefs.removePersistentDomain(forName: suite) }
         var checks = 0
-        func require(_ value: @autoclosure () -> Bool, _ message: String) { checks += 1; if !value() { fatalError(message) } }
+        func require(_ value: @autoclosure () -> Bool, _ message: String) {
+            checks += 1
+            if !value() {
+                prefs.removePersistentDomain(forName: suite)
+                try? fm.removeItem(at: scratch)
+                fatalError(message)
+            }
+        }
         func write(_ value: Data, _ file: URL) throws {
             try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try value.write(to: file)
         }
         func text(_ value: String, _ file: URL) throws { try write(Data(value.utf8), file) }
         func u32(_ value: UInt32) -> Data { var v = value.littleEndian; return withUnsafeBytes(of: &v) { Data($0) } }
-        func appinfo(name: String) -> Data {
+        func appinfo(name: String, windowsOnlyID: UInt32? = nil) -> Data {
             func string(_ value: String) -> Data { Data(value.utf8) + Data([0]) }
             func property(_ key: String, _ value: String) -> Data { Data([1]) + string(key) + string(value) }
             var data = u32(0x07564427) + u32(1)
             for id in 1000..<2000 {
                 let body = Data([0]) + string("appinfo") + Data([0]) + string("common") + property("name", name + String(id)) + property("oslist", "macos,windows") + property("type", "game") + Data([8,8,8])
                 data += u32(UInt32(id)) + u32(UInt32(40 + body.count)) + Data(repeating: 0, count: 40) + body
+            }
+            if let id = windowsOnlyID {
+                let body = Data([0]) + string("appinfo") + Data([0]) + string("common") + property("name", "Windows only") + property("oslist", "windows") + property("type", "game") + Data([8,8,8])
+                data += u32(id) + u32(UInt32(40 + body.count)) + Data(repeating: 0, count: 40) + body
             }
             return data + Data(repeating: 0, count: 8)
         }
@@ -90,8 +101,8 @@ enum LibraryScanTests {
         require(model.applyScan(missingLogin) && model.selectedAccountID == account && model.libraryStatus == "synced", "transient local login absence is not logout")
         require(!model.warnings.contains { $0.contains("Highball") }, "no unrelated launcher warning")
 
-        let dxmt = Runtime(id: "dxmt", name: "Windows", platform: "windows", steamRoot: steam, appURL: steam)
-        let dx12 = Runtime(id: "dx12", name: "Windows12", platform: "windows", steamRoot: steam, appURL: steam, renderer: "d3dmetal")
+        let dxmt = Runtime(id: "dxmt", name: "Windows", platform: "windows", steamRoot: steam, appURL: steam, wineURL: app)
+        let dx12 = Runtime(id: "dx12", name: "Windows12", platform: "windows", steamRoot: steam, appURL: steam, wineURL: app, renderer: "d3dmetal")
         var satisfactory = Game(id: "s", appId: "526870", title: "Satisfactory", store: "steam", installed: false, platform: "windows", runtimeId: "dxmt", runtimeName: "Windows", ownership: "authenticated-library")
         satisfactory.supportedPlatforms = ["windows"]
         let routes = satisfactory.json(runtimes: [dxmt, dx12])["installRoutes"] as! [[String: Any]]
@@ -106,6 +117,79 @@ enum LibraryScanTests {
             while !condition() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
             require(condition(), "async fixture timed out")
         }
+
+        // Distinct installed routes for a shared AppID must survive discovery
+        // of a local Windows copy. These are inert files, never executables run.
+        let routeHome = scratch.appendingPathComponent("route-fixtures")
+        let nativeSteam = routeHome.appendingPathComponent("Library/Application Support/Steam")
+        let win11Steam = routeHome.appendingPathComponent("Windows11Steam")
+        let win12Steam = routeHome.appendingPathComponent("Windows12Steam")
+        let nativeRuntime = Runtime(id: "native-route", name: "Fixture Mac", platform: "mac", steamRoot: nativeSteam, appURL: app)
+        let win11Runtime = Runtime(id: "dx11-route", name: "Fixture DX11", platform: "windows", steamRoot: win11Steam, appURL: app, wineURL: app)
+        let win12Runtime = Runtime(id: "dx12-route", name: "Fixture DX12", platform: "windows", steamRoot: win12Steam, appURL: app, wineURL: app, renderer: "d3dmetal")
+        try write(appinfo(name: "Mixed", windowsOnlyID: 1783560), nativeSteam.appendingPathComponent("appcache/appinfo.vdf"))
+        let nativeGamePath = nativeSteam.appendingPathComponent("steamapps/common/NativeCopy")
+        let win11GamePath = win11Steam.appendingPathComponent("steamapps/common/Windows11Copy")
+        let win12GamePath = win12Steam.appendingPathComponent("steamapps/common/Windows12Copy")
+        for (root, directory) in [(nativeSteam, "NativeCopy"), (win11Steam, "Windows11Copy"), (win12Steam, "Windows12Copy")] {
+            try text("\"AppState\" { \"appid\" \"1000\" \"name\" \"Mixed\" \"installdir\" \"\(directory)\" \"StateFlags\" \"4\" }", root.appendingPathComponent("steamapps/appmanifest_1000.acf"))
+        }
+        let nativeBinary = nativeGamePath.appendingPathComponent("Game")
+        try write(Data([0xcf, 0xfa, 0xed, 0xfe]), nativeBinary)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: nativeBinary.path)
+        try write(Data([0x4d, 0x5a]), win11GamePath.appendingPathComponent("Game.exe"))
+        try write(Data([0x4d, 0x5a]), win12GamePath.appendingPathComponent("Game.exe"))
+        let localGames = routeHome.appendingPathComponent("Library/Application Support/Playmelt/Games")
+        let localMixed = localGames.appendingPathComponent("MixedLocal")
+        let localOtherMixed = localGames.appendingPathComponent("MixedOtherLocal")
+        let localDX12 = localGames.appendingPathComponent("CaretakerLocal")
+        for (folder, id) in [(localMixed, "1000"), (localOtherMixed, "1000"), (localDX12, "1783560")] {
+            try text(id + "\n", folder.appendingPathComponent("Windows/steam_appid.txt"))
+            try write(Data([0x4d, 0x5a]), folder.appendingPathComponent("Windows/Game.exe"))
+        }
+        func sourceContents() throws -> [String: Data] {
+            var result: [String: Data] = [:]
+            let walker = fm.enumerator(at: routeHome, includingPropertiesForKeys: [.isRegularFileKey])!
+            for case let file as URL in walker where (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                result[file.path] = try Data(contentsOf: file)
+            }
+            return result
+        }
+        let unchangedSources = try sourceContents()
+        let routeScanner = LibraryScanner()
+        func scanRoutes(_ runtimes: [Runtime], generation: UInt64) -> LibraryScanSnapshot {
+            routeScanner.scanSynchronously(LibraryScanRequest(generation: generation, requestedAccountID: account, home: routeHome, runtimes: runtimes, readSavedSnapshot: { _ in nil }))
+        }
+        func routeSignature(_ snapshot: LibraryScanSnapshot) -> [String] {
+            snapshot.steamGames.map { [$0.id, $0.platform, $0.runtimeId, $0.runtimeName, $0.path?.path ?? ""].joined(separator: "|") }.sorted()
+        }
+        let allRuntimes = [nativeRuntime, win11Runtime, win12Runtime]
+        let localCold = scanRoutes(allRuntimes, generation: 1)
+        let nativeRows = localCold.steamGames.filter { $0.appId == "1000" && $0.platform == "mac" }
+        require(nativeRows.count == 1 && nativeRows[0].runtimeId == nativeRuntime.id && nativeRows[0].path?.path == nativeGamePath.path, "local Windows discovery preserves the distinct native Mac installation and path")
+        require(localCold.steamGames.contains { $0.appId == "1000" && $0.runtimeId == win11Runtime.id && $0.path?.path == win11GamePath.path }, "distinct DX11 Steam installation retains its route and path")
+        require(localCold.steamGames.contains { $0.appId == "1000" && $0.runtimeId == win12Runtime.id && $0.path?.path == win12GamePath.path }, "distinct DX12 Steam installation retains its route and path")
+        let mixedLocalRows = localCold.steamGames.filter { $0.appId == "1000" && $0.installSource == "local" }
+        require(mixedLocalRows.count == 2 && mixedLocalRows.allSatisfy { $0.platform == "windows" && $0.runtimeId == win11Runtime.id && $0.runtimeName == win11Runtime.name }, "local mixed-platform copies use Windows rather than inheriting Mac")
+        require(Set(localCold.steamGames.map(\.id)).count == localCold.steamGames.count, "multiple local folders for one AppID have distinct stable identities")
+        let dx12LocalRows = localCold.steamGames.filter { $0.appId == "1783560" && $0.installSource == "local" }
+        require(dx12LocalRows.count == 1, "one local DX12 installation is represented")
+        require(dx12LocalRows[0].platform == "windows" && dx12LocalRows[0].runtimeId == win12Runtime.id && dx12LocalRows[0].runtimeName == win12Runtime.name, "DX12-only local game skips the first DXMT runtime")
+        require(dx12LocalRows[0].path?.resolvingSymlinksInPath().path == localDX12.resolvingSymlinksInPath().path, "DX12 local path preserved: actual \(dx12LocalRows[0].path?.path ?? "nil"), expected \(localDX12.path)")
+        let localWarm = scanRoutes(allRuntimes, generation: 2)
+        require(localWarm.metrics.filesParsed == 0 && localWarm.metrics.cacheHits > 0 && routeSignature(localWarm) == routeSignature(localCold), "warm cache preserves every route, label, path and identity")
+        let missingDX12 = scanRoutes([nativeRuntime, win11Runtime], generation: 3)
+        require(missingDX12.steamGames.contains { $0.appId == "1783560" && $0.runtimeId.isEmpty && $0.runtimeName == "Moteur Windows non configuré" }, "absent DX12 runtime cannot inherit DXMT or Mac")
+        let unavailableDX12 = Runtime(id: win12Runtime.id, name: win12Runtime.name, platform: "windows", steamRoot: win12Steam, appURL: routeHome.appendingPathComponent("missing-runtime"), wineURL: app, renderer: "d3dmetal")
+        let unavailable = scanRoutes([nativeRuntime, win11Runtime, unavailableDX12], generation: 4)
+        require(unavailable.steamGames.contains { $0.appId == "1783560" && $0.runtimeId.isEmpty && $0.runtimeName == "Moteur Windows non configuré" }, "unavailable DX12 runtime is not represented as usable")
+        let noWindows = scanRoutes([nativeRuntime], generation: 5)
+        require(noWindows.steamGames.filter { $0.installSource == "local" }.allSatisfy { $0.runtimeId.isEmpty && $0.runtimeName == "Moteur Windows non configuré" }, "all local Windows routes stay unconfigured when only Mac is available")
+        let sourcesAfterScan = try sourceContents()
+        require(sourcesAfterScan == unchangedSources, "all scan passes leave fixture source files byte-identical")
+        require(nativeRows[0].path?.path == nativeGamePath.path && routeSignature(localCold) == routeSignature(localWarm), "later scans do not mutate previous value snapshots")
+        var routesClosed = false; routeScanner.shutdown { routesClosed = true }; pump { routesClosed }
+
         let raceScanner = LibraryScanner(), raceEntered = DispatchSemaphore(value: 0), raceRelease = DispatchSemaphore(value: 0)
         let raceBasis = model.makeScanRequest()
         let oldSavedData = prefs.data(forKey: "steamLibrarySnapshot." + account)

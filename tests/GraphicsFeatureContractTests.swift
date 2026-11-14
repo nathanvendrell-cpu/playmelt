@@ -111,6 +111,16 @@ import Foundation
         expect(C.preflight(r).descriptorsValid && has(r, "vendorOrModelSchemaNotImplemented"), "NR minimum metadata does not invent a complete DLSS5 SDK contract")
         r.temporal!.motion = nil; expect(has(r, "motionRequired"), "NR still requires actual engine motion")
 
+        r = base; r.feature = .appleMetalFXTemporalDenoised
+        expect(has(r, "diffuseAlbedoRequired"), "Ray Reconstruction requires diffuse albedo")
+        r.temporal!.diffuseAlbedo = texture("albedo", r.color.size, .rgba16Float)
+        expect(has(r, "normalsRequired"), "Ray Reconstruction requires normals")
+        r.temporal!.normals = texture("normals", r.color.size, .rgba16Float)
+        expect(has(r, "roughnessRequired"), "Ray Reconstruction requires roughness")
+        r.temporal!.roughness = texture("roughness", r.color.size, .r8Unorm)
+        expect(C.preflight(r).descriptorsValid, "Ray Reconstruction descriptors valid with required G-buffers")
+        r.api = .directX12; expect(has(r, "featureRequiresMetalAPI"), "MetalFX Temporal Denoised requires Metal API")
+
         r = hdr(); expect(C.preflight(r).descriptorsValid, "linear HDR EDR descriptor baseline")
         r.hdr!.wantsEDR = false; expect(has(r, "edrNotEnabled"), "HDR flag required")
         r = hdr(); r.hdr!.currentHeadroom = nil; expect(has(r, "currentEDRHeadroomRequired"), "unknown headroom never treated as HDR support")

@@ -58,9 +58,24 @@ final class EpicConnector {
         let configured = Bundle.main.object(forInfoDictionaryKey: "MetalMaxSourceDirectory") as? String
         let applicationSupport = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt")
         self.projectRoot = projectRoot ?? configured.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? applicationSupport
-        self.pythonURL = pythonURL ?? self.projectRoot.appendingPathComponent("Dependencies.noindex/epic-venv/bin/python3")
-        self.workerURL = workerURL ?? Bundle.main.url(forResource: "epic-worker", withExtension: "py")
-            ?? self.projectRoot.appendingPathComponent("scripts/epic-worker.py")
+        let projectVenv = self.projectRoot.appendingPathComponent("Dependencies.noindex/epic-venv/bin/python3")
+        let appSupportVenv = applicationSupport.appendingPathComponent("Dependencies.noindex/epic-venv/bin/python3")
+        // No machine-specific absolute paths: dev builds resolve through MetalMaxSourceDirectory,
+        // release builds through Application Support.
+        let venvCandidates = [projectVenv, appSupportVenv]
+        self.pythonURL = pythonURL ?? venvCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) ?? projectVenv
+
+        let workerCandidates = [
+            Bundle.main.url(forResource: "epic-worker", withExtension: "py"),
+            self.projectRoot.appendingPathComponent("scripts/epic-worker.py"),
+            applicationSupport.appendingPathComponent("scripts/epic-worker.py")
+        ].compactMap { $0 }
+        self.workerURL = workerURL ?? workerCandidates.first(where: { FileManager.default.isReadableFile(atPath: $0.path) }) ?? self.projectRoot.appendingPathComponent("scripts/epic-worker.py")
+    }
+
+    /// Legendary CLI living next to the resolved venv interpreter (same venv as the worker).
+    var legendaryExecutableURL: URL {
+        pythonURL.deletingLastPathComponent().appendingPathComponent("legendary")
     }
 
     func availability() -> [String: Any] {
@@ -165,7 +180,7 @@ final class EpicConnector {
 
     /// Shared by credential admission and callback construction. An account ID
     /// alone does not make a partial/malformed library response trustworthy.
-    private static func validatedSnapshot(_ payload: [String: Any]) -> Result<EpicSnapshot, Error> {
+    static func validatedSnapshot(_ payload: [String: Any]) -> Result<EpicSnapshot, Error> {
         guard let value = payload["snapshot"] as? [String: Any],
               let accountId = value["accountId"] as? String, !accountId.isEmpty,
               let displayName = value["displayName"] as? String,

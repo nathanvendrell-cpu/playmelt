@@ -7,6 +7,7 @@ struct D3DMetalLaunchPlan {
     let prefixURL: URL
     let steamRoot: URL
     let environment: [String: String]
+    let preparationEnvironment: [String: String]
     let rendererHash: String
     let engineID: String
     let engineFingerprint: String
@@ -38,6 +39,19 @@ final class D3DMetalStore {
         "https://github.com/gauthierpiarrette/highball/blob/bbada878d142521a3267f0818a09cd62111b5789/Sources/HighballKit/Bottle.swift",
         "https://github.com/gauthierpiarrette/highball/blob/bbada878d142521a3267f0818a09cd62111b5789/spike/engine-manifest.json"
     ]
+    /// GPTK 4 may ship the NGX shim as `nvngx-on-metalfx.*`; games still load
+    /// the canonical `nvngx.dll`, so the import stores the canonical name.
+    private struct NvidiaBridgeFile {
+        let relative: String
+        let sources: [String]
+        let required: Bool
+    }
+    private static let nvidiaBridgeFiles = [
+        NvidiaBridgeFile(relative: "wine/x86_64-windows/nvngx.dll", sources: ["nvngx-on-metalfx.dll", "nvngx.dll"], required: true),
+        NvidiaBridgeFile(relative: "wine/x86_64-unix/nvngx.so", sources: ["nvngx-on-metalfx.so", "nvngx.so"], required: true),
+        NvidiaBridgeFile(relative: "wine/x86_64-windows/nvapi64.dll", sources: ["nvapi64.dll"], required: true),
+        NvidiaBridgeFile(relative: "wine/x86_64-unix/nvapi64.so", sources: ["nvapi64.so"], required: false)
+    ]
     let root: URL
     private let stateLock = NSLock(), importLock = NSLock()
     private var cached: [String: Any]?
@@ -56,11 +70,43 @@ final class D3DMetalStore {
         guard let report, let hash = report["contentHash"] as? String,
               FileManager.default.fileExists(atPath: payload.path), FileManager.default.fileExists(atPath: receipt.path) else {
             return ["status": "missing", "message": "Importez les fichiers Apple D3DMetal pour préparer DirectX 12.",
-                    "imported": false, "abiStatus": "not-checked", "loadTested": false, "gameTested": false]
+                    "imported": false, "abiStatus": "not-checked", "loadTested": false, "gameTested": false,
+                    "nvidiaBridge": "absent"]
         }
         return ["status": "imported", "message": "D3DMetal importé. Validation Wine et DirectX 12 restante.",
                 "imported": true, "abiStatus": "unverified", "loadTested": false, "gameTested": false,
-                "contentHash": hash, "version": report["version"] ?? "unknown", "licenseAcceptedByPlaymelt": false]
+                "contentHash": hash, "version": report["version"] ?? "unknown", "licenseAcceptedByPlaymelt": false,
+                "nvidiaBridge": Self.nvidiaBridgePresence(report)]
+    }
+
+    /// The bridge is only usable when all required shims are present *and*
+    /// still match their receipt hashes. Presence alone never enables it.
+    func nvidiaBridgeAvailable() -> Bool {
+        stateLock.lock(); let report = cached; stateLock.unlock()
+        guard let report, report["contentHash"] as? String != nil,
+              FileManager.default.fileExists(atPath: payload.path),
+              FileManager.default.fileExists(atPath: receipt.path),
+              let files = report["files"] as? [[String: Any]], !files.isEmpty else { return false }
+        var expected: [String: String] = [:]
+        for file in files {
+            guard let path = file["path"] as? String, let sha = file["sha256"] as? String, Self.safeRelative(path) else { return false }
+            expected[path] = sha
+        }
+        for bridge in Self.nvidiaBridgeFiles where bridge.required {
+            guard let sha = expected[bridge.relative], Self.safeRelative(bridge.relative),
+                  (try? Self.hash(payload.appendingPathComponent(bridge.relative))) == sha else { return false }
+        }
+        return true
+    }
+
+    /// Launch-side translation variables. `D3DMetalStore` keeps its historical
+    /// plan unchanged; callers opt in per game and only after
+    /// `nvidiaBridgeAvailable()` succeeded.
+    static func nvidiaBridgeEnvironment(_ preparationEnvironment: [String: String]) -> [String: String] {
+        var environment = launchEnvironment(preparationEnvironment)
+        environment["D3DM_ENABLE_METALFX"] = "1"
+        environment["WINEDLLOVERRIDES"] = "nvapi64,nvngx=b,n;" + (environment["WINEDLLOVERRIDES"] ?? "")
+        return environment
     }
     func inspect(sourceURL: URL) throws -> [String: Any] { try inspectFiles(sourceURL).report }
 
@@ -116,14 +162,15 @@ final class D3DMetalStore {
         stateLock.lock(); let report = cached; stateLock.unlock()
         guard let report, let hash = report["contentHash"] as? String, try verifyPayload(report) else { throw Self.failure("Import D3DMetal absent ou modifié.") }
         let configuration = try candidateConfiguration(base: base)
-        let prefix = configuration.prefix, env = configuration.environment
+        let prefix = configuration.prefix, env = Self.launchEnvironment(configuration.environment)
         let baseLibraries = base.environment["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
         let baseFrameworks = base.environment["DYLD_FALLBACK_FRAMEWORK_PATH"] ?? ""
         var reasons = ["Le contrat ABI entre cet import Apple et ce Wine doit encore être validé."]
         reasons.append("Les composants graphiques 32 bits de ce préfixe restent à qualifier ; aucun overlay DXMT n’y est ajouté.")
         var preparationBlockers: [String] = []
         let engine = base.wineURL.deletingLastPathComponent().deletingLastPathComponent()
-        let searchRoots = [payload.appendingPathComponent("external"), engine.appendingPathComponent("lib/wine/x86_64-unix"), engine.appendingPathComponent("lib")] +
+        let frameworkResources = payload.appendingPathComponent("external/D3DMetal.framework/Resources")
+        let searchRoots = [payload.appendingPathComponent("external"), frameworkResources, engine.appendingPathComponent("lib/wine/x86_64-unix"), engine.appendingPathComponent("lib")] +
             (baseLibraries + ":" + baseFrameworks).split(separator: ":").map { URL(fileURLWithPath: String($0)) }
         var unresolved = Set<String>()
         for image in report["machO"] as? [[String: Any]] ?? [] {
@@ -144,8 +191,14 @@ final class D3DMetalStore {
         reasons += preparationBlockers
         if (try? RuntimeSetup.validatePrefix(prefix)) == nil { reasons.append("Le préfixe DirectX 12 indépendant n’est pas initialisé.") }
         return .init(wineURL: base.wineURL, prefixURL: prefix, steamRoot: prefix.appendingPathComponent("drive_c/Program Files (x86)/Steam"),
-                     environment: env, rendererHash: hash, engineID: base.engineID,
+                     environment: env, preparationEnvironment: configuration.environment, rendererHash: hash, engineID: base.engineID,
                      engineFingerprint: try Self.engineFingerprint(base.wineURL), preparationBlockers: preparationBlockers, blockedReasons: reasons)
+    }
+
+    static func launchEnvironment(_ preparationEnvironment: [String: String]) -> [String: String] {
+        var environment = preparationEnvironment
+        environment["WINEDLLOVERRIDES"] = "d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d"
+        return environment
     }
 
     /// Configuration only, with no hash scan and no qualification grant. A caller
@@ -158,6 +211,7 @@ final class D3DMetalStore {
               !Self.forbiddenPath(prefix), !Self.forbiddenPath(base.wineURL) else { throw Self.failure("Le préfixe DirectX 12 doit être indépendant.") }
         try RuntimeSetup.rejectSymlinkAncestors(prefix)
         let external = payload.appendingPathComponent("external").path
+        let frameworkResources = payload.appendingPathComponent("external/D3DMetal.framework/Resources").path
         let overlay = payload.appendingPathComponent("wine").path
         let baseLibraries = base.environment["DYLD_FALLBACK_LIBRARY_PATH"] ?? ""
         let baseFrameworks = base.environment["DYLD_FALLBACK_FRAMEWORK_PATH"] ?? ""
@@ -169,7 +223,7 @@ final class D3DMetalStore {
             "TMPDIR": NSTemporaryDirectory(), "WINEPREFIX": prefix.path, "WINEDEBUG": "fixme-all",
             "WINEMSYNC": "0", "WINEESYNC": "0", "WINEDLLOVERRIDES": "winemenubuilder.exe=d",
             "WINEDLLPATH_PREPEND": overlay, "CX_D3DMETALPATH": external,
-            "DYLD_FALLBACK_LIBRARY_PATH": ([external, baseLibraries].filter { !$0.isEmpty }).joined(separator: ":"),
+            "DYLD_FALLBACK_LIBRARY_PATH": ([external, frameworkResources, baseLibraries].filter { !$0.isEmpty }).joined(separator: ":"),
             "DYLD_FALLBACK_FRAMEWORK_PATH": ([external, baseFrameworks].filter { !$0.isEmpty }).joined(separator: ":")
         ]
         if let plugins = base.environment["GST_PLUGIN_PATH"], !Self.forbiddenPath(URL(fileURLWithPath: plugins)), !Self.isDXMTOverlay(plugins) { env["GST_PLUGIN_PATH"] = plugins }
@@ -290,6 +344,19 @@ final class D3DMetalStore {
                 if FileManager.default.fileExists(atPath: file.path) { try add(file, relative, parseMach: ext == "so", parsePE: ext == "dll") }
             }
         }
+        // Optional NVIDIA bridge. Presence is imported as-is; it grants no
+        // qualification and the canonical names are what games load.
+        var bridgeSources: [String: String] = [:]
+        for bridge in Self.nvidiaBridgeFiles {
+            let folder = lib.appendingPathComponent((bridge.relative as NSString).deletingLastPathComponent, isDirectory: true)
+            guard let file = bridge.sources.lazy.map({ folder.appendingPathComponent($0) }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) else { continue }
+            let isWindows = bridge.relative.hasSuffix(".dll")
+            try add(file, bridge.relative, parseMach: !isWindows, parsePE: isWindows)
+            bridgeSources[bridge.relative] = file.lastPathComponent
+        }
+        let requiredBridge = Self.nvidiaBridgeFiles.filter { $0.required }.map { $0.relative }
+        let presentRequired = requiredBridge.filter { bridgeSources[$0] != nil }.count
+        let bridgeStatus = presentRequired == 0 ? "absent" : presentRequired == requiredBridge.count ? "complete" : "partial"
         guard let walker = FileManager.default.enumerator(at: external, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: []) else { throw Self.failure("Le framework Apple est illisible.") }
         var entries = 0
         while let file = walker.nextObject() as? URL {
@@ -339,7 +406,17 @@ final class D3DMetalStore {
                               "dependencies": dependencies.sorted(), "hostOSCompatible": hostPacked >= minOS,
                               "abiStatus": "unverified", "loadTested": false, "gameTested": false, "licenseAcceptedByPlaymelt": false,
                               "architectures": ["x86_64"], "win32Graphics": "not-configured",
+                              "nvidiaBridge": bridgeStatus, "nvidiaBridgeSourceNames": bridgeSources,
                               "sources": Self.sources], files: files, links: links)
+    }
+
+    /// Cheap presence status for snapshots. Activation additionally re-hashes
+    /// the required files in `nvidiaBridgeAvailable()`.
+    private static func nvidiaBridgePresence(_ report: [String: Any]) -> String {
+        let paths = Set((report["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+        let required = nvidiaBridgeFiles.filter { $0.required }.map { $0.relative }
+        let count = required.filter(paths.contains).count
+        return count == 0 ? "absent" : count == required.count ? "complete" : "partial"
     }
     private func verifyPayload(_ report: [String: Any]) throws -> Bool {
         guard let files = report["files"] as? [[String: Any]], !files.isEmpty, files.count < 1025 else { return false }

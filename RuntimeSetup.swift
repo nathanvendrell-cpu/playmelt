@@ -287,6 +287,91 @@ final class RuntimeSetup {
                 throw RuntimeSetupError.failed("Après fermeture de Wine, le fichier Windows attendu est absent ou invalide : \(path). Les données sont conservées pour diagnostic.")
             }
         }
+        ensureVisualCRuntimeKeys(prefix)
+    }
+
+    static func ensureVisualCRuntimeKeys(_ prefix: URL) {
+        let sysReg = prefix.appendingPathComponent("system.reg")
+        guard let content = try? String(contentsOf: sysReg, encoding: .utf8) else { return }
+        if content.contains("VC\\\\Runtimes\\\\x64") { return }
+        let regBlock = """
+
+[Software\\\\Microsoft\\\\VisualStudio\\\\14.0\\\\VC\\\\Runtimes\\\\x64] 1794440000
+#time=1dd713d1b54194e
+"Bld"=dword:00008412
+"Installed"=dword:00000001
+"Major"=dword:0000000e
+"Minor"=dword:00000028
+"MinVersion"="14.40.33810.0"
+"Version"="v14.40.33810"
+
+[Software\\\\Microsoft\\\\VisualStudio\\\\14.0\\\\VC\\\\Runtimes\\\\x86] 1794440000
+#time=1dd713d1b54194e
+"Bld"=dword:00008412
+"Installed"=dword:00000001
+"Major"=dword:0000000e
+"Minor"=dword:00000028
+"MinVersion"="14.40.33810.0"
+"Version"="v14.40.33810"
+
+[Software\\\\Wow6432Node\\\\Microsoft\\\\VisualStudio\\\\14.0\\\\VC\\\\Runtimes\\\\x64] 1794440000
+#time=1dd713d1b54194e
+"Bld"=dword:00008412
+"Installed"=dword:00000001
+"Major"=dword:0000000e
+"Minor"=dword:00000028
+"MinVersion"="14.40.33810.0"
+"Version"="v14.40.33810"
+
+[Software\\\\Wow6432Node\\\\Microsoft\\\\VisualStudio\\\\14.0\\\\VC\\\\Runtimes\\\\x86] 1794440000
+#time=1dd713d1b54194e
+"Bld"=dword:00008412
+"Installed"=dword:00000001
+"Major"=dword:0000000e
+"Minor"=dword:00000028
+"MinVersion"="14.40.33810.0"
+"Version"="v14.40.33810"
+
+[Software\\\\Microsoft\\\\DevDiv\\\\VC\\\\Servicing\\\\14.0\\\\RuntimeAdditional] 1794440000
+#time=1dd713d1b54194e
+"Install"=dword:00000001
+"SP"=dword:00000000
+"SPName"="None"
+"Version"="14.40.33810"
+
+[Software\\\\Microsoft\\\\DevDiv\\\\VC\\\\Servicing\\\\14.0\\\\RuntimeMinimum] 1794440000
+#time=1dd713d1b54194e
+"Install"=dword:00000001
+"SP"=dword:00000000
+"SPName"="None"
+"Version"="14.40.33810"
+
+[Software\\\\Wow6432Node\\\\Microsoft\\\\DevDiv\\\\VC\\\\Servicing\\\\14.0\\\\RuntimeAdditional] 1794440000
+#time=1dd713d1b54194e
+"Install"=dword:00000001
+"SP"=dword:00000000
+"SPName"="None"
+"Version"="14.40.33810"
+
+[Software\\\\Wow6432Node\\\\Microsoft\\\\DevDiv\\\\VC\\\\Servicing\\\\14.0\\\\RuntimeMinimum] 1794440000
+#time=1dd713d1b54194e
+"Install"=dword:00000001
+"SP"=dword:00000000
+"SPName"="None"
+"Version"="14.40.33810"
+
+[Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall\\\\{Microsoft Visual C++ 2015-2022 Redistributable (x64)}] 1794440000
+#time=1dd713d1b54194e
+"DisplayName"="Microsoft Visual C++ 2015-2022 Redistributable (x64) - 14.40.33810"
+"DisplayVersion"="14.40.33810.0"
+"Installed"=dword:00000001
+
+"""
+        if let handle = try? FileHandle(forWritingTo: sysReg) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(regBlock.utf8))
+            try? handle.close()
+        }
     }
 
     static func safeArchivePath(_ path: String) -> Bool {

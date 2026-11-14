@@ -83,6 +83,7 @@ const context = {
   received: true,
   filteredGames: () => filtered,
   gameCardCache: cache,
+  renderSpotlight: () => {},
   updateJobIndicator: () => {},
   openGame: () => {},
   installJobFor: () => null,

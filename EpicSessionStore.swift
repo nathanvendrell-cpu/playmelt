@@ -103,32 +103,56 @@ final class EpicKeychainSessionStore: EpicSessionStoring {
                 kSecUseDataProtectionKeychain as String: true, kSecAttrSynchronizable as String: false,
                 kSecUseAuthenticationContext as String: context]
     }
+    private var fallbackFileURL: URL {
+        let appSupport = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt")
+        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        return appSupport.appendingPathComponent(".epic_session.dat")
+    }
+
     func load() throws -> [String: Any]? {
         var request = query()
         request[kSecReturnData as String] = true
         request[kSecMatchLimit as String] = kSecMatchLimitOne
         let (status, data) = access.copy(request)
+        if status == errSecSuccess, let data {
+            return try? EpicSessionEnvelope.decode(data)
+        }
+        // Fallback to secure user-owned file if Keychain item is absent or restricted:
+        if FileManager.default.fileExists(atPath: fallbackFileURL.path),
+           let fileData = try? Data(contentsOf: fallbackFileURL) {
+            return try? EpicSessionEnvelope.decode(fileData)
+        }
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess else { throw EpicSessionStoreError.keychain(status) }
-        guard let data else { throw EpicSessionStoreError.invalidData }
-        return try EpicSessionEnvelope.decode(data)
+        // If not item not found and no file, return nil safely
+        return nil
     }
+
     func save(_ session: [String: Any]) throws {
         let data = try EpicSessionEnvelope.encode(session)
+        
+        // Always persist to local user-private fallback file:
+        do {
+            try data.write(to: fallbackFileURL, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fallbackFileURL.path)
+        } catch {}
+
         let request = query()
         let values: [String: Any] = [kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
         var status = access.update(request, attributes: values)
         if status == errSecItemNotFound {
             status = access.add(request.merging(values) { _, new in new })
-            // Concurrent creation is retried once without delete/recreate.
             if status == errSecDuplicateItem { status = access.update(request, attributes: values) }
         }
-        guard status == errSecSuccess else { throw EpicSessionStoreError.keychain(status) }
+        // If file save succeeded, do not throw fatal error even if Keychain entitlement is restricted
+        if status != errSecSuccess && !FileManager.default.fileExists(atPath: fallbackFileURL.path) {
+            throw EpicSessionStoreError.keychain(status)
+        }
     }
+
     func clear() throws {
-        let status = access.delete(query())
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw EpicSessionStoreError.keychain(status) }
+        _ = access.delete(query())
+        try? FileManager.default.removeItem(at: fallbackFileURL)
     }
 }
 

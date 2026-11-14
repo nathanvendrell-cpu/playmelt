@@ -5,23 +5,26 @@ import Foundation
 /// canonical subset and primary sources; this is not a vendor SDK replacement.
 enum GraphicsFeatureContract {
     enum Feature: String, Codable, CaseIterable {
-        case nvidiaDLSSSuperResolution, nvidiaDLSS5NeuralRendering
+        case nvidiaDLSSSuperResolution, nvidiaDLSS5NeuralRendering, nvidiaDLSSRayReconstruction
         case amdFSR1Spatial, amdFSR2Or3Temporal, amdFSR4ML
-        case appleMetalFXSpatial, appleMetalFXTemporal, hdrEDRPresentation
+        case appleMetalFXSpatial, appleMetalFXTemporal, appleMetalFXTemporalDenoised, hdrEDRPresentation
         case experimentalNeuralRendering
         var isTemporal: Bool {
-            [.nvidiaDLSSSuperResolution, .nvidiaDLSS5NeuralRendering, .amdFSR2Or3Temporal,
-             .amdFSR4ML, .appleMetalFXTemporal, .experimentalNeuralRendering].contains(self)
+            [.nvidiaDLSSSuperResolution, .nvidiaDLSS5NeuralRendering, .nvidiaDLSSRayReconstruction,
+             .amdFSR2Or3Temporal, .amdFSR4ML, .appleMetalFXTemporal, .appleMetalFXTemporalDenoised,
+             .experimentalNeuralRendering].contains(self)
         }
         var isNeuralRendering: Bool { [.nvidiaDLSS5NeuralRendering, .experimentalNeuralRendering].contains(self) }
+        var isRayReconstruction: Bool { [.nvidiaDLSSRayReconstruction, .appleMetalFXTemporalDenoised].contains(self) }
         var isTemporalUpscaler: Bool {
-            [.nvidiaDLSSSuperResolution, .amdFSR2Or3Temporal, .amdFSR4ML, .appleMetalFXTemporal].contains(self)
+            [.nvidiaDLSSSuperResolution, .amdFSR2Or3Temporal, .amdFSR4ML, .appleMetalFXTemporal,
+             .nvidiaDLSSRayReconstruction, .appleMetalFXTemporalDenoised].contains(self)
         }
         var provider: Provider {
             switch self {
-            case .nvidiaDLSSSuperResolution, .nvidiaDLSS5NeuralRendering: return .nvidia
+            case .nvidiaDLSSSuperResolution, .nvidiaDLSS5NeuralRendering, .nvidiaDLSSRayReconstruction: return .nvidia
             case .amdFSR1Spatial, .amdFSR2Or3Temporal, .amdFSR4ML: return .amd
-            case .appleMetalFXSpatial, .appleMetalFXTemporal, .hdrEDRPresentation: return .apple
+            case .appleMetalFXSpatial, .appleMetalFXTemporal, .appleMetalFXTemporalDenoised, .hdrEDRPresentation: return .apple
             case .experimentalNeuralRendering: return .experimental
             }
         }
@@ -101,6 +104,11 @@ enum GraphicsFeatureContract {
         var exposure: Double? = nil
         var automaticExposure: Bool = false
         var reactiveMask: Texture? = nil
+        var diffuseAlbedo: Texture? = nil
+        var specularAlbedo: Texture? = nil
+        var normals: Texture? = nil
+        var roughness: Texture? = nil
+        var specularHitDistance: Texture? = nil
     }
     enum ToneMapping: String, Codable { case none, mapToCurrentHeadroom }
     struct HDRPresentation: Codable {
@@ -178,7 +186,7 @@ enum GraphicsFeatureContract {
         texture(request.color, "color", usage: .shaderRead)
         texture(request.output, "output", usage: request.feature == .hdrEDRPresentation ? .renderTarget : .shaderWrite)
         if !request.color.format.isColor || !request.output.format.isColor { issue("invalidColorFormat", "color/output") }
-        if [.appleMetalFXSpatial, .appleMetalFXTemporal, .hdrEDRPresentation].contains(request.feature) && request.api != .metal { issue("featureRequiresMetalAPI", "api") }
+        if [.appleMetalFXSpatial, .appleMetalFXTemporal, .appleMetalFXTemporalDenoised, .hdrEDRPresentation].contains(request.feature) && request.api != .metal { issue("featureRequiresMetalAPI", "api") }
         if request.color.format == .rgba8SRGB || request.output.format == .rgba8SRGB { issue("srgbTypedViewAdapterRequired", "color/output.format") }
         if request.inputEncoding != request.outputEncoding { issue("explicitColorConversionRequired", "encoding") }
         if [.pq, .hlg].contains(request.inputEncoding.transfer) { issue("explicitTransferConversionRequired", "inputEncoding.transfer") }
@@ -235,6 +243,23 @@ enum GraphicsFeatureContract {
                     texture(mask, "reactiveMask", usage: .shaderRead, size: request.color.size); inputs.append(mask)
                     if mask.format != .r8Unorm { issue("invalidReactiveMaskFormat", "reactiveMask") }
                 } else if [.amdFSR2Or3Temporal, .amdFSR4ML].contains(request.feature) { issue("reactiveMaskAbsent", "temporal", .descriptor, .warning) }
+                if request.feature.isRayReconstruction {
+                    if let albedo = temporal.diffuseAlbedo {
+                        texture(albedo, "diffuseAlbedo", usage: .shaderRead, size: request.color.size); inputs.append(albedo)
+                    } else { issue("diffuseAlbedoRequired", "temporal.diffuseAlbedo") }
+                    if let normals = temporal.normals {
+                        texture(normals, "normals", usage: .shaderRead, size: request.color.size); inputs.append(normals)
+                    } else { issue("normalsRequired", "temporal.normals") }
+                    if let roughness = temporal.roughness {
+                        texture(roughness, "roughness", usage: .shaderRead, size: request.color.size); inputs.append(roughness)
+                    } else { issue("roughnessRequired", "temporal.roughness") }
+                    if let specAlbedo = temporal.specularAlbedo {
+                        texture(specAlbedo, "specularAlbedo", usage: .shaderRead, size: request.color.size); inputs.append(specAlbedo)
+                    }
+                    if let hitDist = temporal.specularHitDistance {
+                        texture(hitDist, "specularHitDistance", usage: .shaderRead, size: request.color.size); inputs.append(hitDist)
+                    }
+                }
             } else { issue("temporalInputsRequired", "temporal") }
         } else if request.temporal != nil { issue("temporalInputsUnused", "temporal", .descriptor, .warning) }
         if inputs.contains(where: { $0.storageID == request.output.storageID || $0.resourceID == request.output.resourceID }) { issue("inputOutputAliasing", "output") }
