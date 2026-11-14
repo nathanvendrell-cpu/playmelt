@@ -567,6 +567,44 @@ struct Game {
 
 /// A worker-produced display snapshot. Launch dispatch still performs its own
 /// current filesystem/runtime validation; this value never authorizes execution.
+struct GameSnapshot: Codable {
+    var id: String, appId: String, title: String, store: String, installed: Bool, platform: String, runtimeId: String, runtimeName: String, ownership: String
+    var path: String?
+    var complete: Bool = false, epicLaunchID: String = ""
+    var supportedPlatforms: [String] = []
+    var customImageURL = ""
+    var customPortraitURL = ""
+    var lastPlayed: Int64 = 0
+    var installSource: String = "steam"
+    var cloudInputMode: String = ""
+    var gamePassRecent: Int = -1
+    var installBlockReason = ""
+}
+
+extension Game {
+    init(snapshot: GameSnapshot) {
+        self.init(id: snapshot.id, appId: snapshot.appId, title: snapshot.title, store: snapshot.store, installed: snapshot.installed, platform: snapshot.platform, runtimeId: snapshot.runtimeId, runtimeName: snapshot.runtimeName, ownership: snapshot.ownership)
+        path = snapshot.path.map(URL.init(fileURLWithPath:))
+        complete = snapshot.complete; epicLaunchID = snapshot.epicLaunchID
+        supportedPlatforms = snapshot.supportedPlatforms
+        customImageURL = snapshot.customImageURL; customPortraitURL = snapshot.customPortraitURL
+        lastPlayed = snapshot.lastPlayed; installSource = snapshot.installSource
+        cloudInputMode = snapshot.cloudInputMode; gamePassRecent = snapshot.gamePassRecent
+        installBlockReason = snapshot.installBlockReason
+    }
+    var snapshot: GameSnapshot {
+        var value = GameSnapshot(id: id, appId: appId, title: title, store: store, installed: installed, platform: platform, runtimeId: runtimeId, runtimeName: runtimeName, ownership: ownership)
+        value.path = path?.path
+        value.complete = complete; value.epicLaunchID = epicLaunchID
+        value.supportedPlatforms = supportedPlatforms
+        value.customImageURL = customImageURL; value.customPortraitURL = customPortraitURL
+        value.lastPlayed = lastPlayed; value.installSource = installSource
+        value.cloudInputMode = cloudInputMode; value.gamePassRecent = gamePassRecent
+        value.installBlockReason = installBlockReason
+        return value
+    }
+}
+
 struct GameLaunchPreflight {
     let directCandidate: Bool
     let issue: String?
@@ -798,10 +836,11 @@ func localGameEnvironmentExports(appID: String) -> String {
         exports.append("export ROSETTA_ADVERTISE_AVX=\"1\"")
     }
     if lower.contains("rebirth") || appID == "33e6ac38b5a14098b079fd62d71aabc6" {
+        // FF7 Rebirth : esync/msync laissent les clients Wine tourner en boucle
+        // d'attente (~100 % CPU par processus) et le jeu reste sur un écran noir.
+        // Attente serveur classique = première image rendue (vérifié en jeu le 14/11/2026).
         exports.append("export WINEMSYNC=\"0\"")
-        // msync reste exclu pour ce jeu ; esync évite de repasser par le serveur Wine
-        // (≈2× plus rapide sur le banc wine-sync-bench du 14/11/2026, à confirmer en jeu).
-        exports.append("export WINEESYNC=\"1\"")
+        exports.append("export WINEESYNC=\"0\"")
     }
     return exports.joined(separator: "\n")
 }
@@ -1043,7 +1082,7 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto", iconD
            (game.appId == "1783560" && content.contains("-dx11")) ||
            !content.contains(chosen) ||
            !content.contains(shellLiteral(targetDir.appendingPathComponent(chosen).path)) ||
-           ((game.appId.lowercased().contains("rebirth") || game.appId == "33e6ac38b5a14098b079fd62d71aabc6") && !content.contains("WINEESYNC=\"1\"")) ||
+           ((game.appId.lowercased().contains("rebirth") || game.appId == "33e6ac38b5a14098b079fd62d71aabc6") && (content.contains("WINEESYNC=\"1\"") || !content.contains("WINEESYNC=\"0\""))) ||
            !content.contains("exec \"" + wineLauncher + "\" ") ||
            content.contains(" -windowed -ResX=") || content.contains(" -screen-fullscreen 0 ") ||
            !content.contains("ROSETTA_ADVERTISE_AVX") ||
@@ -1280,6 +1319,20 @@ final class LibraryModel {
     init(home: URL = FileManager.default.homeDirectoryForCurrentUser, preferences: UserDefaults = .standard) {
         self.home = home; self.preferences = preferences
         selectedAccountID = preferences.string(forKey: "selectedSteamAccount") ?? ""
+        restoreCachedGames()
+    }
+    private var librarySnapshotURL: URL { home.appendingPathComponent("Library/Application Support/Playmelt/.library-snapshot.json") }
+    /// Peinture instantanée : la dernière bibliothèque scannée sert de base avant le premier scan.
+    func restoreCachedGames() {
+        guard games.isEmpty, let data = try? Data(contentsOf: librarySnapshotURL), data.count < 4_000_000,
+              let rows = try? JSONDecoder().decode([GameSnapshot].self, from: data), rows.count < 5000 else { return }
+        let restored = rows.filter { !$0.id.isEmpty && !$0.title.isEmpty }.map(Game.init(snapshot:))
+        if !restored.isEmpty { games = restored }
+    }
+    func persistGamesSnapshot() {
+        let value = games.prefix(5000).map { $0.snapshot }
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        try? data.write(to: librarySnapshotURL, options: .atomic)
     }
     static func validAppID(_ id: String) -> Bool { !id.isEmpty && id.count <= 10 && id.allSatisfy(\.isNumber) && UInt32(id) != nil && UInt32(id) != 0 }
     static func validAccountID(_ id: String) -> Bool { id.count == 17 && id.allSatisfy(\.isNumber) && UInt64(id) != nil }

@@ -3278,6 +3278,11 @@
           clearTimeout(toastTimer);
           toastTimer = setTimeout(dismissToastNotification, 8500);
         }
+        function notifySticky(message, error = false) {
+          ui.toastNotification = { key: String(!!error) + ":" + String(message), message: String(message), error: !!error, mode: "expanded", sticky: true };
+          paintToastNotification();
+          clearTimeout(toastTimer);
+        }
         function send(action, payload = {}) {
           if (!allowedActions.has(action)) return false;
           if (windowsExecutionUnavailable() && ["setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam"].includes(action))
@@ -3288,6 +3293,10 @@
           if (!bridge) {
             notify("Connexion native indisponible.", true);
             return;
+          }
+          if (action === "launchGame") {
+            const launched = (state.games || []).find((entry) => entry.id === payload.gameId);
+            notifySticky("Lancement de « " + (launched?.title || "jeu") + " » — la préparation peut prendre plusieurs minutes.");
           }
           bridge.postMessage({ action, ...payload });
           return true;
@@ -7385,6 +7394,8 @@
         };
         window.onNativeResult = (result) => {
           if (result?.ok === false && typeof releaseFreshInstallActions === "function") releaseFreshInstallActions();
+          // Le suivi de lancement remplace ce message par une attente explicite avec minuteur.
+          if (result?.ok !== false && typeof result?.message === "string" && result.message.startsWith("Ouverture de ")) return;
           if (
             result?.ok === false &&
             typeof ui.pendingRenderProtection === "boolean"
@@ -7402,6 +7413,37 @@
               String(result.message || "Action terminée."),
               result.ok === false,
             );
+        };
+        window.onLaunchProgress = (payload) => {
+          if (!payload || !payload.title) return;
+          const elapsed = Math.max(0, Number(payload.elapsed) || 0);
+          const clock =
+            Math.floor(elapsed / 60) + ":" + String(elapsed % 60).padStart(2, "0");
+          if (payload.state === "running") {
+            notify("« " + payload.title + " » est lancé.");
+            return;
+          }
+          if (payload.state === "ended") {
+            notify(
+              "« " + payload.title + " » s’est arrêté avant d’afficher sa fenêtre.",
+              true,
+            );
+            return;
+          }
+          const stalled = payload.state === "stalled";
+          ui.toastNotification = {
+            key: "launch:" + payload.gameId,
+            message: stalled
+              ? "« " + payload.title + " » ne s’affiche toujours pas après " +
+                clock + ". Si la fenêtre reste noire, fermez-la et relancez le jeu."
+              : "Lancement de « " + payload.title + " » — préparation en cours (" +
+                clock + ").",
+            error: stalled,
+            mode: "expanded",
+            sticky: true,
+          };
+          paintToastNotification();
+          clearTimeout(toastTimer);
         };
         document.querySelectorAll("[data-view]").forEach((button) =>
           button.addEventListener("click", () => openView(button.dataset.view)),

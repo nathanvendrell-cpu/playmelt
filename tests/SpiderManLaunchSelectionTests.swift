@@ -32,6 +32,12 @@ import Foundation
         let otherEnvironment = try childEnvironment(appID: "2584270")
         expect(otherEnvironment.0 != 0 && otherEnvironment.1.isEmpty, "other DX12 game does not receive setting")
         expect(localGameEnvironmentExports(appID: "unknown").isEmpty, "unknown game receives no added setting")
+        // FF7 Rebirth : esync/MSYNC laissaient tous les clients Wine en boucle d'attente
+        // (écran noir définitif). Le réglage doit rester désactivé.
+        let rebirthEnvironment = localGameEnvironmentExports(appID: "33e6ac38b5a14098b079fd62d71aabc6")
+        expect(rebirthEnvironment.contains("WINEESYNC=\"0\""), "FF7 Rebirth n'active pas esync")
+        expect(!rebirthEnvironment.contains("WINEESYNC=\"1\""), "aucun esync résiduel pour FF7 Rebirth")
+        expect(rebirthEnvironment.contains("WINEMSYNC=\"0\""), "FF7 Rebirth n'active pas msync")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("playmelt-spider-selection-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

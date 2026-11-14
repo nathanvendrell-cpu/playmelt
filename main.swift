@@ -1278,6 +1278,8 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     }
     func refresh(completion: (() -> Void)? = nil) {
         guard !closing else { return }; loading = true
+        // Peinture immédiate : la bibliothèque en cache (snapshot) s'affiche avant le scan.
+        if !model.games.isEmpty { sendState() }
         if let completion { afterRefresh.append(completion) }
         let id = UUID(); scanID = id
         model.windowsDescriptor = runtimeSetup.descriptor()
@@ -1288,7 +1290,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             guard self.model.applyScan(snapshot) else { self.refresh(); return }
             self.mergeManagedEpicInstallations()
             self.model.games = self.model.gogConnector.mergingLibraryGames(self.model.games, preservingLocalHistoryFrom: gogHistory)
-            self.loading = false; self.sendState()
+            self.loading = false; self.model.persistGamesSnapshot(); self.sendState()
             let callbacks = self.afterRefresh; self.afterRefresh.removeAll()
             for callback in callbacks { callback() }
         }
@@ -1565,6 +1567,56 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     func notify(_ name: String, _ payload: [String: Any]) {
         guard !closing, let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("if (typeof window.\(name) === 'function') window.\(name)(\(json));", completionHandler: nil)
+    }
+    // MARK: - Suivi de lancement
+    private var launchWatchTimers: [String: Timer] = [:]
+    /// Informe l'interface de l'avancement réel : préparation, fenêtre du jeu ouverte, blocage.
+    func startLaunchWatch(gameID: String, title: String, startedAt: Date) {
+        launchWatchTimers[gameID]?.invalidate()
+        var announcedWindow = false
+        let timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] timer in
+            guard let self, !self.closing else { timer.invalidate(); return }
+            let elapsed = max(0, Int(Date().timeIntervalSince(startedAt)))
+            if !announcedWindow, self.gameWindowVisible() {
+                announcedWindow = true
+                self.notify("onLaunchProgress", ["gameId": gameID, "title": title, "state": "running", "elapsed": elapsed])
+                timer.invalidate()
+                self.launchWatchTimers[gameID] = nil
+                return
+            }
+            guard !announcedWindow else { return }
+            let state = elapsed >= 600 ? "stalled" : "preparing"
+            self.notify("onLaunchProgress", ["gameId": gameID, "title": title, "state": state, "elapsed": elapsed])
+        }
+        launchWatchTimers[gameID] = timer
+    }
+    @discardableResult
+    func stopLaunchWatch(_ gameID: String) -> Bool {
+        let wasActive = launchWatchTimers[gameID] != nil
+        launchWatchTimers[gameID]?.invalidate()
+        launchWatchTimers[gameID] = nil
+        return wasActive
+    }
+    /// Vrai si une fenêtre de jeu (wine ou Playmelt) est visible, hors fenêtre Playmelt elle-même.
+    private func gameWindowVisible() -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return false }
+        let own = ProcessInfo.processInfo.processIdentifier
+        for info in list {
+            guard let owner = info[kCGWindowOwnerName as String] as? String, !owner.isEmpty else { continue }
+            let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
+            let isWine = owner == "wine" || owner.hasPrefix("wine")
+            let isPlaymeltGame = owner.hasPrefix("Playmelt") && ownerPID != own
+            guard isWine || isPlaymeltGame else { continue }
+            guard (info[kCGWindowLayer as String] as? Int ?? -1) == 0 else { continue }
+            let name = info[kCGWindowName as String] as? String ?? ""
+            guard !name.isEmpty, name != "Playmelt" else { continue }
+            guard let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+                  let height = (bounds["Height"] as? NSNumber)?.doubleValue,
+                  width >= 640, height >= 360 else { continue }
+            return true
+        }
+        return false
     }
     func openSteam() {
         guard let runtime = model.runtimes.first(where: { $0.id == "steam-mac" && $0.available }), let app = runtime.appURL else { result(false, "Steam macOS est introuvable."); return }
@@ -2619,6 +2671,9 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                                               arguments: [script.path] + (game.appId == "2651280" ? [] : extraArguments),
                                               environment: launchEnvironment,
                                               directory: script.deletingLastPathComponent()) { [weak self] code in
+                    if self?.stopLaunchWatch(gameKey) == true {
+                        self?.notify("onLaunchProgress", ["gameId": gameKey, "title": game.title, "state": "ended", "elapsed": Int(Date().timeIntervalSince(launchStartTime))])
+                    }
                     self?.requestGate.finish(key, token: token)
                     monitorTimer?.invalidate()
                     monitorTimer = nil
@@ -2631,6 +2686,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                 }
                 benchmarks.onChange = { [weak self] in self?.sendState() }
                 benchmarks.start(game:game,session:benchmarkSession,settings:gameSettingsStore.snapshot(game:gameSettingsContext(game),hardware:[:],displays:[]),hardware:hardwareState(renderProtectionEnabled:renderProtectionEnabled))
+                startLaunchWatch(gameID: gameKey, title: game.title, startedAt: launchStartTime)
                 result(true, "Ouverture de \(game.title)…")
                 return
             } catch {
@@ -2811,6 +2867,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         window.contentView = backdrop; window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         webView.loadFileURL(resource, allowingReadAccessTo: resource.deletingLastPathComponent())
         handler.autoRestoreEpic()
+        handler.refresh()
         let menu = NSMenu(); let appMenu = NSMenu()
         UpdaterController.shared.isBusy = { [weak self] in self?.handler?.updateBusy ?? true }
         UpdaterController.shared.updateGrantProvider = { [weak self] completion in
