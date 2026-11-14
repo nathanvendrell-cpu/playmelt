@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "stage": "preparatory-not-integrated",
+  "license": "GPL-3.0-only",
+  "upstream": {
+    "repository": "https://github.com/Heroic-Games-Launcher/heroic-gogdl",
+    "version": "1.4.0",
+    "revision": "6c6ef53fd4965d8d9b943c73d9400fe55eadc6ba",
+    "sourcePinSHA256": "33dcc4c760a51d712cf792812f61f6e53122320c1bffe80e8937961700b7b91e",
+    "sourceCache": "Dependencies.noindex/GOG-gogdl-1.4.0-6c6ef53",
+    "sourceOnly": true,
+    "binaryDownloaded": false
+  },
+  "runtime": {
+    "python": ">=3.10",
+    "requestsAvailableInTestEnvironment": "2.34.2",
+    "globalPackageInstalled": false,
+    "xdeltaExtensionBuilt": false
+  },
+  "channels": {
+    "request": "read-only private pipe; bounded JSON then EOF",
+    "events": "write-only private pipe; bounded JSON lines; no paths, user IDs or credentials",
+    "cancel": "read-only private pipe; byte or EOF cancels",
+    "secret": "read-only distinct private pipe; lease JSON then EOF",
+    "secretResult": "write-only distinct private pipe; refreshed lease JSON",
+    "secretAck": "read-only distinct private pipe; strict owner/generation/accepted boolean CAS acknowledgement then EOF",
+    "stdout": "discarded",
+    "stderr": "discarded"
+  },
+  "context": {
+    "accountOwner": "opaque 64 lowercase hex binding, not email/IP/token",
+    "generation": "nonnegative integer; native session CAS",
+    "jobID": "canonical UUID",
+    "productID": "GOG numeric string",
+    "platform": [
+      "osx",
+      "windows"
+    ]
+  },
+  "nativeSessionAPIProposed": [
+    "beginAuthorization(expectedOwner) -> isolated OAuth attempt; initial UI and callback qualification still required",
+    "acquireLease(owner,expectedGeneration) -> private credential data",
+    "commitRefreshedLease(owner,previousGeneration,newGeneration,accountID,data) -> strict CAS acknowledgement",
+    "cancelOwnerJobsOnSelectionChange(owner)",
+    "explicitDisconnect(owner) -> own Keychain entry only; never Galaxy credentials"
+  ],
+  "capabilities": {
+    "inspectPlanCLI": true,
+    "realFileVerificationCLI": true,
+    "resumeAlwaysRehashes": true,
+    "refreshAuthPrivateFD": "tested with injected fake HTTP only; requires explicit networkAllowed and native lease/store integration",
+    "v1v2ManifestParsing": "real pinned upstream objects tested for osx/windows",
+    "v2MissingFileTransferLibrary": "real fixture writes, hashes, retries and atomic no-overwrite publication; authenticated chunk fetcher injected",
+    "productionDownloadCLI": false,
+    "productionRepairCLI": false,
+    "OAuthLoginUI": false,
+    "nativeKeychainImplementation": false,
+    "launch": false
+  },
+  "progress": {
+    "download": "unique compressed chunks accepted after content+compressed MD5 validation",
+    "transportBytes": "actual received bytes including failed attempts",
+    "speedBytesPerSecond": "actual transport bytes / measured monotonic interval",
+    "prepare": "actual physical bytes written; progress null if counters exceed planned writes",
+    "verify": "actual bytes read and hashed; per-file stable signatures and final revalidation",
+    "globalProgress": "null; never reused for another stage",
+    "stageHistory": "full in-memory snapshots of observed stable stages; failures/cancellation stop active stages"
+  },
+  "resumePolicy": {
+    "checkpointIsProof": false,
+    "alwaysRehashRealBytes": true,
+    "missingFilesOnlyPublication": true,
+    "existingDifferentFiles": "conflict; preserved",
+    "extraFiles": "preserved",
+    "automaticStartupResume": false,
+    "ownedRoot": "account/product/platform marker + inode/device + private permissions + flock + directory FDs + no-follow",
+    "temporaryCleanup": "finally, exact owned staging files only"
+  },
+  "unqualified": [
+    "real GOG account authorization and token refresh",
+    "production authenticated manifest/CDN binding and download routing",
+    "native Keychain and OAuth UI",
+    "manifest symlink/support/dependency tasks",
+    "generation1 transfer and delta updates",
+    "existing-different file repair policy",
+    "native executable/prerequisites and actual game launch",
+    "universal all-games compatibility"
+  ],
+  "distribution": "source-only preparation; no application inclusion or distributable helper package"
+}

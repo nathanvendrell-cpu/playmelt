@@ -7,9 +7,13 @@ import Foundation
         let base = RuntimeSetup().descriptor()
         let plan = try D3DMetalStore().launchPlan(base: base)
         guard plan.preparationBlockers.isEmpty else { throw RuntimeSetupError.failed(plan.preparationBlockers.joined(separator: "; ")) }
-        let hints = GameDisplayMetadata.hints()
+        var hints = GameDisplayMetadata.hints()
+        let target=try GameDisplayMetadata.launchTarget(hints["displays"] as? [[String:Any]] ?? [])
+        hints["safeLaunchTarget"]=target
+        let library=URL(fileURLWithPath:CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("libPlaymeltDisplayGuard.dylib")
+        let environment=try GameDisplayMetadata.guardedEnvironment(plan.environment,target:target,library:library)
         let value: [String: Any] = ["displayHints": hints,"wine": base.wineURL.path, "server": base.wineserverURL.path,
-                                    "environment": plan.environment, "rendererHash": plan.rendererHash,
+                                    "environment": environment, "rendererHash": plan.rendererHash,
                                     "engineID": plan.engineID, "engineFingerprint": plan.engineFingerprint]
         FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: value, options: .sortedKeys))
     }

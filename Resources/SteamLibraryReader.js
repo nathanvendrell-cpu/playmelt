@@ -4,7 +4,7 @@
 // reads cookies, tokens, card DOM, React internals or the deprecated XML endpoint.
 return (() => {
   const source = "steamcommunity-profile-gameslist";
-  const failure = status => ({ status });
+  const failure = (status, reason) => reason ? { status, reason } : { status };
   const validAccount = value => typeof value === "string" && /^[0-9]{17}$/.test(value);
   const location = new URL(window.location.href);
   if (location.protocol !== "https:" || location.hostname !== "steamcommunity.com" ||
@@ -17,21 +17,58 @@ return (() => {
   const discovering = typeof allowAccountDiscovery !== "undefined" &&
     allowAccountDiscovery === true && expectedAccountId === "";
   if (!validAccount(expectedAccountId) && !discovering) return failure("account-unselected");
-  let viewer = typeof window.g_steamID === "string" ? window.g_steamID : "";
-  const userInfoNode = document.getElementById("application_config");
-  const userInfoRaw = userInfoNode?.getAttribute("data-userinfo");
-  if (userInfoRaw) {
-    if (userInfoRaw.length > 64000) return failure("identity-unverified");
-    let user;
-    try { user = JSON.parse(userInfoRaw); } catch { return failure("identity-unverified"); }
-    if (user?.logged_in !== true) return failure("signed-out");
-    if (!validAccount(user.steamid)) return failure("identity-unverified");
+  function readDocument(rootDocument, globalViewer = "", globalUserConfig) {
+  let viewer = typeof globalViewer === "string" ? globalViewer : "";
+  let identityNodeSeen = false, userInfoSeen = false;
+  // Valve's current WebUI config reader uses #webui_config. Legacy community
+  // pages still use #application_config. Both are server-supplied identity
+  // records; every record that is present must agree, never choose the one
+  // that happens to match the selected account.
+  // https://community.akamai.steamstatic.com/public/javascript/applications/community/main.js?contenthash=CFd3fnYH
+  function acceptIdentity(user) {
+    if (user?.logged_in !== true) {
+      const reason = user?.logged_in === false ? "userinfo-not-signed-in" :
+        user?.logged_in === "true" ? "logged-in-string-true" :
+        user?.logged_in === "false" ? "logged-in-string-false" :
+        user?.logged_in === "1" ? "logged-in-string-one" :
+        user?.logged_in === "0" ? "logged-in-string-zero" :
+        user?.logged_in === 1 ? "logged-in-number-one" :
+        user?.logged_in === 0 ? "logged-in-number-zero" :
+        typeof user?.logged_in === "string" ? "logged-in-string" :
+        typeof user?.logged_in === "number" ? "logged-in-number" : "logged-in-unavailable";
+      return failure("signed-out", reason);
+    }
+    if (!validAccount(user.steamid)) return failure("identity-unverified",
+      typeof user.steamid === "number" ? "userinfo-id-number" :
+      typeof user.steamid === "string" ? "userinfo-id-invalid" : "userinfo-id-unavailable");
     if (viewer && viewer !== user.steamid) return failure("identity-mismatch");
     viewer = user.steamid;
+    return null;
   }
-  if (!validAccount(viewer)) return failure("identity-unverified");
+  for (const nodeID of ["application_config", "webui_config"]) {
+    const node = rootDocument.getElementById(nodeID);
+    if (node) identityNodeSeen = true;
+    const userInfoRaw = node?.getAttribute("data-userinfo");
+    if (!userInfoRaw) continue;
+    userInfoSeen = true;
+    if (userInfoRaw.length > 64000) return failure("identity-unverified", "userinfo-too-large");
+    let user;
+    try { user = JSON.parse(userInfoRaw); } catch { return failure("identity-unverified", "userinfo-malformed"); }
+    const issue = acceptIdentity(user);
+    if (issue) return issue;
+  }
+  if (globalUserConfig !== undefined) {
+    if (!globalUserConfig || typeof globalUserConfig !== "object" || Array.isArray(globalUserConfig))
+      return failure("identity-unverified", "userinfo-malformed");
+    // Valve's current config bootstrap also consumes window.UserConfig.
+    // Read only these two identity fields; never copy or serialize the object.
+    const issue = acceptIdentity({logged_in:globalUserConfig.logged_in, steamid:globalUserConfig.steamid});
+    if (issue) return issue;
+  }
+  if (!validAccount(viewer)) return failure("identity-unverified",
+    !identityNodeSeen ? "identity-node-unavailable" : !userInfoSeen ? "userinfo-attribute-unavailable" : "viewer-id-unavailable");
   if (!discovering && viewer !== expectedAccountId) return failure("account-mismatch");
-  const raw = document.getElementById("gameslist_config")?.getAttribute("data-profile-gameslist");
+  const raw = rootDocument.getElementById("gameslist_config")?.getAttribute("data-profile-gameslist");
   if (!raw) return failure("embedded-library-unavailable");
   if (raw.length > 8000000) return failure("too-large");
   let data;
@@ -59,4 +96,45 @@ return (() => {
     ids.add(appid); games.push({ appid, name: row.name.trim().slice(0, 200) });
   }
   return { status: "complete", source, accountId: viewer, games, count: games.length };
+  }
+  const initial = readDocument(document, window.g_steamID, window.UserConfig);
+  if (initial.reason !== "identity-node-unavailable") return initial;
+  // The live page may have consumed its bootstrap nodes. Re-read only Valve's
+  // own authenticated all-games document; WebKit supplies its existing cookies.
+  // An inert document is validated by exactly the same identity/ownership rules.
+  // A profile URL or a successful HTTP response alone never proves ownership.
+  return (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    let reader;
+    try {
+      const response = await fetch(location.href, {
+        credentials: "same-origin", redirect: "follow", cache: "no-store", signal: controller.signal,
+      });
+      const resolved = new URL(response.url);
+      if (resolved.protocol !== "https:" || resolved.hostname !== "steamcommunity.com" ||
+          resolved.username || resolved.password || (resolved.port && resolved.port !== "443")) return initial;
+      if (/^\/login\//.test(resolved.pathname)) return failure("signed-out", "userinfo-not-signed-in");
+      if (!response.ok || !/^\/(profiles\/[0-9]{17}|id\/[^/]+)\/games\/?$/.test(resolved.pathname) ||
+          resolved.searchParams.getAll("tab").length !== 1 || resolved.searchParams.get("tab") !== "all" ||
+          !/^text\/html(?:;|$)/i.test(response.headers.get("content-type") || "") || !response.body) return initial;
+      reader = response.body.getReader();
+      let bytes = 0, html = "";
+      const decoder = new TextDecoder();
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        if (bytes > 8000000) { await reader.cancel(); return failure("too-large"); }
+        html += decoder.decode(chunk.value, { stream: true });
+      }
+      html += decoder.decode();
+      const serverDocument = new DOMParser().parseFromString(html, "text/html");
+      const result = readDocument(serverDocument);
+      const resolvedOwner = resolved.pathname.match(/^\/profiles\/([0-9]{17})\/games\/?$/)?.[1];
+      if (result.status === "complete" && resolvedOwner && resolvedOwner !== result.accountId) return failure("identity-mismatch");
+      return result;
+    } catch { return initial; }
+    finally { clearTimeout(timer); try { reader?.releaseLock(); } catch {} }
+  })();
 })();

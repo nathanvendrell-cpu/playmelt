@@ -6,3 +6,11 @@ work/
 __pycache__/
 *.pyc
 *.o
+
+# Commerce dependencies, credentials and local persistent data
+node_modules/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*

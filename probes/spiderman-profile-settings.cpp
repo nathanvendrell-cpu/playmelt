@@ -6,6 +6,26 @@
 #include <cwchar>
 #include <string>
 #include <vector>
+#include <dxgi1_2.h>
+static int display_target() {
+    IDXGIFactory1 *factory=nullptr;
+    if(FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),reinterpret_cast<void**>(&factory))))return 1;
+    IDXGIAdapter1 *adapter=nullptr;
+    if(FAILED(factory->EnumAdapters1(0,&adapter))){factory->Release();return 1;}
+    unsigned matches=0,index=0;RECT rect{};DWORD hz=0;
+    for(unsigned i=0;i<64;++i){
+        IDXGIOutput *output=nullptr;if(FAILED(adapter->EnumOutputs(i,&output)))break;
+        DXGI_OUTPUT_DESC desc{};MONITORINFO info{};info.cbSize=sizeof(info);
+        if(SUCCEEDED(output->GetDesc(&desc)) && desc.AttachedToDesktop && GetMonitorInfoW(desc.Monitor,&info) && (info.dwFlags&MONITORINFOF_PRIMARY)){
+            DEVMODEW mode{};mode.dmSize=sizeof(mode);
+            if(EnumDisplaySettingsExW(desc.DeviceName,ENUM_CURRENT_SETTINGS,&mode,0)){++matches;index=i;rect=desc.DesktopCoordinates;hz=mode.dmDisplayFrequency;}
+        }
+        output->Release();
+    }
+    adapter->Release();factory->Release();
+    if(matches!=1 || hz<=1)return 1;
+    std::printf("{\"ok\":true,\"monitorIndex\":%u,\"x\":%ld,\"y\":%ld,\"width\":%ld,\"height\":%ld,\"refreshRate\":%lu}\n",index,rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top,static_cast<unsigned long>(hz));return 0;
+}
 struct Item { const char *name; const char *kind; const char *value; };
 static bool allowed(const char *n) {
     const char *names[]={"Fullscreen","ExclusiveFullscreen","FullscreenWidth","FullscreenHeight","WindowLeft","WindowTop","WindowWidth","WindowHeight","UserWindowWidth","UserWindowHeight","DynamicResolutionTargetFPS","UpscaleMethod","UpscaleQuality","RefreshRate"};
@@ -18,6 +38,7 @@ static bool allowed_root(const char *n) {
     return false;
 }
 int main(int argc,char **argv){
+    if(argc==2 && !std::strcmp(argv[1],"--display"))return display_target();
     if(argc<4 || std::strcmp(argv[1],"--import") || (argc-2)%3 || argc>68)return 64;
     std::vector<Item> items;
     for(int i=2;i<argc;i+=3){

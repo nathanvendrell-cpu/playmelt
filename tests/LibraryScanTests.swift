@@ -4,7 +4,7 @@ import Foundation
 enum LibraryScanTests {
     static func main() throws {
         let fm = FileManager.default
-        let scratch = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("playmelt-library-tests-" + UUID().uuidString)
+        let scratch = URL(fileURLWithPath:fm.currentDirectoryPath).appendingPathComponent("Products.noindex/playmelt-library-tests-" + UUID().uuidString).resolvingSymlinksInPath()
         try fm.createDirectory(at: scratch, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: scratch) }
         let suite = "PlaymeltLibraryTests." + UUID().uuidString
@@ -80,6 +80,15 @@ enum LibraryScanTests {
         let malformed = scanner.scanSynchronously(model.makeScanRequest())
         require(!malformed.steamGames.contains { $0.appId == "1000" && $0.installed }, "malformed manifest cannot reuse stale installed state")
 
+        let localFolder=scratch.appendingPathComponent("Library/Application Support/Playmelt/Games/MarvelsSpiderMan2")
+        let localExecutable=localFolder.appendingPathComponent("Spider-Man2.exe")
+        try write(Data([0x4d,0x5a,0,0]),localExecutable)
+        let localScan=scanner.scanSynchronously(model.makeScanRequest())
+        require(localScan.launchPreflights["local:2651280"]?.directCandidate == true,"worker prepares display diagnostics for local Windows games")
+        try fm.removeItem(at:localExecutable)
+        let removedLocal=scanner.scanSynchronously(model.makeScanRequest())
+        require(removedLocal.launchPreflights["local:2651280"]?.issue != nil,"next scan invalidates readiness after executable deletion")
+
         let stale = scanner.scanSynchronously(model.makeScanRequest())
         model.selectedAccountID = other
         require(!model.applyScan(stale), "account change rejects an earlier result")
@@ -101,15 +110,20 @@ enum LibraryScanTests {
         require(model.applyScan(missingLogin) && model.selectedAccountID == account && model.libraryStatus == "synced", "transient local login absence is not logout")
         require(!model.warnings.contains { $0.contains("Highball") }, "no unrelated launcher warning")
 
-        let dxmt = Runtime(id: "dxmt", name: "Windows", platform: "windows", steamRoot: steam, appURL: steam, wineURL: app)
-        let dx12 = Runtime(id: "dx12", name: "Windows12", platform: "windows", steamRoot: steam, appURL: steam, wineURL: app, renderer: "d3dmetal")
+        // Inert fixtures still model the real engine prerequisites: an
+        // executable host file, an independent engine and a selected prefix.
+        // No fixture executable is ever run by this test.
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: app.path)
+        let dxmt = Runtime(id: "dxmt", name: "Windows", platform: "windows", steamRoot: steam, appURL: nil, wineURL: app, prefixURL: scratch, verifiedIndependentEngine: true)
+        let dx12 = Runtime(id: "dx12", name: "Windows12", platform: "windows", steamRoot: steam, appURL: nil, wineURL: app, prefixURL: scratch, verifiedIndependentEngine: true, renderer: "d3dmetal")
+        require(dxmt.installationAvailable && dx12.installationAvailable, "route fixtures meet independent-engine/executable/prefix installation prerequisites")
         var satisfactory = Game(id: "s", appId: "526870", title: "Satisfactory", store: "steam", installed: false, platform: "windows", runtimeId: "dxmt", runtimeName: "Windows", ownership: "authenticated-library")
         satisfactory.supportedPlatforms = ["windows"]
         let routes = satisfactory.json(runtimes: [dxmt, dx12])["installRoutes"] as! [[String: Any]]
         require(routes.count == 1 && routes[0]["runtimeId"] as? String == "dxmt", "Satisfactory cannot choose DX12")
         satisfactory.appId = "2584270"
         let dx12Routes = satisfactory.json(runtimes: [dxmt, dx12])["installRoutes"] as! [[String: Any]]
-        require(dx12Routes.count == 1 && dx12Routes[0]["canInstall"] as? Bool == true && dx12Routes[0]["canInstallAndPlay"] as? Bool == false, "unvalidated DX12 offers installation only")
+        require(dx12Routes.count == 1 && dx12Routes[0]["canInstall"] as? Bool == true && dx12Routes[0]["canInstallAndPlay"] as? Bool == true, "prepared DX12 offers an official first launch without claiming graphics qualification")
         require(dxmt.displayName == "DirectX 11" && dx12.displayName == "DirectX 12", "route labels match renderers")
 
         func pump(until condition: () -> Bool) {
@@ -122,11 +136,18 @@ enum LibraryScanTests {
         // of a local Windows copy. These are inert files, never executables run.
         let routeHome = scratch.appendingPathComponent("route-fixtures")
         let nativeSteam = routeHome.appendingPathComponent("Library/Application Support/Steam")
-        let win11Steam = routeHome.appendingPathComponent("Windows11Steam")
-        let win12Steam = routeHome.appendingPathComponent("Windows12Steam")
+        let win11Prefix = routeHome.appendingPathComponent("Windows11Prefix")
+        let win12Prefix = routeHome.appendingPathComponent("Windows12Prefix")
+        let win11Steam = win11Prefix.appendingPathComponent("drive_c/Steam")
+        let win12Steam = win12Prefix.appendingPathComponent("drive_c/Steam")
+        let fixtureWine = routeHome.appendingPathComponent("fixture-engine/bin/wine")
+        try text("inert host fixture; never execute", fixtureWine)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fixtureWine.path)
+        for root in [win11Steam, win12Steam] { try write(Data([0x4d, 0x5a]), root.appendingPathComponent("steam.exe")) }
         let nativeRuntime = Runtime(id: "native-route", name: "Fixture Mac", platform: "mac", steamRoot: nativeSteam, appURL: app)
-        let win11Runtime = Runtime(id: "dx11-route", name: "Fixture DX11", platform: "windows", steamRoot: win11Steam, appURL: app, wineURL: app)
-        let win12Runtime = Runtime(id: "dx12-route", name: "Fixture DX12", platform: "windows", steamRoot: win12Steam, appURL: app, wineURL: app, renderer: "d3dmetal")
+        let win11Runtime = Runtime(id: "dx11-route", name: "Fixture DX11", platform: "windows", steamRoot: win11Steam, appURL: nil, wineURL: fixtureWine, prefixURL: win11Prefix, verifiedIndependentEngine: true)
+        let win12Runtime = Runtime(id: "dx12-route", name: "Fixture DX12", platform: "windows", steamRoot: win12Steam, appURL: nil, wineURL: fixtureWine, prefixURL: win12Prefix, verifiedIndependentEngine: true, renderer: "d3dmetal")
+        require(win11Runtime.installationAvailable && win11Runtime.available && win12Runtime.installationAvailable && win12Runtime.available, "mixed-platform fixtures provide independent executable engines, separate prefixes and inert Windows clients")
         try write(appinfo(name: "Mixed", windowsOnlyID: 1783560), nativeSteam.appendingPathComponent("appcache/appinfo.vdf"))
         let nativeGamePath = nativeSteam.appendingPathComponent("steamapps/common/NativeCopy")
         let win11GamePath = win11Steam.appendingPathComponent("steamapps/common/Windows11Copy")
@@ -180,7 +201,8 @@ enum LibraryScanTests {
         require(localWarm.metrics.filesParsed == 0 && localWarm.metrics.cacheHits > 0 && routeSignature(localWarm) == routeSignature(localCold), "warm cache preserves every route, label, path and identity")
         let missingDX12 = scanRoutes([nativeRuntime, win11Runtime], generation: 3)
         require(missingDX12.steamGames.contains { $0.appId == "1783560" && $0.runtimeId.isEmpty && $0.runtimeName == "Moteur Windows non configuré" }, "absent DX12 runtime cannot inherit DXMT or Mac")
-        let unavailableDX12 = Runtime(id: win12Runtime.id, name: win12Runtime.name, platform: "windows", steamRoot: win12Steam, appURL: routeHome.appendingPathComponent("missing-runtime"), wineURL: app, renderer: "d3dmetal")
+        let unavailableDX12 = Runtime(id: win12Runtime.id, name: win12Runtime.name, platform: "windows", steamRoot: win12Steam, appURL: nil, wineURL: routeHome.appendingPathComponent("missing-runtime/bin/wine"), prefixURL: win12Prefix, verifiedIndependentEngine: true, renderer: "d3dmetal")
+        require(!unavailableDX12.installationAvailable && !unavailableDX12.available, "unavailable fixture fails because its host executable is actually absent")
         let unavailable = scanRoutes([nativeRuntime, win11Runtime, unavailableDX12], generation: 4)
         require(unavailable.steamGames.contains { $0.appId == "1783560" && $0.runtimeId.isEmpty && $0.runtimeName == "Moteur Windows non configuré" }, "unavailable DX12 runtime is not represented as usable")
         let noWindows = scanRoutes([nativeRuntime], generation: 5)
@@ -189,6 +211,115 @@ enum LibraryScanTests {
         require(sourcesAfterScan == unchangedSources, "all scan passes leave fixture source files byte-identical")
         require(nativeRows[0].path?.path == nativeGamePath.path && routeSignature(localCold) == routeSignature(localWarm), "later scans do not mutate previous value snapshots")
         var routesClosed = false; routeScanner.shutdown { routesClosed = true }; pump { routesClosed }
+
+        // A prepared capsule is a logical alias only for one exact official
+        // destination. No source file is removed, moved or certified by a scan.
+        let adoptionHome = scratch.appendingPathComponent("adoption-fixtures")
+        let adoptionNativeSteam = adoptionHome.appendingPathComponent("Library/Application Support/Steam")
+        let adoptionPrefix = adoptionHome.appendingPathComponent("WindowsPrefix")
+        let adoptionSteam = adoptionPrefix.appendingPathComponent("drive_c/Steam")
+        let adoptionTarget = adoptionSteam.appendingPathComponent("steamapps/common/Publisher Game")
+        let adoptionManifest = adoptionSteam.appendingPathComponent("steamapps/appmanifest_1000.acf")
+        let capsule = adoptionHome.appendingPathComponent("Library/Application Support/Playmelt/Games/Prepared")
+        let capsuleReceipt = capsule.appendingPathComponent("playmelt-install.json")
+        let capsuleLaunch = SteamDepotLaunchManifest.file(capsule)
+        let adoptionNative = Runtime(id: "adoption-mac", name: "Native", platform: "mac", steamRoot: adoptionNativeSteam, appURL: app)
+        let adoptionRuntime = Runtime(id: "adoption-win", name: "Windows", platform: "windows", steamRoot: adoptionSteam, appURL: nil, wineURL: fixtureWine, prefixURL: adoptionPrefix, verifiedIndependentEngine: true)
+        try write(appinfo(name: "Alias"), adoptionNativeSteam.appendingPathComponent("appcache/appinfo.vdf"))
+        try write(Data([0x4d,0x5a]), adoptionSteam.appendingPathComponent("steam.exe"))
+        try write(Data([0x4d,0x5a]), adoptionTarget.appendingPathComponent("Game.exe"))
+        try write(Data([0x4d,0x5a]), capsule.appendingPathComponent("Windows/Game.exe"))
+        try text("1000\n", capsule.appendingPathComponent("steam_appid.txt"))
+        let receiptDocument: [String: Any] = ["appID":"1000", "accountID":account, "source":"official-steam-console-completion",
+            "officialInstallDirectory":"Publisher Game", "planSHA256":String(repeating:"a",count:64),
+            "files":["Game.exe":2], "fileSHA256":["Game.exe":String(repeating:"b",count:64)]]
+        let launchDocument: [String: Any] = ["schema":1, "appID":"1000", "source":"official-steam-console-completion", "renderer":"dxmt",
+            "executable":"Game.exe", "arguments":[String](), "workingDirectory":"", "steamClientRequired":true]
+        func writeJSON(_ value:[String:Any],_ path:URL)throws {try write(JSONSerialization.data(withJSONObject:value,options:[.sortedKeys]),path)}
+        try writeJSON(receiptDocument,capsuleReceipt);try writeJSON(launchDocument,capsuleLaunch)
+        try text("\"users\" { \"\(account)\" { \"MostRecent\" \"1\" } }",adoptionSteam.appendingPathComponent("config/loginusers.vdf"))
+        let fakeDescriptor = PlaymeltRuntimeDescriptor(engineID:"fixture",wineURL:fixtureWine,wineserverURL:fixtureWine,prefixURL:adoptionPrefix,
+            steamRoot:adoptionSteam,environment:[:],readyEngine:true,steamInstalled:true)
+        let explicitAccountManifest = SteamDepotLaunchManifest.read(capsule,appID:"1000")!
+        require(explicitAccountManifest.officialClientIssue(accountID:account,descriptor:fakeDescriptor) == nil, "explicit fixture account validates its own client without a global selected-account preference")
+        require(explicitAccountManifest.officialClientIssue(accountID:"",descriptor:fakeDescriptor) != nil, "missing explicit account never inherits a global account implicitly")
+        let globalSelectionBefore = UserDefaults.standard.string(forKey:"selectedSteamAccount")
+        let preflightGame = Game(id:"steam:1000:fixture",appId:"1000",title:"Explicit account",store:"steam",installed:true,platform:"windows",
+            runtimeId:adoptionRuntime.id,runtimeName:adoptionRuntime.name,ownership:"installed-only",path:capsule,complete:true,installSource:"steam-depots")
+        require(GameLaunchPreflight.inspect(preflightGame,steamAccountID:account,runtimeDescriptor:fakeDescriptor).issue == nil, "real preflight chain accepts the supplied account and isolated descriptor")
+        require(GameLaunchPreflight.inspect(preflightGame,steamAccountID:"",runtimeDescriptor:fakeDescriptor).issue != nil &&
+                GameLaunchPreflight.inspect(preflightGame,steamAccountID:other,runtimeDescriptor:fakeDescriptor).issue != nil, "real preflight chain refuses missing or different accounts")
+        require(UserDefaults.standard.string(forKey:"selectedSteamAccount") == globalSelectionBefore, "preflight fixtures never mutate the global selected account")
+        func officialManifest(_ path:URL,owner:String=account,flags:String="2",directory:String="Publisher Game")throws {
+            try text("\"AppState\" { \"appid\" \"1000\" \"name\" \"Alias\" \"installdir\" \"\(directory)\" \"StateFlags\" \"\(flags)\" \"LastOwner\" \"\(owner)\" \"buildid\" \"\(flags == "4" ? "1":"0")\" }",path)
+        }
+        try officialManifest(adoptionManifest)
+        let adoptionScanner = LibraryScanner()
+        func adoptionScan(_ runtimes:[Runtime]?=nil,selected:String=account)->LibraryScanSnapshot {
+            adoptionScanner.scanSynchronously(LibraryScanRequest(generation:1,requestedAccountID:selected,home:adoptionHome,
+                runtimes:runtimes ?? [adoptionNative,adoptionRuntime],readSavedSnapshot:{_ in nil}))
+        }
+        func adoptionRows(_ snapshot:LibraryScanSnapshot)->[Game] {snapshot.steamGames.filter{$0.appId == "1000"}}
+        let originalBytes = [capsuleReceipt,capsuleLaunch,capsule.appendingPathComponent("Windows/Game.exe"),capsule.appendingPathComponent("steam_appid.txt")].map {try! Data(contentsOf:$0)}
+        let capsuleOnly = adoptionRows(adoptionScan([adoptionNative]))
+        let capsuleID = capsuleOnly[0].id
+        let grouped = adoptionRows(adoptionScan())
+        require(grouped.count == 1 && grouped[0].id == capsuleID && grouped[0].path?.path == capsule.path, "exact official destination retains capsule identity and recovery path: \(grouped.map { [$0.id,$0.path?.path ?? "nil",$0.runtimeId].joined(separator:"|") })")
+        require(!grouped[0].complete && grouped[0].runtimeId == adoptionRuntime.id, "StateFlags2 stays incomplete and uses the runtime reading the manifest despite mixed-platform metadata")
+        let aliasWarm = adoptionScan()
+        require(aliasWarm.metrics.filesParsed == 0 && adoptionRows(aliasWarm).map(\.id) == [capsuleID], "warm caches preserve the exact logical alias without reparsing")
+        try officialManifest(adoptionManifest,flags:"4")
+        let completedAlias = adoptionRows(adoptionScan())
+        require(completedAlias.count == 1 && completedAlias[0].complete, "only observed official completion completes the grouped row")
+        for owner in [other,"0",""] {
+            try officialManifest(adoptionManifest,owner:owner)
+            require(adoptionRows(adoptionScan()).count == 2, "another or unknown Steam owner cannot consume the capsule row")
+        }
+        try officialManifest(adoptionManifest)
+        require(adoptionRows(adoptionScan(selected:other)).count == 2, "selection from another account refuses grouping")
+        for patch in [["accountID":other],["source":"unknown"],["planSHA256":"invalid"],["officialInstallDirectory":"../escape"]] {
+            try writeJSON(receiptDocument.merging(patch){_,new in new},capsuleReceipt)
+            require(adoptionRows(adoptionScan()).count == 2, "invalid or mismatched prepared receipts remain separate")
+        }
+        try writeJSON(receiptDocument,capsuleReceipt)
+        for renderer in ["auto","d3dmetal"] {
+            try writeJSON(launchDocument.merging(["renderer":renderer]){_,new in new},capsuleLaunch)
+            require(adoptionRows(adoptionScan()).count == 2, "unknown or different concrete renderer cannot group into the Windows route")
+        }
+        try writeJSON(launchDocument,capsuleLaunch)
+        try write(Data([0x4d,0x5a]), adoptionSteam.appendingPathComponent("steamapps/common/Another Publisher Folder/Game.exe"))
+        try officialManifest(adoptionManifest,directory:"Another Publisher Folder")
+        require(adoptionRows(adoptionScan()).count == 2, "same app and account with another publisher directory remains distinct")
+        try officialManifest(adoptionManifest)
+        let realReceipt = adoptionHome.appendingPathComponent("original-receipt.json")
+        try fm.moveItem(at:capsuleReceipt,to:realReceipt);try fm.createSymbolicLink(at:capsuleReceipt,withDestinationURL:realReceipt)
+        require(adoptionRows(adoptionScan()).count == 2, "symlinked capsule receipt never proves an adoption")
+        try fm.removeItem(at:capsuleReceipt);try fm.moveItem(at:realReceipt,to:capsuleReceipt)
+        let linkedPrefix = adoptionHome.appendingPathComponent("LinkedPrefix")
+        try fm.createSymbolicLink(at:linkedPrefix,withDestinationURL:adoptionPrefix)
+        let linkedRuntime = Runtime(id:adoptionRuntime.id,name:adoptionRuntime.name,platform:"windows",steamRoot:adoptionSteam,appURL:nil,wineURL:fixtureWine,prefixURL:linkedPrefix,verifiedIndependentEngine:true)
+        require(adoptionRows(adoptionScan([adoptionNative,linkedRuntime])).count == 2, "symlinked prefix cannot establish a canonical destination")
+        let secondPrefix = adoptionHome.appendingPathComponent("SecondWindowsPrefix"),secondSteam = secondPrefix.appendingPathComponent("drive_c/Steam")
+        try write(Data([0x4d,0x5a]),secondSteam.appendingPathComponent("steam.exe"))
+        try write(Data([0x4d,0x5a]),secondSteam.appendingPathComponent("steamapps/common/Publisher Game/Game.exe"))
+        try officialManifest(secondSteam.appendingPathComponent("steamapps/appmanifest_1000.acf"))
+        let secondRuntime = Runtime(id:"second-adoption-win",name:"Second Windows",platform:"windows",steamRoot:secondSteam,appURL:nil,wineURL:fixtureWine,prefixURL:secondPrefix,verifiedIndependentEngine:true)
+        require(adoptionRows(adoptionScan([adoptionNative,adoptionRuntime,secondRuntime])).count == 3, "two eligible Windows destinations are ambiguous and preserve every installation")
+        let secondRenderer = Runtime(id:secondRuntime.id,name:secondRuntime.name,platform:"windows",steamRoot:secondSteam,appURL:nil,wineURL:fixtureWine,prefixURL:secondPrefix,verifiedIndependentEngine:true,renderer:"d3dmetal")
+        let differentRoutes = adoptionRows(adoptionScan([adoptionNative,adoptionRuntime,secondRenderer]))
+        require(differentRoutes.count == 2 && differentRoutes.contains{$0.path?.path == secondSteam.appendingPathComponent("steamapps/common/Publisher Game").path}, "a different renderer installation survives the exact matching route's grouping")
+        let extraCapsule = capsule.deletingLastPathComponent().appendingPathComponent("OtherPrepared")
+        try fm.copyItem(at:capsule,to:extraCapsule)
+        require(adoptionRows(adoptionScan()).count == 3, "two eligible capsules for one official destination remain separate")
+        try fm.moveItem(at:extraCapsule,to:adoptionHome.appendingPathComponent("SavedOtherPrepared"))
+        try fm.removeItem(at:adoptionManifest)
+        let removedAlias = adoptionRows(adoptionScan())
+        require(removedAlias.count == 1 && removedAlias[0].id == capsuleID && removedAlias[0].path?.path == capsule.path && removedAlias[0].complete, "removing the official manifest restores the unchanged prepared source")
+        try officialManifest(adoptionManifest)
+        require(adoptionRows(adoptionScan()).count == 1, "reappearing exact manifest restores grouping without a new identity")
+        let finalOriginalBytes = [capsuleReceipt,capsuleLaunch,capsule.appendingPathComponent("Windows/Game.exe"),capsule.appendingPathComponent("steam_appid.txt")].map {try! Data(contentsOf:$0)}
+        require(originalBytes == finalOriginalBytes, "all grouping and negative scans preserve original payload and receipts byte for byte")
+        var adoptionClosed=false;adoptionScanner.shutdown{adoptionClosed=true};pump{adoptionClosed}
 
         let raceScanner = LibraryScanner(), raceEntered = DispatchSemaphore(value: 0), raceRelease = DispatchSemaphore(value: 0)
         let raceBasis = model.makeScanRequest()
@@ -229,6 +360,6 @@ enum LibraryScanTests {
         closingScanner.shutdown { shutdown = true }; closingRelease.signal(); pump { shutdown }
         require(!unwanted, "shutdown suppresses queued and in-flight result callbacks")
         var stopped = false; scanner.shutdown { stopped = true }; pump { stopped }
-        print("LibraryScan: \(checks) CPU fixture checks passed; no app, Steam, Wine, Metal device or game launched.")
+        print("LibraryScan: \(checks) fixture checks passed; inert game files only, no game or client launched.")
     }
 }

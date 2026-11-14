@@ -7,6 +7,9 @@ Playmelt ne restreint pas.
 | Composant | Utilisation dans Playmelt | Licence | Distribution |
 |---|---|---|---|
 | Sparkle 2.10.1 | Mises à jour de l'app | MIT | Intégré à l'app (`Contents/Frameworks`) |
+| CPython 3.13.18 et composants de python-build-standalone 20261110 | Interpréteur portable des assistants Python | Python-2.0 / CNRI-Python et licences amont des composants liés, dont OpenSSL Apache-2.0 | Intégrés à `Contents/Resources/Python` ; versions, empreintes et textes complets dans `Python/share/playmelt-runtime` |
+| Legendary 0.21.1 et dépendances Python | Adaptateur Epic dans un processus Python séparé | Legendary GPL-3.0-or-later ; licences propres aux dépendances | Wheels amont non modifiées, notices et archives sources correspondantes dans `Python/share/playmelt-runtime` ; aucune restriction de la licence Playmelt sur ces composants |
+| MinGW-w64 et bibliothèques d’exécution GCC / libstdc++ | Compilation et exécution des assistants Windows propres à Playmelt | ZPL-2.1 et notices des composants MinGW ; GPL-3.0 avec GCC Runtime Library Exception 3.1 pour les bibliothèques couvertes | Portions liées statiquement aux assistants ; textes dans `Contents/Resources/ThirdPartyLicenses` |
 | Wine (build Sikarugir 10.0_6) | Exécution des jeux Windows | LGPL-2.1-or-later | Téléchargé par Playmelt depuis la source publique, empreinte SHA-256 vérifiée ; process séparé, non lié à Playmelt |
 | Bibliothèques Wine (Sikarugir Wrapper 1.0.11) | Dépendances de Wine | Mixte : LGPL (GStreamer, gnutls), Apache-2.0 (MoltenVK) | Idem |
 | DXMT (branche Highball 331c552) | Traduction DirectX 11 → Metal | MIT / LGPL selon les notices amont | Idem |

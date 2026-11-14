@@ -117,7 +117,8 @@ def stop_listener(child):
 
 
 def run_capture(pid, expected, duration, output, *, inspector=None, popen=subprocess.Popen,
-                selector_factory=selectors.DefaultSelector, monotonic=time.monotonic, read=os.read):
+                selector_factory=selectors.DefaultSelector, monotonic=time.monotonic, read=os.read,
+                listener_new_session=True):
     """Output directory already created exclusively; never controls the target."""
     receipt = {'status': 'inconclusive', 'reason': 'collection incomplete', 'metricAnalysis': 'not_run',
                'pid': pid, 'expectedExecutable': expected, 'durationRequestedSeconds': duration,
@@ -138,7 +139,7 @@ def run_capture(pid, expected, duration, output, *, inspector=None, popen=subpro
         receipt['targetStart'] = {'seconds': baseline[2], 'microseconds': baseline[3]}
         child = popen([TOOL, 'listen', '--json', '--interval', '1', '--pid', str(pid)],
                       stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                      start_new_session=True)
+                      start_new_session=listener_new_session)
         selector = selector_factory()
         selector.register(child.stdout, selectors.EVENT_READ)
         framer = JSONFramer(pid)

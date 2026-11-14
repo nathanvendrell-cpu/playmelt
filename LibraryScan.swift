@@ -1,5 +1,7 @@
 import Foundation
 import Darwin
+import CryptoKit
+import CoreFoundation
 
 struct LibraryScanRequest {
     let generation: UInt64
@@ -27,6 +29,7 @@ struct LibraryScanSnapshot {
     let metadata: [String: SteamAppInfo], runtimeAvailability: [String: Bool]
     let savedLibrary: SavedSteamLibrary?
     let metrics: LibraryScanMetrics
+    var launchPreflights: [String: GameLaunchPreflight] = [:]
 }
 
 private struct ScanFileIdentity: Equatable {
@@ -70,7 +73,48 @@ private final class ScanFileCache<Value> {
     }
 }
 
-private struct ScannedManifest { let appID: String, name: String, directory: String, flags: UInt32 }
+private struct ScannedManifest { let appID: String, name: String, directory: String, flags: UInt32, owner: String }
+
+private func canonicalScanDirectory(_ url: URL) -> Bool {
+    url.isFileURL && url.path == url.standardizedFileURL.path && url.resolvingSymlinksInPath().path == url.path &&
+    (try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])).map { $0.isDirectory == true && $0.isSymbolicLink != true } == true
+}
+
+/// Selected metadata only. This proves a logical destination, never that Steam
+/// validated the payload or that equal-sized files have identical contents.
+private struct PreparedCapsuleReceipt {
+    let appID: String, accountID: String, directory: String
+    static func read(_ url: URL) -> Self? {
+        guard canonicalScanDirectory(url.deletingLastPathComponent()), url.resolvingSymlinksInPath().path == url.path,
+              let identity = ScanFileIdentity.read(url), identity.size > 0, identity.size <= 16_000_000,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
+              let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 16_000_001), data.count <= 16_000_000,
+              let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              raw["source"] as? String == "official-steam-console-completion",
+              let appID = raw["appID"] as? String, LibraryModel.validAppID(appID),
+              let account = raw["accountID"] as? String, LibraryModel.validAccountID(account),
+              let plan = raw["planSHA256"] as? String, plan.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+              let files = raw["files"] as? [String: Any], !files.isEmpty,
+              files.count <= 200_000, files.values.allSatisfy({ value in
+                  guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return false }
+                  return n.doubleValue.isFinite && n.doubleValue >= 0 && n.doubleValue.rounded() == n.doubleValue
+              }),
+              let hashes = raw["fileSHA256"] as? [String: String], Set(files.keys) == Set(hashes.keys),
+              hashes.values.allSatisfy({ $0.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil }),
+              let directory = raw["officialInstallDirectory"] as? String, !directory.isEmpty, directory.count <= 160,
+              directory == directory.trimmingCharacters(in: .whitespacesAndNewlines), ![".",".."].contains(directory),
+              !directory.contains(where: { "/\\:".contains($0) }), !directory.unicodeScalars.contains(where: { $0.value < 32 }) else { return nil }
+        return .init(appID: appID, accountID: account, directory: directory)
+    }
+}
+
+private struct OfficialCapsuleDestination {
+    let gameID: String, appID: String, owner: String, directory: String
+    let runtime: Runtime, target: URL, manifest: URL, identity: ScanFileIdentity
+}
 
 /// One scan in flight and one replaceable pending request. No timers or processes.
 final class LibraryScanner {
@@ -84,6 +128,7 @@ final class LibraryScanner {
     private let played = ScanFileCache<Set<String>>(entries: 64)
     private let folders = ScanFileCache<[String]>(entries: 16)
     private let manifests = ScanFileCache<ScannedManifest>()
+    private let preparedReceipts = ScanFileCache<PreparedCapsuleReceipt>(entries: 256)
     private let epicManifests = ScanFileCache<Game>(entries: 4096)
 
     func scan(_ request: LibraryScanRequest, completion: @escaping (LibraryScanSnapshot) -> Void) {
@@ -143,13 +188,65 @@ final class LibraryScanner {
         return SavedSteamLibrary(accountID: account, updatedAt: date,
                                  games: rows.map { ["appid": $0["appid"]!, "name": String(($0["name"] ?? "").prefix(200))] })
     }
+    private func reconcilePreparedCapsules(_ games: inout [Game], destinations: [OfficialCapsuleDestination], account: String, metrics: inout LibraryScanMetrics) {
+        guard LibraryModel.validAccountID(account), !destinations.isEmpty else { return }
+        var pairs: [(cache: Int, officialIndex: Int, official: OfficialCapsuleDestination, receipt: URL, receiptIdentity: ScanFileIdentity, launch: URL, launchIdentity: ScanFileIdentity)] = []
+        for (index, game) in games.enumerated() where !stopped && game.store == "steam" && game.installSource == "steam-depots" && game.complete {
+            guard let capsule = game.path, canonicalScanDirectory(capsule), canonicalScanDirectory(capsule.appendingPathComponent("Windows")) else { continue }
+            let receiptFile = capsule.appendingPathComponent("playmelt-install.json"), launchFile = SteamDepotLaunchManifest.file(capsule)
+            guard let receiptIdentity = ScanFileIdentity.read(receiptFile), let launchIdentity = ScanFileIdentity.read(launchFile),
+                  launchFile.resolvingSymlinksInPath().path == launchFile.path,
+                  let receipt = preparedReceipts.read(receiptFile, metrics: &metrics, loader: { PreparedCapsuleReceipt.read(receiptFile) }),
+                  receipt.appID == game.appId, receipt.accountID == account,
+                  let launch = SteamDepotLaunchManifest.read(capsule, appID: game.appId), launch.requiresOfficialSteam,
+                  ["dxmt","d3dmetal"].contains(launch.renderer) else { continue }
+            for candidate in destinations where candidate.appID == receipt.appID && candidate.owner == account && candidate.directory == receipt.directory {
+                // Earlier local discovery can remove special-case rows. Resolve
+                // the exact manifest row now rather than retaining array offsets.
+                let rows = games.indices.filter { games[$0].id == candidate.gameID && games[$0].path == candidate.target && games[$0].store == "steam" }
+                guard rows.count == 1, let officialIndex = rows.first, officialIndex != index else { continue }
+                let runtime = candidate.runtime
+                guard runtime.platform == "windows", runtime.verifiedIndependentEngine, runtime.executionAllowed, runtime.installationAvailable,
+                      runtime.renderer == launch.renderer, SteamGameLaunchProfile.supportsInstallation(appID: game.appId, runtime: runtime),
+                      let prefix = runtime.prefixURL, canonicalScanDirectory(prefix), canonicalScanDirectory(runtime.steamRoot),
+                      runtime.steamRoot.path.hasPrefix(prefix.appendingPathComponent("drive_c").path + "/") else { continue }
+                let expected = runtime.steamRoot.appendingPathComponent("steamapps/common").appendingPathComponent(receipt.directory)
+                // steam_reuse prepares this exact default library, never an
+                // unrelated Windows library with the same publisher folder name.
+                guard canonicalScanDirectory(expected), candidate.target.path == expected.path,
+                      candidate.manifest.path == runtime.steamRoot.appendingPathComponent("steamapps/appmanifest_\(game.appId).acf").path,
+                      candidate.manifest.resolvingSymlinksInPath().path == candidate.manifest.path,
+                      ScanFileIdentity.read(candidate.manifest) == candidate.identity else { continue }
+                pairs.append((index, officialIndex, candidate, receiptFile, receiptIdentity, launchFile, launchIdentity))
+            }
+        }
+        let cacheCounts = Dictionary(grouping: pairs, by: { $0.cache }).mapValues(\.count)
+        let officialCounts = Dictionary(grouping: pairs, by: { $0.officialIndex }).mapValues(\.count)
+        guard !stopped else { return }
+        var hidden = Set<Int>()
+        for pair in pairs where cacheCounts[pair.cache] == 1 && officialCounts[pair.officialIndex] == 1 {
+            guard ScanFileIdentity.read(pair.receipt) == pair.receiptIdentity, ScanFileIdentity.read(pair.launch) == pair.launchIdentity,
+                  ScanFileIdentity.read(pair.official.manifest) == pair.official.identity else { continue }
+            // Keep the capsule identity/path for an in-flight job or retry. Only
+            // Steam's observed completion can complete the grouped presentation.
+            let official = games[pair.officialIndex]
+            games[pair.cache].complete = official.complete
+            games[pair.cache].runtimeId = pair.official.runtime.id
+            games[pair.cache].runtimeName = pair.official.runtime.name
+            games[pair.cache].lastPlayed = max(games[pair.cache].lastPlayed, official.lastPlayed)
+            hidden.insert(pair.officialIndex)
+        }
+        games = games.enumerated().filter { !hidden.contains($0.offset) }.map(\.element)
+    }
     private func perform(_ request: LibraryScanRequest) -> LibraryScanSnapshot {
         let start = ProcessInfo.processInfo.systemUptime
         var metrics = LibraryScanMetrics(), accounts: [Account] = [], metadata: [String: SteamAppInfo] = [:]
         let availability = Dictionary(uniqueKeysWithValues: request.runtimes.map { ($0.id, $0.available) })
         func assignWindowsRuntime(to game: inout Game) {
+            let publisherRenderer=game.path.flatMap{SteamDepotLaunchManifest.read($0,appID:game.appId)}?.renderer
             let runtime = request.runtimes.first {
-                $0.platform == "windows" && $0.executionAllowed && availability[$0.id] == true &&
+                $0.platform == "windows" && $0.executionAllowed && $0.installationAvailable &&
+                (publisherRenderer == nil || publisherRenderer == "auto" || publisherRenderer == $0.renderer) &&
                 SteamGameLaunchProfile.supportsInstallation(appID: game.appId, runtime: $0)
             }
             game.runtimeId = runtime?.id ?? ""
@@ -216,6 +313,7 @@ final class LibraryScanner {
             }
         }
         var games: [Game] = [], installedIDs = Set<String>()
+        var officialDestinations: [OfficialCapsuleDestination] = []
         for runtime in request.runtimes where !stopped {
             let file = runtime.steamRoot.appendingPathComponent("steamapps/libraryfolders.vdf")
             let paths = folders.read(file, metrics: &metrics) {
@@ -224,10 +322,11 @@ final class LibraryScanner {
             for root in LibraryModel.libraryRoots(runtime, paths: paths) where !stopped {
                 let apps = root.appendingPathComponent("steamapps")
                 for file in listing(apps) where file.lastPathComponent.hasPrefix("appmanifest_") && file.pathExtension == "acf" && !stopped {
-                    guard let m = manifests.read(file, metrics: &metrics, loader: {
+                    guard let manifestIdentity = ScanFileIdentity.read(file), let m = manifests.read(file, metrics: &metrics, loader: {
                         guard let v = self.readVDF(file)?.object("AppState"), LibraryModel.validAppID(v.string("appid")) else { return nil }
-                        return ScannedManifest(appID: v.string("appid"), name: String(v.string("name").prefix(200)), directory: v.string("installdir"), flags: UInt32(v.string("StateFlags")) ?? 0)
-                    }), m.appID != "228980", !["tool", "dlc", "music", "video", "config"].contains(metadata[m.appID]?.type ?? ""),
+                        return ScannedManifest(appID: v.string("appid"), name: String(v.string("name").prefix(200)), directory: v.string("installdir"), flags: UInt32(v.string("StateFlags")) ?? 0, owner: v.string("LastOwner"))
+                    }), ScanFileIdentity.read(file) == manifestIdentity,
+                          m.appID != "228980", !["tool", "dlc", "music", "video", "config"].contains(metadata[m.appID]?.type ?? ""),
                           let path = steamInstallationPath(apps: apps, directory: m.directory) else { continue }
                     let exists = FileManager.default.fileExists(atPath: path.path)
                     let unfinished: UInt32 = 1 | 2 | 32 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 65536 | 131072 | 262144 | 524288 | 1048576 | 2097152 | 4194304 | 8388608
@@ -262,6 +361,12 @@ final class LibraryScanner {
                         assignWindowsRuntime(to: &game)
                     }
                     if game.platform == "unknown" && platformSupported { game.platform = runtime.platform }
+                    // Bind to the runtime reading this manifest. An unfinished
+                    // mixed-platform title can still have an inferred Mac route.
+                    if runtime.platform == "windows" {
+                        officialDestinations.append(.init(gameID: game.id, appID: m.appID, owner: m.owner, directory: m.directory,
+                            runtime: runtime, target: path, manifest: file, identity: manifestIdentity))
+                    }
                     games.append(game); installedIDs.insert(m.appID)
                 }
             }
@@ -270,18 +375,27 @@ final class LibraryScanner {
         if FileManager.default.fileExists(atPath: playmeltGamesRoot.path) {
             for folder in listing(playmeltGamesRoot) where !stopped {
                 guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+                if let manifest=LocalGameManifest.read(folder) {
+                    var game=Game(id:"local:"+manifest.id,appId:manifest.id,title:manifest.title,store:"local",installed:true,platform:"windows",runtimeId:"playmelt-windows",runtimeName:"Windows",ownership:"installed-only",path:folder,complete:true,installSource:"local")
+                    assignWindowsRuntime(to:&game);games.append(game);continue
+                }
                 let appidFile = folder.appendingPathComponent("Windows/steam_appid.txt")
                 let appidAlt = folder.appendingPathComponent("steam_appid.txt")
                 let targetAppID: String? = {
-                    if let data = try? Data(contentsOf: appidFile), let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), LibraryModel.validAppID(str) { return str }
-                    if let data = try? Data(contentsOf: appidAlt), let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), LibraryModel.validAppID(str) { return str }
+                    // A publisher may ship its own marker in a shared depot.
+                    // Keep that file unchanged; our receipt is bound to the
+                    // selected app and its parent discovery marker instead.
+                    let modern=FileManager.default.fileExists(atPath:SteamDepotLaunchManifest.file(folder).path)
+                    for marker in modern ? [appidAlt]:[appidFile,appidAlt] {
+                        if let data=try? Data(contentsOf:marker),let str=String(data:data,encoding:.utf8)?.trimmingCharacters(in:.whitespacesAndNewlines),LibraryModel.validAppID(str) {return str}
+                    }
                     return nil
                 }()
 
                 // Marvel's Spider-Man 2 is the unique local custom game
                 if folder.lastPathComponent == "MarvelsSpiderMan2" || targetAppID == "2651280" {
-                    let script = findLaunchScript(in: folder)
-                    let hasBinary = containsLaunchBinary(folder, platform: "windows", cancelled: { self.stopped }) || script != nil
+                    let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+                    let hasBinary = localGameExecutable(appID: "2651280", files: files) != nil && containsLaunchBinary(folder, platform: "windows", cancelled: { self.stopped })
                     var spiderman = Game(
                         id: "local:2651280",
                         appId: "2651280",
@@ -314,19 +428,19 @@ final class LibraryScanner {
                 }
 
                 guard let id = targetAppID else { continue }
-                let script = findLaunchScript(in: folder)
-                let hasBinary = containsLaunchBinary(folder, platform: "windows", cancelled: { self.stopped }) || script != nil
+                let hasBinary = containsLaunchBinary(folder, platform: "windows", cancelled: { self.stopped })
                 let localPaths = Set([folder.resolvingSymlinksInPath().path, folder.appendingPathComponent("Windows").resolvingSymlinksInPath().path])
                 let existingIdx = games.firstIndex {
                     $0.appId == id && ($0.platform == "windows" || $0.store == "steam") &&
                     $0.path.map { localPaths.contains($0.resolvingSymlinksInPath().path) } == true
                 }
                 var localGame = existingIdx.map { games[$0] } ?? LibraryModel.makeGame(id, ownership: cachedIDs.contains(id) ? "account-cache" : "installed-only", metadata: metadata, runtimes: request.runtimes, availability: availability)
-                localGame.id = existingIdx.map { games[$0].id } ?? "steam:\(id)"
+                let localIdentity=SHA256.hash(data:Data(folder.resolvingSymlinksInPath().path.utf8)).map{String(format:"%02x",$0)}.joined()
+                localGame.id = existingIdx.map { games[$0].id } ?? "steam:\(id):local:\(localIdentity)"
                 localGame.installed = true
                 localGame.complete = hasBinary
                 localGame.store = "steam"
-                localGame.installSource = "steam"
+                localGame.installSource = SteamDepotLaunchManifest.read(folder,appID:id) != nil ? "steam-depots":"local"
                 localGame.platform = "windows"
                 localGame.path = folder
                 localGame.lastPlayed = max(localGame.lastPlayed, lastPlayedTimes[id] ?? 0)
@@ -335,6 +449,7 @@ final class LibraryScanner {
                 installedIDs.insert(id)
             }
         }
+        reconcilePreparedCapsules(&games, destinations: officialDestinations, account: selected, metrics: &metrics)
         for id in cachedIDs.sorted() where !installedIDs.contains(id) {
             guard let info = metadata[id], !["tool", "dlc", "music", "video", "config"].contains(info.type) else { continue }
             var g = LibraryModel.makeGame(id, ownership: "account-cache", metadata: metadata, runtimes: request.runtimes, availability: availability)
@@ -388,9 +503,11 @@ final class LibraryScanner {
             }
         }
         let saved = stopped ? nil : savedLibrary(request.readSavedSnapshot(selected), account: selected)
+        var preflights:[String:GameLaunchPreflight]=[:]
+        for game in games+epic where !stopped {preflights[game.id]=GameLaunchPreflight.inspect(game,steamAccountID:selected)}
         metrics.elapsedMilliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1000
         return LibraryScanSnapshot(generation: request.generation, requestedAccountID: request.requestedAccountID, selectedAccountID: selected,
                                    runtimes: request.runtimes, accounts: accounts, steamGames: games, epicInstalledGames: epic,
-                                   metadata: metadata, runtimeAvailability: availability, savedLibrary: saved, metrics: metrics)
+                                   metadata: metadata, runtimeAvailability: availability, savedLibrary: saved, metrics: metrics,launchPreflights:preflights)
     }
 }

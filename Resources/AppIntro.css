@@ -1,0 +1,50 @@
+/* Ouverture Playmelt v3 (13/11/2026) — 3,8 s, passable avec Échap.
+   1. étincelle  2. le ruban orange se déplie en 3D avec sa traîne  3. le ruban sombre glisse dessous
+   4. impact (écrasement, onde, reflet)  5. le P se décale et le nom se dévoile  6. sortie. */
+.playmelt-intro{position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0;overflow:hidden;outline:0;
+ background:radial-gradient(ellipse 60% 55% at 50% 50%,#fff,#f1f2f4 70%,#e6e8eb);animation:playmeltIntroExit .45s cubic-bezier(.4,0,.2,1) 3.3s forwards}
+.playmelt-intro::backdrop{background:#f1f2f4}
+.intro-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;animation:playmeltIntroStageOut .45s cubic-bezier(.4,0,.2,1) 3.3s forwards}
+.intro-glow{position:absolute;width:640px;height:640px;border-radius:50%;background:radial-gradient(circle,#ec6f4238,#ec6f4200 60%);
+ animation:playmeltIntroGlow 1.4s ease-out .3s both,playmeltIntroGlowPulse .9s ease-out 1.55s}
+.intro-lockup{--shift:168px;position:relative;display:flex;align-items:center;gap:18px}
+.intro-emblem{position:relative;width:116px;height:150px;flex:none;transform:translateX(var(--shift));animation:playmeltIntroSlide .9s cubic-bezier(.7,0,.2,1) 2.05s forwards}
+.intro-p{position:absolute;inset:0;perspective:700px;animation:playmeltIntroImpact .6s cubic-bezier(.3,1.5,.5,1) 1.5s both}
+.intro-p img,.intro-ghost{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;user-select:none}
+.intro-orange{opacity:0;transform-origin:8% 12%;animation:playmeltIntroOrange 1.05s cubic-bezier(.16,1,.3,1) .45s forwards}
+.intro-orange-main{filter:drop-shadow(0 8px 14px #dc5a2e40)}
+.intro-ghost-1{animation:playmeltIntroGhost .9s ease-out .52s both}.intro-ghost-1 .intro-orange{animation-delay:.52s}
+.intro-ghost-2{animation:playmeltIntroGhost .9s ease-out .6s both}.intro-ghost-2 .intro-orange{animation-delay:.6s}
+.intro-ink{opacity:0;transform-origin:30% 90%;animation:playmeltIntroInk .95s cubic-bezier(.16,1,.3,1) .95s forwards}
+.intro-spark{position:absolute;left:50%;top:40%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#dc5a2e;box-shadow:0 0 24px #ec6f42aa;
+ animation:playmeltIntroSpark .8s cubic-bezier(.2,.8,.2,1) .05s both}
+.intro-ring{position:absolute;left:50%;top:50%;width:150px;height:150px;margin:-75px 0 0 -75px;border-radius:50%;border:2px solid #dc5a2e;opacity:0;
+ animation:playmeltIntroRing .9s cubic-bezier(.2,.8,.2,1) 1.52s forwards}
+.intro-sheen{position:absolute;inset:0;pointer-events:none;
+ -webkit-mask:url(PlaymeltMark.png) center/contain no-repeat;mask:url(PlaymeltMark.png) center/contain no-repeat;
+ background:linear-gradient(105deg,transparent 35%,#ffffffc0 50%,transparent 65%) -160% 0/250% 100% no-repeat;animation:playmeltIntroSheen .85s ease-in-out 1.7s both}
+.intro-word{position:relative;padding:4px 2px}
+.intro-wordmark{display:block;height:88px;width:auto;opacity:0;animation:playmeltIntroWord .95s cubic-bezier(.16,1,.3,1) 2.3s forwards}
+@keyframes playmeltIntroSpark{0%{transform:scale(0);opacity:0}35%{transform:scale(1.25);opacity:1}55%{transform:scale(.9);opacity:1}100%{transform:scale(7);opacity:0}}
+@keyframes playmeltIntroOrange{
+ 0%{opacity:0;transform:rotateY(-80deg) rotateZ(-16deg) translate3d(-34px,-10px,0) scale(.5);clip-path:inset(0 100% 0 0 round 30px);filter:blur(7px)}
+ 55%{opacity:1;transform:rotateY(10deg) rotateZ(2deg) translate3d(2px,0,0) scale(1.05);clip-path:inset(0 0 0 0 round 0);filter:blur(0)}
+ 78%{transform:rotateY(-3deg) rotateZ(-.5deg) scale(.99)}
+ 100%{opacity:1;transform:none;clip-path:inset(0 0 0 0);filter:none}}
+@keyframes playmeltIntroGhost{0%{opacity:.4}100%{opacity:0}}
+@keyframes playmeltIntroInk{
+ 0%{opacity:0;transform:translate3d(30px,-24px,0) rotate(14deg) scale(.86);clip-path:inset(0 0 100% 0);filter:blur(8px)}
+ 60%{opacity:1;transform:translate3d(-3px,3px,0) rotate(-1.5deg) scale(1.01);clip-path:inset(0 0 0 0);filter:blur(0)}
+ 100%{opacity:1;transform:none;clip-path:inset(0 0 0 0);filter:none}}
+@keyframes playmeltIntroImpact{0%{transform:scale(1)}30%{transform:scale(1.08,.93)}62%{transform:scale(.97,1.03)}100%{transform:scale(1)}}
+@keyframes playmeltIntroRing{0%{opacity:.7;transform:scale(.35)}100%{opacity:0;transform:scale(2.6)}}
+@keyframes playmeltIntroSheen{from{background-position:-160% 0}to{background-position:160% 0}}
+@keyframes playmeltIntroSlide{to{transform:translateX(0)}}
+@keyframes playmeltIntroWord{
+ 0%{opacity:0;clip-path:inset(0 100% 0 0);transform:translateX(-26px);filter:blur(6px)}
+ 100%{opacity:1;clip-path:inset(0 0 0 0);transform:none;filter:none}}
+@keyframes playmeltIntroGlow{from{opacity:0;transform:scale(.5)}to{opacity:1;transform:scale(1)}}
+@keyframes playmeltIntroGlowPulse{0%{transform:scale(1)}35%{transform:scale(1.12)}100%{transform:scale(1)}}
+@keyframes playmeltIntroStageOut{to{transform:scale(1.07);filter:blur(5px)}}
+@keyframes playmeltIntroExit{to{opacity:0}}
+@media(prefers-reduced-motion:reduce){.playmelt-intro{display:none}}

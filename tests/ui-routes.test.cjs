@@ -117,9 +117,11 @@ const api = vm.runInNewContext(
   section("const renderProtectedActions =", "function el(") +
     section("function renderProtectionEnabled()", "function renderLibrary()") +
     section("function fact(", "function render()") +
-    ";({openGame,installationRoutes,createWindowsRuntimeControls,renderDiagnostics})",
+    ";({openGame,installationRoutes,createWindowsRuntimeControls,renderMachineDiagnostics})",
   context,
 );
+const openCurrentGame = api.openGame;
+api.openGame = (game) => { context.state.games = [game]; openCurrentGame(game); };
 const game = {
   id: "steam:mac",
   store: "steam",
@@ -140,7 +142,7 @@ assert(
   !all(elements.dialogBody).some((n) => n.tag === "select"),
   "A single route does not add a pointless selector",
 );
-button("Installer et jouer").handlers.click();
+button("Installer").handlers.click();
 assert.equal(sent.pop().payload.runtimeId, native.id);
 const windowsGame = {
   ...game,
@@ -160,9 +162,17 @@ assert.deepEqual(
   [dx11.id],
   "DX11 profile rejects D3DMetal even if a stale option contains it",
 );
-assert(all(elements.dialogBody).some((n) => n.textContent === "DirectX 11"));
-button("Installer et jouer").handlers.click();
-assert.equal(sent.pop().payload.runtimeId, dx11.id);
+assert(button("Installer"), "Windows route has a single automatic installation entry point");
+button("Installer").handlers.click();
+const directInstall=sent.pop();
+assert.equal(directInstall.payload.runtimeId, dx11.id);
+assert.equal(directInstall.action,"installAndPlay","Windows uses the explicitly requested common installation pipeline");
+dx11.available=false;
+dx11.installationAvailable=true;
+api.openGame(windowsGame);
+assert(button("Installer"),"A ready engine can prepare depots without Steam Windows");
+dx11.available=true;
+delete dx11.installationAvailable;
 const selectable = {
   ...windowsGame,
   id: "steam:other",
@@ -170,17 +180,15 @@ const selectable = {
 };
 api.openGame(selectable);
 const select = all(elements.dialogBody).find((n) => n.tag === "select");
-assert(select && select.children.length === 2);
-select.value = dx12.id;
-select.handlers.change();
+assert.equal(select, undefined, "Engine selection is automatic on the game sheet");
 assert(
   button("Installer") && !button("Installer et jouer"),
-  "Unvalidated DX12 route cannot inherit auto-launch from DX11",
+  "The game sheet delegates preparation to the common native pipeline",
 );
 button("Installer").handlers.click();
 const install = sent.pop();
-assert.equal(install.action, "installGame");
-assert.equal(install.payload.runtimeId, dx12.id);
+assert.equal(install.action, "installAndPlay");
+assert.equal(install.payload.runtimeId, dx11.id);
 const legacy = { ...selectable };
 delete legacy.installRoutes;
 assert.deepEqual(
@@ -192,16 +200,16 @@ const noPlatform = { ...legacy, platforms: [], canLaunch: false };
 api.openGame(noPlatform);
 assert.equal(api.installationRoutes(noPlatform).length, 0);
 assert(
-  !button("Jouer") && !button("Installer et jouer") && !button("Installer"),
-  "Unknown platform has no invented game action",
+  !button("Jouer") && !button("Installer et jouer") && button("Installer"),
+  "A selected Windows runtime may prepare the game, but never claims launch readiness",
 );
 const unavailable = { ...windowsGame, installRoutes: [], canLaunch: false };
 context.state.windowsRuntime.status = "future-unknown";
 api.openGame(unavailable);
-assert(all(elements.dialogBody).some((n) => n.textContent === "État inconnu"));
+assert(button("Installer"));
 assert(
-  !all(elements.dialogBody).some((n) => n.tag === "button"),
-  "Unknown engine state cannot enable setup",
+  !all(elements.dialogBody).some((n) => n.textContent === "Préparer DirectX 11"),
+  "Unknown engine state cannot expose a component setup; native installation validates its prerequisites",
 );
 for (const [runtime, label] of [
   [{ status: "missing", readyEngine: false }, "Préparer DirectX 11"],
@@ -237,7 +245,7 @@ context.state.windowsRuntime = {
     steamInstalled: true,
   },
 };
-api.renderDiagnostics();
+api.renderMachineDiagnostics(elements.diagnostics);
 const settings = all(elements.diagnostics);
 for (const label of ["Mac natif", "DirectX 11", "DirectX 12"])
   assert.equal(
@@ -259,7 +267,7 @@ assert.equal(api.installationRoutes(windowsGame).length, 0, "No-Wine policy reje
 assert.equal(api.installationRoutes(game).length, 1, "Native route remains usable");
 api.openGame({ ...windowsGame, canLaunch: true, requiredRenderer: "d3dmetal" });
 assert(!all(elements.dialogBody).some((n) => n.tag === "button"), "A stale game flag cannot expose Wine or setup from the game sheet");
-api.renderDiagnostics();
+api.renderMachineDiagnostics(elements.diagnostics);
 assert(!all(elements.diagnostics).some((n) => n.tag === "button" && /DirectX|Steam pour/.test(n.textContent)), "No Wine setup actions remain in settings");
 console.log(
   "Route UI passed: native/DX11/DX12 capabilities, unknown states, one next action, unique settings rows and protected defaults",

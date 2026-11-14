@@ -9,13 +9,45 @@ import sys
 import os
 import time
 import json
-import urllib.request
 import subprocess
 import shutil
 import re
 import shlex
 import signal
+import hashlib
+import tempfile
+import stat
+import errno
+from steam_appinfo import read_appinfo
+from steam_install_plan import build_plan, PlanError
+from steam_prerequisites import inspect_scripts, detect_renderer
 from pathlib import Path
+
+class InstallFailure(PlanError):
+    def __init__(self, message, code, retryable=False, resume_point="steam-depot-validation", **details):
+        super().__init__(message)
+        self.details = dict(code=code, retryable=retryable, resumePoint=resume_point, **details)
+
+_steam_handoffs = []
+
+
+def reap_steam_handoffs():
+    # Steam is an independent user application, never an owned cancellable job.
+    # Poll reaps short IPC helpers without waiting for or terminating the client.
+    _steam_handoffs[:] = [process for process in _steam_handoffs if process.poll() is None]
+
+def stage_metric(stage_id, status="active", done=None, total=None, unit=None):
+    row = {"id": stage_id, "status": status, "progress": None}
+    if done is not None:
+        row["completedUnits"] = done
+    if total is not None:
+        row["totalUnits"] = total
+    if unit is not None:
+        row["unit"] = unit
+    if done is not None and total and 0 <= done <= total:
+        row["progress"] = done / total
+    return row
+
 
 def emit(status, phase, percent, message, **kwargs):
     payload = {
@@ -24,6 +56,9 @@ def emit(status, phase, percent, message, **kwargs):
         "percent": round(float(percent), 3) if percent is not None else None,
         "message": message
     }
+    stage = {"downloading": "download", "installing": "prepare", "validating": "verify"}.get(status)
+    if stage and "stages" not in kwargs:
+        kwargs["stages"] = [stage_metric(stage)]
     payload.update(kwargs)
     sys.stdout.write(json.dumps(payload) + "\n")
     sys.stdout.flush()
@@ -37,70 +72,11 @@ def format_bytes(bytes_count):
         return f"{bytes_count / (1024 * 1024 * 1024):.2f} Go"
 
 def resolve_steam_info(app_id):
-    url = f"https://api.steamcmd.net/v1/info/{app_id}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Playmelt/2.0"})
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            app_data = data.get("data", {}).get(str(app_id), {})
-            if not app_data:
-                return None
-            
-            common = app_data.get("common", {})
-            name = common.get("name", f"App {app_id}")
-            config = app_data.get("config", {})
-            installdir = config.get("installdir", name.replace(" ", ""))
-            
-            # Find executable in launch options
-            launch_exe = None
-            launch_opts = config.get("launch", {})
-            for key, opt in launch_opts.items():
-                if isinstance(opt, dict):
-                    oslist = opt.get("config", {}).get("oslist", "")
-                    exe = opt.get("executable", "")
-                    if "windows" in oslist or not oslist:
-                        if exe.lower().endswith(".exe"):
-                            launch_exe = exe
-                            break
-
-            # Find best Windows depot
-            depots = app_data.get("depots", {})
-            candidates = []
-            
-            for dep_id, dep_info in depots.items():
-                if not isinstance(dep_info, dict) or not dep_id.isdigit():
-                    continue
-                # Skip shared redists
-                if "depotfromapp" in dep_info:
-                    continue
-                
-                oslist = dep_info.get("config", {}).get("oslist", "")
-                manifests = dep_info.get("manifests", {}).get("public", {})
-                size = int(manifests.get("size", 0) or 0)
-                dl_size = int(manifests.get("download", 0) or 0)
-                
-                if "windows" in oslist or not oslist:
-                    gid = str(manifests.get("gid", ""))
-                    if size > 0 and gid.isdigit():
-                        candidates.append((dep_id, size, dl_size, gid))
-            # A largest-depot guess can silently omit required assets/languages.
-            # Until complete multi-depot plans are supported, refuse ambiguity.
-            if len(candidates) != 1:
-                return None
-            best_depot, max_size, download_size, manifest_id = candidates[0]
-
-            return {
-                "name": name,
-                "installdir": installdir,
-                "depot_id": best_depot,
-                "manifest_id": manifest_id,
-                "build_id": str(depots.get("branches", {}).get("public", {}).get("buildid", "")),
-                "size": max_size,
-                "download_size": download_size,
-                "executable": launch_exe
-            }
-    except Exception as e:
-        return None
+        cache = Path.home() / "Library/Application Support/Steam/appcache/appinfo.vdf"
+        return build_plan(str(app_id), read_appinfo(cache))
+    except OSError as exc:
+        raise PlanError("Cache Steam indisponible. Ouvrez Steam et actualisez sa bibliothèque.") from exc
 
 def get_dir_size(path):
     total = 0
@@ -140,12 +116,106 @@ def official_completion(log_text, content_dir, manifest_id):
     return False
 
 
+def depot_attempt_problem(log_text, steam_osx_path, app_id, depot_id, manifest_id):
+    """Attribute generic Valve errors only inside this exact console command.
+
+    Steam's No subscription line has no depot ID. The fresh log offset and
+    exact ExecCommandLine anchor identify our request; a subsequent command
+    invalidates attribution rather than blaming an unrelated download.
+    """
+    expected = [steam_osx_path, "+download_depot", str(app_id), str(depot_id), str(manifest_id)]
+    active = False
+    for line in log_text.splitlines():
+        if "ExecCommandLine:" in line:
+            command = line.split("ExecCommandLine:", 1)[1].strip()
+            if command.startswith('"') and command.endswith('"'):
+                command = command[1:-1]
+            try:
+                arguments = shlex.split(command)
+            except ValueError:
+                arguments = []
+            if active and arguments != expected:
+                return "context-changed"
+            active = arguments == expected
+            continue
+        if active and re.search(r"Depot download failed\s*:|(?:Depot|depot)\s+" + re.escape(str(depot_id)) + r"[^\n]*(?:failed|denied|No subscription)", line):
+            return "denied"
+    return None
+
+
 def trigger_steam_depot_download(steam_osx_path, app_id, depot_id, manifest_id):
     cmd = [steam_osx_path, "+download_depot", str(app_id), str(depot_id), str(manifest_id)]
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=True)
-        return True
-    except (OSError, subprocess.SubprocessError):
+        reap_steam_handoffs()
+        process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        _steam_handoffs.append(process)
+        return process
+    except OSError:
+        return False
+
+
+class DepotLogCursor:
+    """Incremental fresh-request attribution; no tail jumps or unbounded log buffer."""
+    def __init__(self, path, steam_osx, depot):
+        self.path, self.steam_osx, self.depot = path, steam_osx, depot
+        self.boundary = b""
+        current = None
+        if path.exists():
+            with path.open("rb") as handle:
+                current = os.fstat(handle.fileno())
+                handle.seek(max(0, current.st_size - 256))
+                self.boundary = handle.read(256)
+        self.identity = (current.st_dev, current.st_ino) if current else None
+        self.offset = current.st_size if current else 0
+        self.pending, self.anchor, self.complete, self.problem, self.backlog = b"", "", False, None, False
+        self.expected = [steam_osx, "+download_depot", str(depot["appID"]), str(depot["depotID"]), str(depot["manifestID"])]
+
+    def read(self, content):
+        if not self.path.exists():
+            self.backlog = False
+            return False
+        with self.path.open("rb") as handle:
+            current = os.fstat(handle.fileno())
+            identity = (current.st_dev, current.st_ino)
+            if (self.identity is not None and identity != self.identity) or current.st_size < self.offset:
+                return True
+            if self.boundary:
+                handle.seek(self.offset - len(self.boundary))
+                if handle.read(len(self.boundary)) != self.boundary:
+                    return True
+            self.identity = identity
+            handle.seek(self.offset)
+            chunk = handle.read(1024 * 1024)
+            self.offset = handle.tell()
+            self.boundary = (self.boundary + chunk)[-256:]
+            self.backlog = self.offset < current.st_size
+        lines = (self.pending + chunk).split(b"\n")
+        self.pending = lines.pop()
+        if len(self.pending) > 65536 or any(len(line) > 65536 for line in lines):
+            raise InstallFailure("Une ligne du journal Steam est trop longue pour être attribuée sûrement.",
+                                 "steam_log_invalid", False, "steam-log-restart")
+        for raw in lines:
+            line = raw.decode("utf-8", "replace")
+            if "ExecCommandLine:" in line:
+                command = line.split("ExecCommandLine:", 1)[1].strip()
+                if command.startswith('"') and command.endswith('"'):
+                    command = command[1:-1]
+                try:
+                    arguments = shlex.split(command)
+                except ValueError:
+                    arguments = []
+                if self.anchor and arguments != self.expected:
+                    self.problem = "context-changed"
+                    break
+                self.anchor = line if arguments == self.expected else ""
+            elif self.anchor:
+                self.problem = depot_attempt_problem(self.anchor + "\n" + line, self.steam_osx,
+                                                     self.depot["appID"], self.depot["depotID"], self.depot["manifestID"])
+                if self.problem:
+                    break
+                if official_completion(line, str(content), self.depot["manifestID"]):
+                    self.complete = True
+                    break
         return False
 
 
@@ -165,7 +235,7 @@ def get_recent_download_rate(content_log_path):
         pass
     return None
 
-def create_launch_script(game_dir, chosen_exe, game_title, app_id=None, renderer=None):
+def create_launch_script(game_dir, chosen_exe, game_title, app_id=None, renderer=None, output_dir=None):
     runtime_dir = os.path.expanduser("~/Library/Application Support/Playmelt/Runtime")
     renderer_dir = os.path.expanduser("~/Library/Application Support/Playmelt/Renderers/D3DMetal/payload")
     
@@ -256,7 +326,9 @@ exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" {quoted_exe} {
 """
 
     safe_title = "".join(c if c.isalnum() or c in " -_" else "-" for c in game_title).strip()
-    script_path = os.path.join(game_dir, f"Lancer-{safe_title}.command")
+    script_path = os.path.join(output_dir or game_dir, f"Lancer-{safe_title}.command")
+    if os.path.realpath(script_path) != os.path.abspath(script_path):
+        raise PlanError("Le lanceur utilise un lien. Aucun fichier remplacé.")
     with open(script_path, "w", encoding="utf-8") as f:
         f.write(content)
     os.chmod(script_path, 0o755)
@@ -285,175 +357,346 @@ def main():
     home = os.path.expanduser("~")
     login_path = os.path.join(home, "Library/Application Support/Steam/config/loginusers.vdf")
     if active_steam_account(login_path) != args.accountid:
-        emit("failed", "Compte", None, "Le compte actif Steam ne correspond plus au compte sélectionné.")
+        emit("failed", "Compte", None, "Le compte actif Steam ne correspond plus au compte sélectionné.",
+             code="steam_account_changed", retryable=False, resumePoint="steam-account-confirmation")
         return 1
     steam_osx = os.path.join(home, "Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx")
     if not os.path.exists(steam_osx):
         steam_osx = "/Applications/Steam.app/Contents/MacOS/steam_osx"
     
     if not os.path.exists(steam_osx):
-        emit("failed", "Erreur", 0.0, "Steam n'est pas installé sur ce Mac.")
+        emit("failed", "Erreur", 0.0, "Steam n'est pas installé sur ce Mac.",
+             code="steam_client_missing", retryable=False, resumePoint="steam-client-installation")
         return 1
         
     emit("downloading", "Téléchargement", 0.02, "Résolution des dépôts Steam en cours...")
     
-    # 1. Resolve metadata
-    info = resolve_steam_info(app_id)
-    if not info:
-        emit("failed", "Dépôts", None, "Plan de dépôts Windows incomplet ou ambigu. Utilisez Steam pour cette installation.")
+    try:
+        plan = resolve_steam_info(app_id)
+        if not plan:
+            raise PlanError("Plan Steam indisponible. Actualisez la bibliothèque.")
+        return install_depots(args, plan, steam_osx, home, login_path)
+    except PlanError as exc:
+        emit("failed", "Installation", None, str(exc), **getattr(exc, "details", {
+            "code": "steam_preparation_failed", "retryable": False, "resumePoint": "steam-depot-validation"}))
         return 1
-    title = info["name"]
-    installdir = (info and info.get("installdir")) or title.replace(" ", "")
-    depot_id = info["depot_id"]
-    manifest_id = info["manifest_id"]
-    expected_size = (info and info.get("size")) or 0
-    expected_dl = (info and info.get("download_size")) or expected_size
-    target_exe = info and info.get("executable")
-    
-    emit("downloading", "Téléchargement", 0.05, f"Dépôt identifié : {depot_id} ({format_bytes(expected_dl)}). Lancement du téléchargement...")
-    
-    # 2. Trigger download
-    content_dir = os.path.join(home, f"Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steamapps/content/app_{app_id}/depot_{depot_id}")
-    content_log = os.path.join(home, "Library/Application Support/Steam/logs/content_log.txt")
-    
-    console_log = os.path.join(home, "Library/Application Support/Steam/logs/console_log.txt")
-    log_offset = os.path.getsize(console_log) if os.path.exists(console_log) else 0
-    if not trigger_steam_depot_download(steam_osx, app_id, depot_id, manifest_id):
-        emit("failed", "Téléchargement", None, "Steam n’a pas accepté la demande de téléchargement.")
-        return 1
-    
-    # 3. Monitor download progress
-    start_time = time.time()
-    last_size = 0
-    unchanged_count = 0
-    max_wait_seconds = 12 * 60 * 60
-    
-    while True:
-        time.sleep(1.0)
-        now = time.time()
-        elapsed = now - start_time
-        
-        cur_size = get_dir_size(content_dir)
-        rate_str = get_recent_download_rate(content_log)
-        
-        # Calculate ratio
-        if expected_size > 0:
-            ratio = min(0.85, (cur_size / float(expected_size)) * 0.85)
-        else:
-            ratio = 0.30 if cur_size > 0 else 0.05
-            
-        rate_info = f" · {rate_str}" if rate_str else ""
-        size_info = f" · {format_bytes(cur_size)} / {format_bytes(expected_size)}" if expected_size > 0 else f" · {format_bytes(cur_size)}"
-        
-        emit(
-            "downloading",
-            "Téléchargement",
-            ratio,
-            f"Téléchargement de {title}{rate_info}{size_info}",
-            bytesDownloaded=cur_size,
-            bytesTotal=expected_size,
-            speed=rate_str or ""
-        )
-        
-        if cur_size > 0 and cur_size == last_size:
-            unchanged_count += 1
-        else:
-            unchanged_count = 0
-            
-        last_size = cur_size
-        
-        # Only a new official Steam receipt for this exact pinned manifest can
-        # complete the download. Stalls and byte percentages are never receipts.
-        recent_console = ""
+    finally:
+        reap_steam_handoffs()
+
+
+def checked_files(folder):
+    result = {}
+    root = Path(folder)
+    if root.resolve() != root.absolute():
+        raise PlanError("Le dossier Steam utilise un lien non pris en charge")
+    if not root.is_dir():
+        raise PlanError("Le dossier du dépôt Steam est absent")
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        for name in dirs + files:
+            item = Path(directory, name)
+            if item.is_symlink():
+                raise PlanError("Un dépôt contient un lien non pris en charge. Les fichiers sont conservés.")
+        for name in files:
+            item = Path(directory, name)
+            if not item.is_file():
+                raise PlanError("Fichier Steam non régulier")
+            result[str(item.relative_to(root))] = item.stat().st_size
+    return result
+
+
+def prepared_files_match(folder, expected, app_id):
+    actual = checked_files(folder)
+    marker = Path(folder, "steam_appid.txt")
+    if "steam_appid.txt" not in expected and marker.is_file() and marker.read_text().strip() == app_id:
+        actual.pop("steam_appid.txt", None)
+    return actual == expected
+
+
+def file_hashes(folder, files, report_progress=False):
+    """Bind a verified receipt to bytes, rejecting a file changing mid-read."""
+    result = {}
+    processed, total, reported = 0, sum(files.values()), 0.0
+    def report(force=False):
+        nonlocal reported
+        now = time.perf_counter()
+        if report_progress and (force or now - reported >= 0.2):
+            emit("validating", "Vérification", None, "Vérification des empreintes des fichiers…",
+                 stages=[stage_metric("verify", done=processed, total=total, unit="bytes")])
+            reported = now
+    report(True)
+    for relative, size in sorted(files.items()):
+        path = Path(folder, relative)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as handle:
+            before = os.fstat(handle.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size != size:
+                raise InstallFailure("Le cache Steam a changé pendant sa vérification.", "steam_cache_changed", True)
+            value = hashlib.sha256()
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                value.update(block)
+                processed += len(block)
+                report()
+            after = os.fstat(handle.fileno())
+        current = path.stat(follow_symlinks=False)
+        identity = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+        if identity(before) != identity(after) or identity(after) != identity(current):
+            raise InstallFailure("Le cache Steam a changé pendant sa vérification.", "steam_cache_changed", True)
+        result[relative] = value.hexdigest()
+    report(True)
+    return result
+
+
+def depot_checkpoint(staging, plan, account_id, depot, content, verified=None):
+    """Only a fresh official completion can mint this account-bound checkpoint."""
+    directory = staging / "validated-depots"
+    if directory.is_symlink():
+        raise PlanError("Les points de reprise utilisent un lien non pris en charge")
+    directory.mkdir(exist_ok=True)
+    path = directory / f'{depot["appID"]}-{depot["depotID"]}-{depot["manifestID"]}.json'
+    if path.is_symlink():
+        raise PlanError("Le point de reprise utilise un lien non pris en charge")
+    identity = dict(schema=1, planSHA256=plan["planSHA256"], accountID=account_id,
+                    depot=depot, contentRoot=str(content.absolute()), officialCompletionVerified=True)
+    if verified is None:
+        if not path.is_file():
+            return None
         try:
-            with open(console_log, "rb") as handle:
-                handle.seek(max(log_offset, os.path.getsize(console_log) - 1_048_576))
-                recent_console = handle.read(1_048_576).decode("utf-8", "replace")
-        except OSError:
-            pass
-        if official_completion(recent_console, content_dir, manifest_id):
-            if expected_size <= 0 or cur_size != expected_size:
-                emit("failed", "Vérification", None, "Le reçu Steam et la taille du dépôt ne concordent pas. Les fichiers sont conservés.")
-                return 1
-            break
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if any(saved.get(key) != value for key, value in identity.items()):
+                return None
+            if not content.is_dir():
+                return None
+            files = checked_files(content)
+            if saved.get("files") != files or sum(files.values()) != depot["bytes"]:
+                return None
+            emit("validating", "Vérification", None, f"Vérification des empreintes du dépôt {depot['depotID']} conservé.",
+                 code="steam_checkpoint_checking", resumePoint="steam-depot-validation", depotID=depot["depotID"])
+            hashes = file_hashes(content, files, report_progress=True)
+            if saved.get("fileSHA256") != hashes or checked_files(content) != files:
+                return None
+            return files, hashes
+        except PlanError:
+            raise
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+    files, hashes = verified
+    record = dict(identity, files=files, fileSHA256=hashes)
+    descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return files, hashes
+
+
+def install_depots(args, plan, steam_osx, home, login_path):
+    app_id, title = args.appid, plan["name"]
+    # Stable per-app ownership: resumable staging is never an installed game.
+    safe_title = "".join(c for c in title if c.isalnum() or c in " -_").strip()[:120] or "Game"
+    destination = Path(home, "Library/Application Support/Playmelt/Games", f"{safe_title}-{app_id}")
+    final = destination / "Windows"
+    if str(destination.resolve()) != str(destination.absolute()):
+        raise PlanError("Le dossier de destination utilise un lien. Aucun fichier déplacé.")
+    destination.mkdir(parents=True, exist_ok=True)
+    staging = destination / (".steam-staging-" + plan["planSHA256"][:16])
+    if staging.is_symlink():
+        raise PlanError("Le dossier de préparation utilise un lien")
+    staging.mkdir(exist_ok=True)
+    owner = staging / "plan.json"
+    for file in (owner,staging/"verified.json",staging/"Windows",destination/"playmelt-install.json",destination/".playmelt-steam-launch.json",destination/"steam_appid.txt"):
+        if file.is_symlink():
+            raise PlanError("La préparation utilise un lien. Aucun fichier remplacé.")
+    if owner.exists() and json.loads(owner.read_text())["planSHA256"] != plan["planSHA256"]:
+        raise PlanError("La préparation appartient à un autre plan. Les fichiers sont conservés.")
+    owner.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    verified = staging / "verified.json"
+    published = final.exists() or final.is_symlink()
+    if published:
+        if final.is_symlink() or not verified.is_file():
+            emit("failed", "Installation", None, "Une installation existe déjà. Aucun fichier remplacé ; vérifiez le dossier dans Playmelt.",
+                 code="steam_existing_install_unverified", retryable=False, resumePoint="steam-existing-install-validation")
+            return 1
+        previous = json.loads(verified.read_text())
+        # Recover only our exact complete publication, never an unrelated game.
+        if (previous.get("planSHA256") != plan["planSHA256"] or previous.get("accountID") != args.accountid
+                or not prepared_files_match(final, previous.get("files", {}), app_id)
+                or not isinstance(previous.get("fileSHA256"), dict)):
+            raise PlanError("L’installation existante doit être vérifiée. Aucun fichier remplacé.")
+    deployment = staging / "Windows"
+    deployment.mkdir(exist_ok=True)
+    checked_files(deployment)
+    for directory,_,files in os.walk(deployment):
+        for filename in files:
+            if Path(directory,filename).stat(follow_symlinks=False).st_nlink > 1:
+                raise PlanError("La préparation contient un fichier partagé. Aucun fichier remplacé.")
+    console_log = Path(home, "Library/Application Support/Steam/logs/console_log.txt")
+    content_log = Path(home, "Library/Application Support/Steam/logs/content_log.txt")
+    # Steam places console depot downloads alongside the active client binary.
+    content_base = Path(steam_osx).parent / "steamapps/content"
+    completed, receipts, expected_files, expected_hashes = 0, [], {}, {}
+    prerequisites=plan.get("prerequisites",[])
+    total_bytes=plan["bytes"]
+    depots = [] if published else plan["depots"]
+    for index, depot in enumerate(depots):
         if active_steam_account(login_path) != args.accountid:
-            emit("failed", "Compte", None, "Compte Steam changé : préparation annulée.")
-            return 1
-
-        if elapsed > max_wait_seconds:
-            emit("failed", "Erreur", ratio, "Le téléchargement a dépassé la limite de temps.")
-            return 1
-            
-    # 4. Deploy only after official completion; never replace an existing game.
-    emit("installing", "Installation", 0.88, f"Déploiement des fichiers de {title}…")
-    safe_folder_name = "".join(c for c in title if c.isalnum() or c in " -_").strip() or "Game"
-    dest_game_folder = os.path.join(home, "Library/Application Support/Playmelt/Games", f"{safe_folder_name}-{app_id}")
-    dest_win_folder = os.path.join(dest_game_folder, "Windows")
-    if os.path.realpath(dest_game_folder) != os.path.abspath(dest_game_folder):
-        emit("failed", "Installation", None, "Le dossier de destination utilise un lien. Aucun fichier déplacé.")
-        return 1
-    if os.path.lexists(dest_win_folder):
-        emit("failed", "Installation", None, "Une installation existe déjà. Aucun fichier remplacé ; vérifiez le dossier dans Playmelt.")
-        return 1
+            raise PlanError("Compte Steam changé : préparation annulée.")
+        content = content_base / ("app_" + depot["appID"]) / ("depot_" + depot["depotID"])
+        details = {key: depot[key] for key in ("appID", "depotID", "manifestID")}
+        cached = depot_checkpoint(staging, plan, args.accountid, depot, content)
+        if cached is not None:
+            files, hashes = cached
+            emit("validating", "Reprise", 0.02 + 0.8 * completed / max(1, total_bytes),
+                 f"Dépôt {index + 1}/{len(depots)} déjà vérifié ; reprise de sa copie.",
+                 code="steam_checkpoint_verified", resumePoint="steam-depot-copy", **details)
+        else:
+            for attempt in range(3):
+                emit("downloading", "Vérification Steam", 0.02 + 0.8 * completed / max(1, total_bytes),
+                 f"Steam vérifie ou récupère le dépôt {index + 1}/{len(depots)} · {title}", bytesDownloaded=completed, bytesTotal=total_bytes,
+                 stages=[stage_metric("download", done=completed, total=total_bytes, unit="verified-bytes")])
+                cursor = DepotLogCursor(console_log, steam_osx, depot)
+                dispatch = trigger_steam_depot_download(steam_osx, depot["appID"], depot["depotID"], depot["manifestID"])
+                if dispatch is False:
+                    raise InstallFailure("Steam n’a pas confirmé la demande. Vérifiez sa connexion ; les fichiers sont conservés.",
+                                         "steam_dispatch_failed", True, **details)
+                started = time.monotonic()
+                renewed = False
+                while True:
+                    if not cursor.backlog:
+                        time.sleep(1)
+                    reap_steam_handoffs()
+                    if active_steam_account(login_path) != args.accountid:
+                        raise PlanError("Compte Steam changé : préparation annulée.")
+                    size = get_dir_size(content)
+                    elapsed = time.monotonic() - started
+                    emit("downloading", "Téléchargement", min(0.85, 0.02 + 0.8 * (completed + size) / max(1, total_bytes)),
+                         f"{title} · dépôt {index + 1}/{len(depots)} · {format_bytes(completed + size)} / {format_bytes(total_bytes)}",
+                         bytesDownloaded=completed + size, bytesTotal=total_bytes, speed="",
+                         stages=[stage_metric("download", done=completed, total=total_bytes, unit="verified-bytes")])
+                    if cursor.read(content):
+                        renewed = True
+                        break
+                    if cursor.complete:
+                        files = checked_files(content)
+                        if sum(files.values()) != depot["bytes"]:
+                            raise InstallFailure(f"Le dépôt Steam {depot['depotID']} ne correspond pas au reçu : {sum(files.values())} octets présents sur {depot['bytes']} attendus. Les fichiers sont conservés.",
+                                                 "steam_depot_size_mismatch", False, expectedBytes=depot["bytes"], actualBytes=sum(files.values()), **details)
+                        emit("downloading", "Réception Steam", None, "Reçu du dépôt confirmé par Steam.",
+                             stages=[stage_metric("download", done=completed + depot["bytes"], total=total_bytes, unit="verified-bytes")], **details)
+                        hashes = file_hashes(content, files, report_progress=True)
+                        if checked_files(content) != files:
+                            raise InstallFailure("Le cache Steam a changé pendant sa vérification.", "steam_cache_changed", True, **details)
+                        if active_steam_account(login_path) != args.accountid:
+                            raise PlanError("Compte Steam changé : préparation annulée.")
+                        depot_checkpoint(staging, plan, args.accountid, depot, content, (files, hashes))
+                        break
+                    problem = cursor.problem
+                    if problem == "denied":
+                        raise InstallFailure("Steam a refusé ce dépôt. Vérifiez la licence et la connexion Steam.", "steam_depot_denied", False, **details)
+                    if problem == "context-changed":
+                        raise InstallFailure("Steam exécute une autre demande. Vérifiez ses téléchargements puis reprenez la préparation ; les fichiers sont conservés.", "steam_context_changed", False, **details)
+                    if hasattr(dispatch, "poll") and dispatch.poll() not in (None, 0) and not cursor.backlog:
+                        raise InstallFailure("Le client Steam n’a pas transmis la demande de dépôt. Les fichiers sont conservés.",
+                                             "steam_dispatch_failed", True, **details)
+                    if elapsed > 12 * 60 * 60 and not cursor.backlog:
+                        raise InstallFailure("La vérification Steam a été interrompue. Les fichiers sont conservés pour la reprise.", "steam_download_timeout", True, **details)
+                if renewed:
+                    if attempt == 2:
+                        raise InstallFailure("Le journal Steam se renouvelle à chaque demande. Les fichiers sont conservés.", "steam_log_renewed", False, "steam-log-restart", attempt=attempt + 1, **details)
+                    emit("recovering", "Reprise", None, "Journal Steam renouvelé ; nouvelle demande de vérification du dépôt.",
+                         code="steam_log_renewed", retryable=True, resumePoint="steam-log-restart", attempt=attempt + 1, **details)
+                else:
+                    break
+        if active_steam_account(login_path) != args.accountid:
+            raise PlanError("Compte Steam changé : préparation annulée.")
+        emit("installing", "Installation", 0.85, f"Préparation du dépôt {index + 1}/{len(depots)}…")
+        # Respect Valve mounting order. Recopy only this task's staging tree.
+        staged = checked_files(deployment)
+        copy_needed = any(staged.get(path) != size for path, size in files.items())
+        if not copy_needed:
+            copy_needed = file_hashes(deployment, files, report_progress=True) != hashes
+        if copy_needed and shutil.disk_usage(destination).free < sum(files.values()):
+            raise InstallFailure("Espace disque insuffisant pour préparer le dépôt vérifié. Son point de reprise est conservé.",
+                                 "steam_disk_space", False, "storage", **details)
+        try:
+            if copy_needed:
+                copied, reported = 0, 0.0
+                def copy_file(source, target):
+                    nonlocal copied, reported
+                    result = shutil.copy2(source, target)
+                    copied += Path(target).stat().st_size
+                    now = time.perf_counter()
+                    if now - reported >= 0.2:
+                        emit("installing", "Copie", None, "Préparation des fichiers du jeu…",
+                             stages=[stage_metric("prepare", done=completed + copied, total=total_bytes, unit="bytes")])
+                        reported = now
+                    return result
+                shutil.copytree(content, deployment, dirs_exist_ok=True, symlinks=True, copy_function=copy_file)
+        except OSError as exc:
+            raise InstallFailure("La copie du dépôt est interrompue. Son point de reprise vérifié est conservé.",
+                                 "steam_depot_copy_failed", exc.errno in (errno.EINTR, errno.EBUSY, errno.ETIMEDOUT), "steam-depot-copy", errno=exc.errno, **details) from exc
+        emit("installing", "Copie", None, "Fichiers du dépôt préparés ; vérification de la copie restante.",
+             stages=[stage_metric("prepare", done=completed + depot["bytes"], total=total_bytes, unit="bytes")])
+        expected_files.update(files)
+        expected_hashes.update(hashes)
+        receipts.append(dict(depot, officialCompletionVerified=True))
+        completed += depot["bytes"]
     if active_steam_account(login_path) != args.accountid:
-        emit("failed", "Compte", None, "Compte Steam changé : aucun fichier déplacé.")
-        return 1
-    os.makedirs(dest_game_folder, exist_ok=True)
-    shutil.move(content_dir, dest_win_folder)
-    emit("validating", "Vérification", 0.93, f"Préparation du lanceur pour {title}…")
-    # Detect best executable
-    exe_chosen = target_exe
-    if not exe_chosen or not os.path.exists(os.path.join(dest_win_folder, exe_chosen)):
-        candidates = []
-        for root, dirs, files in os.walk(dest_win_folder):
-            for file in files:
-                if file.lower().endswith(".exe"):
-                    rel = os.path.relpath(os.path.join(root, file), dest_win_folder)
-                    low = rel.lower()
-                    if not any(k in low for k in ["crash", "sentry", "redist", "setup", "install", "vcredist"]):
-                        candidates.append(rel)
-        if candidates:
-            shipping = [c for c in candidates if "-shipping.exe" in c.lower()]
-            exe_chosen = shipping[0] if shipping else sorted(candidates, key=len)[0]
-            
-    if not exe_chosen:
-        emit("failed", "Erreur", 0.95, "Aucun exécutable Windows trouvé dans le dossier du jeu.")
-        return 1
-        
-    target_path = os.path.realpath(os.path.join(dest_win_folder, exe_chosen))
-    if os.path.isabs(exe_chosen) or not target_path.startswith(os.path.realpath(dest_win_folder) + os.sep):
-        raise ValueError("L’exécutable sort du dossier du jeu")
-    with open(target_path, "rb") as handle:
+        raise PlanError("Compte Steam changé : aucun jeu publié.")
+    if published:
+        expected_files,receipts,expected_hashes = previous["files"],previous["receipts"],previous["fileSHA256"]
+    if not prepared_files_match(final if published else deployment, expected_files, app_id):
+        raise PlanError("Les fichiers préparés ne correspondent pas à tous les dépôts Steam.")
+    if file_hashes(final if published else deployment, expected_files, report_progress=True) != expected_hashes:
+        raise InstallFailure("La copie préparée ne correspond pas aux empreintes des dépôts vérifiés.", "steam_depot_copy_mismatch", True, "steam-depot-copy")
+    executable = (final if published else deployment) / plan["executable"]
+    if not executable.is_file() or executable.is_symlink():
+        raise PlanError("L’exécutable publié par Steam est absent. Aucun exécutable n’a été deviné.")
+    with executable.open("rb") as handle:
         if handle.read(2) != b"MZ":
-            raise ValueError("L’exécutable Windows est invalide")
-
-    # Create launch script
-    script_path = create_launch_script(dest_win_folder, exe_chosen, title, app_id=app_id, renderer=args.renderer)
-    # Also symlink or copy to dest_game_folder
-    top_script = os.path.join(dest_game_folder, os.path.basename(script_path))
-    if script_path != top_script:
-        shutil.copy2(script_path, top_script)
-        os.chmod(top_script, 0o755)
-        
-    # This receipt is owned by Playmelt. Never fabricate Steam StateFlags/buildid.
-    receipt = {"appID": app_id, "depotID": depot_id, "manifestID": manifest_id,
-               "buildID": info["build_id"], "bytes": cur_size,
-               "source": "official-steam-console-completion", "gameExecutionVerified": False}
-    Path(dest_game_folder, "playmelt-install.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
-    # Publish discovery identity only after successful verification and launcher
-    # creation. An interrupted deployment must not appear complete in the hub.
-    for directory in (dest_win_folder, dest_game_folder):
-        Path(directory, "steam_appid.txt").write_text(f"{app_id}\n", encoding="utf-8")
-
-    emit(
-        "launch-ready",
-        "Terminé",
-        1.0,
-        f"Fichiers de {title} préparés ; lancement à vérifier.",
-        ready=True,
-        gamePath=dest_win_folder,
-        scriptPath=top_script
-    )
+            raise PlanError("L’exécutable Windows est invalide")
+    if plan["workingDirectory"] and not ((final if published else deployment) / plan["workingDirectory"]).is_dir():
+        raise PlanError("Le dossier de lancement publié par Steam est absent")
+    emit("validating", "Vérification", 0.95, "Dépôts du jeu vérifiés. Vérification des étapes restantes…")
+    checks,issues=inspect_scripts(final if published else deployment)
+    for component in prerequisites:
+        issues.append(dict(kind="official-installscript", depotID=component["depotID"],
+                           sourceAppID=component["sourceAppID"], manifestID=component["manifestID"],
+                           acquisitionVerified=False, executionVerified=False, requiredClient="steam-windows",
+                           message="Ce composant doit être acquis et finalisé par le client Steam Windows officiel."))
+    detected_renderer,renderer_source=detect_renderer(expected_files,plan["arguments"],app_id)
+    if renderer_source=='unknown':issues.append({'kind':'graphics-api-unknown','message':'Le moteur graphique de ce jeu doit être vérifié avant son premier lancement.'})
+    steam_client_required=any(Path(p).name.lower() in ('steam_api.dll','steam_api64.dll') for p in expected_files)
+    # Atomic publication; a cancelled/partial copy never becomes installed.
+    receipt = dict(plan, renderer=detected_renderer,rendererRequested=args.renderer,rendererSource=renderer_source,source="official-steam-console-completion",
+                   receipts=receipts, files=expected_files, fileSHA256=expected_hashes, accountID=args.accountid, gameExecutionVerified=False,
+                   prerequisiteExecutionVerified=False,prerequisiteChecks=checks,preparationTasks=issues,
+                   steamClientRequired=steam_client_required, requiresOfficialSteam=bool(prerequisites) or steam_client_required)
+    if not published:
+        verified.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+        deployment.rename(final)
+    # The native dispatcher generates the guarded launcher only after its fresh
+    # engine, account, prerequisites and display preflight succeeds.
+    (destination / "playmelt-install.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+    launch = {k: plan[k] for k in ("appID", "executable", "arguments", "workingDirectory")}
+    launch.update(schema=1,renderer=detected_renderer,source=receipt["source"],preparationTasks=issues,
+                  prerequisiteChecks=checks,steamClientRequired=steam_client_required,requiresOfficialSteam=receipt["requiresOfficialSteam"],gameExecutionVerified=False)
+    (destination / ".playmelt-steam-launch.json").write_text(json.dumps(launch, indent=2), encoding="utf-8")
+    # Keep every publisher file byte-for-byte. The parent marker is Playmelt's
+    # discovery metadata; a vendor-provided Windows/steam_appid.txt is untouched.
+    (destination / "steam_appid.txt").write_text(app_id + "\n", encoding="utf-8")
+    emit("files-prepared", "Fichiers préparés", 1.0, f"Fichiers de {title} préparés ; composants et premier lancement à vérifier.",
+         ready=False,gamePath=str(final),scriptPath="",depotCount=len(plan["depots"]),
+         renderer=detected_renderer,prerequisiteCount=len(prerequisites),steamClientRequired=steam_client_required,
+         requiresOfficialSteam=receipt["requiresOfficialSteam"], preparationTasks=issues,
+         stages=[stage_metric("download", "completed", total_bytes, total_bytes, "verified-bytes"),
+                 stage_metric("prepare", "completed", total_bytes, total_bytes, "bytes"),
+                 stage_metric("verify", "completed", sum(expected_files.values()), sum(expected_files.values()), "bytes")]
+                + ([stage_metric("components", "waiting")] if prerequisites else []))
 
 if __name__ == "__main__":
     def interrupted(signum, frame):
@@ -464,8 +707,10 @@ if __name__ == "__main__":
     try:
         sys.exit(main() or 0)
     except KeyboardInterrupt:
-        emit("cancelled", "Annulé", None, "Préparation annulée. Le client Steam reste indépendant.")
+        emit("cancelled", "Annulé", None, "Préparation annulée. Le client Steam reste indépendant.",
+             code="steam_cancelled", retryable=False, resumePoint="steam-depot-validation")
         sys.exit(130)
     except Exception as exc:
-        emit("failed", "Erreur", None, f"Préparation interrompue : {exc}")
+        emit("failed", "Erreur", None, f"Préparation interrompue : {exc}",
+             code="steam_unexpected_error", retryable=False, resumePoint="steam-depot-validation")
         sys.exit(1)

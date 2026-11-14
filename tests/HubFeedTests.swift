@@ -49,6 +49,25 @@ final class FakeHubTransport: HubTransport {
         check(HubFeedStore.allowedLink("http://store.steampowered.com/app/1/") == nil, "http refusé")
         check(HubFeedStore.allowedLink("https://u:p@store.steampowered.com/") == nil, "identifiants refusés")
 
+        // The reader fetches the exact complete announcement, including older patches.
+        let article: [String:Any] = ["appId": 526870, "date": 1791815943,
+            "url": "https://store.steampowered.com/news/app/526870/view/1846018067941164", "title": "<script>title</script>"]
+        let request = HubArticle.request(for: article)!
+        check(request.absoluteString.contains("maxlength=0"), "article complet demandé")
+        check(request.absoluteString.contains("enddate=1791815944"), "article ancien ciblé par date")
+        var invalidArticle = article; invalidArticle["date"] = 1e300
+        check(HubArticle.request(for: invalidArticle) == nil, "date hors plage refusée")
+        invalidArticle = article; invalidArticle["appId"] = 42
+        check(HubArticle.request(for: invalidArticle) == nil, "appid incohérent refusé")
+        let full = String(repeating: "contenu ", count: 200)
+        let articleData = try! JSONSerialization.data(withJSONObject: ["appnews": ["newsitems": [["gid":"1846018067941164", "contents":full]]]])
+        check(HubArticle.contents(articleData, matching:article) == full, "texte non tronqué")
+        invalidArticle = article; invalidArticle["url"] = "https://store.steampowered.com/news/app/526870/view/999"
+        check(HubArticle.contents(articleData, matching:invalidArticle) == nil, "autre article ignoré")
+        let page = HubArticle.page(item: article, contents: "[h2]Correctifs[/h2]\n[list][*]Crash corrigé[/list]<script>alert(1)</script>")
+        check(!page.contains("<script>"), "HTML distant échappé")
+        check(page.contains("Correctifs</strong>") && page.contains("• Crash corrigé"), "structure des correctifs conservée")
+
         // Collecte complète sur faux réseau.
         let t = FakeHubTransport()
         t.routes["https://store.steampowered.com/api/storesearch/"] = ["items": [["id": 2909400, "name": "FINAL FANTASY VII REBIRTH"]]]

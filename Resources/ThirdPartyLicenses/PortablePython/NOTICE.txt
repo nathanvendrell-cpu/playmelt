@@ -1,0 +1,34 @@
+PLAYMELT — PORTABLE PYTHON RUNTIME
+
+The separately executed Python runtime is CPython 3.13.18, macOS arm64,
+from astral-sh/python-build-standalone release 20261110. The exact release
+archive, official SHA-256, build-source commit and package/source URLs are
+recorded in Python/share/playmelt-runtime/python-runtime-lock.json.
+
+CPython: Python-2.0 / CNRI-Python. The complete upstream Python and linked
+component notices are preserved under Python/share/playmelt-runtime/licenses/
+python-build-standalone, including OpenSSL's Apache-2.0 license. The pinned
+OpenSSL source archive supplies LICENSE.txt and no separate NOTICE file.
+Python's own LICENSE.txt and upstream pip/vendored notices also remain in the
+runtime. This package includes no Wine, Apple or game runtime payload.
+
+Application dependencies (unmodified official PyPI wheels):
+legendary-gl 0.21.1 — GPL-3.0-or-later
+certifi 2026.10.23 — MPL-2.0
+charset-normalizer 3.5.2 — MIT
+filelock 4.2.4 — MIT
+idna 3.20 — BSD-3-Clause
+pycryptodomex 3.24.1 — BSD / Public Domain (see its complete LICENSE.rst)
+requests 2.34.2 — Apache-2.0 (including its NOTICE)
+urllib3 2.8.0 — MIT
+
+Complete package license/NOTICE texts are retained in their .dist-info
+directories under Python/lib/python3.13/site-packages. Exact corresponding
+source distributions for all eight packages, including Legendary, accompany
+the runtime under Python/share/playmelt-runtime/sources. The complete GPLv3
+text is included in Legendary's .dist-info/licenses/LICENSE. The Legendary
+entrypoint is a relative shell wrapper; the upstream package is unchanged.
+
+CPython and OpenSSL source archives, URLs and published build-manifest hashes
+are also pinned in the lock and retained in the canonical build cache. They
+are not required on the client to execute the already prepared runtime.

@@ -1,0 +1,358 @@
+{
+  "contractVersion": 1,
+  "status": "proposal_not_integrated",
+  "featureEnabled": false,
+  "verifiedDate": "2026-11-14",
+  "goal": "Recherche marché indépendante de la bibliothèque ; fiche produit avec médias éditeur et offres des seules boutiques où cette édition est disponible.",
+  "existingSourceFindings": [
+    {
+      "file": "OffersCatalog.swift",
+      "fact": "offer exige original>price ; GOG discounted=true limite48 ; XboxHTML promotions. Le modèle exclut le plein tarif et ne représente pas une recherche de marché."
+    },
+    {
+      "file": "HubFeed.swift",
+      "fact": "Epic freeGamesPromotions fournit les gratuités ; la recherche Steam exacte sert aux jeux de la bibliothèque. Aucun adaptateur ITAD/configuration publique ITAD trouvé dans les sources/exemples inspectés."
+    },
+    {
+      "file": "GameMediaCatalog.swift",
+      "fact": "Catalogue médias existant réutilisable après mapping Steam vérifié ; le futur raccord doit accepter un produit catalogue validé sans fabriquer un jeu possédé."
+    }
+  ],
+  "sourceRegistry": [
+    {
+      "id": "steam_storefront",
+      "state": "previewOnly",
+      "country": "FR",
+      "currency": "EUR",
+      "endpoints": [
+        "https://store.steampowered.com/api/storesearch/?term={query}&cc=FR&l=french",
+        "https://store.steampowered.com/api/appdetails?appids={appid}&cc=FR&l=french"
+      ],
+      "observed": "Endpoints Valve sans authentification observés en lecture seule ; contrat de service public/version/quota de ces routes storefront non confirmé dans les docs WebAPI consultées.",
+      "boundary": "Résultats de découverte bornés ; appid ne prouve pas édition/package d’achat. Aucun droit de redistribution commerciale déduit du seulHTTP200.",
+      "documentedAlternative": {
+        "url": "https://partner.steamgames.com/doc/webapi/IStoreService",
+        "route": "IStoreService/GetAppList/v1",
+        "requires": "WebAPI key côté serveur",
+        "purpose": "Index paginé de jeux/DLC, last_appid et if_modified_since ; aucun prix courant fourni par cette liste."
+      },
+      "quota": {
+        "documentedWebAPIRequestsPerDay": 100000,
+        "appliesTo": "Steam WebAPI seulement ; ne pas transférer ce quota aux endpoints storefront",
+        "source": "https://steamcommunity.com/dev/apiterms"
+      },
+      "enableAfter": [
+        "adapter pagination/type/package tests",
+        "storefront usage/attribution review",
+        "source health and regional price proof"
+      ]
+    },
+    {
+      "id": "gog",
+      "state": "previewOnly",
+      "country": "FR",
+      "currency": "EUR",
+      "endpoint": "https://catalog.gog.com/v1/catalog?query={query}&limit=20&countryCode=FR&locale=fr-FR&currencyCode=EUR&productType=in:game,pack,dlc,extras",
+      "observed": "Recherche positive et prix enEUR observés ; une requête introuvable renvoie aussi des produits sans rapport. Les résultats ne prouvent jamais un mapping exact.",
+      "partnership": "GOG annonce un product feed API dans son programme affilié ; aucune inscription/contact/acceptation réalisée.",
+      "documentation": [
+        "https://affiliate.gog.com/",
+        "https://support.gog.com/hc/ru/articles/4405004689297-Transition-from-Old-to-New-GOG-Affiliates-Program"
+      ],
+      "quota": {
+        "documentedRequestsPerHourPerIP": 200,
+        "appliesTo": "api.gog.com/products/* uniquement selon support GOG ; quota catalog.gog.com non confirmé"
+      },
+      "enableAfter": [
+        "product feed/usage confirmation",
+        "negative-search fallback guard",
+        "edition and productState proof",
+        "explicit paging test"
+      ]
+    },
+    {
+      "id": "itad",
+      "state": "approvalRequired",
+      "credentialState": "notConfiguredInInspectedExamples",
+      "credentialInspection": "Aucun fichier secret ni valeur environnementale lu ; présence éventuelle hors projet non déduite.",
+      "documentation": [
+        "https://docs.isthereanydeal.com/",
+        "https://github.com/IsThereAnyDeal/API/blob/master/TERMS_OF_SERVICE.md"
+      ],
+      "termsFinding": "La clause interdisant les applications concurrentes rend la compatibilité de ce comparateur à clarifier explicitement avec le fournisseur avant activation. Une clé seule ne résout pas ce point.",
+      "actionsPerformed": {
+        "registration": false,
+        "contact": false,
+        "termsAccepted": false
+      },
+      "proposedServerSettingNames": [
+        "ITAD_API_KEY",
+        "ITAD_USE_CASE_APPROVAL_REFERENCE"
+      ],
+      "keyLocation": "Backend secret only ; jamaisJS ni bundle natif distribué ; header ITAD-API-Key, logs expurgés.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/games/search/v1",
+          "query": {
+            "title": "{query}",
+            "results": 20
+          },
+          "source": "https://raw.githubusercontent.com/IsThereAnyDeal/API/master/docs/routes/games/search.v1.yaml"
+        },
+        {
+          "method": "GET",
+          "path": "/games/lookup/v1",
+          "query": {
+            "appid": "{verifiedSteamAppID}"
+          },
+          "source": "https://raw.githubusercontent.com/IsThereAnyDeal/API/master/docs/routes/games/lookup.v1.yaml"
+        },
+        {
+          "method": "POST",
+          "path": "/games/prices/v3",
+          "query": {
+            "country": "FR",
+            "deals": false,
+            "vouchers": false,
+            "capacity": 0
+          },
+          "body": "UUIDs résolus, batch applicatif <=20 ; spec fournisseur <=200",
+          "source": "https://raw.githubusercontent.com/IsThereAnyDeal/API/master/docs/routes/games/prices.v3.yaml"
+        },
+        {
+          "method": "GET",
+          "path": "/service/shops/v1",
+          "query": {
+            "country": "FR"
+          },
+          "purpose": "Couverture effective boutiques et dernier update ; ne pas coder une promesse toutes boutiques."
+        }
+      ],
+      "quota": {
+        "documentedDefaultRequests": 1000,
+        "windowSeconds": 300,
+        "condition": "Compte avec email vérifié ; limite réelle dans la configuration fournisseur ; respecter429+Retry-After, ne jamais contourner."
+      },
+      "dataPolicy": "Préserver prix, monnaie, DRM, plateforme, timestamp, expiry et URL affiliée d’origine ; conversion vers modèle sans changement de valeur. amountInt si présent ; historique distinct du prix achat.",
+      "priceSchemaEvidence": "https://raw.githubusercontent.com/IsThereAnyDeal/API/master/docs/routes/games/examples/resp.prices.post.v3.success.yaml",
+      "coverage": "Couverture PC selon shops actives FR ; ne prouve pas console, chaque boutique ou chaque édition."
+    },
+    {
+      "id": "epic",
+      "state": "notConfigured",
+      "existingCoverage": "Gratuités seulement dans HubFeed actuel.",
+      "documentation": [
+        "https://dev.epicgames.com/docs/epic-games-store/services/ecom/ecom-overview",
+        "https://dev.epicgames.com/docs/epic-games-store/store-presence/manage-offers"
+      ],
+      "finding": "Ecom documente des offres contextualisées produit/compte pour intégration éditeur ; aucune API publique globale de recherche/prix tiers établie par ces sources.",
+      "routeToEnable": "Feed/accord fournisseur ou agrégateur explicitement autorisé ; pas de réutilisation de session utilisateur, OAuth Epic ou GraphQL interne déduite de cette recherche."
+    },
+    {
+      "id": "microsoft_xbox",
+      "state": "notConfigured",
+      "existingCoverage": "Quelques promotions HTML ; aucune recherche globale ni preuve prix PC/console unifié.",
+      "documentation": [
+        "https://learn.microsoft.com/en-us/windows/uwp/monetize/using-windows-store-services",
+        "https://learn.microsoft.com/en-us/windows/uwp/monetize/query-for-products"
+      ],
+      "finding": "Les services documentés concernent notamment les apps rattachées au PartnerCenter et les droits des clients ; pas une preuve d’API globale ouverte au comparateur.",
+      "routeToEnable": "Accord/feed catalog/pricing éligible ; SKU/market/plateforme et achat/GamePass séparés. Aucun compte Microsoft requis pour la recherche publique cible."
+    },
+    {
+      "id": "additional_pc_shops",
+      "state": "notConfigured",
+      "candidateCoverage": [
+        "Humble",
+        "Fanatical",
+        "GreenManGaming",
+        "autres shops déclarées par fournisseur autorisé"
+      ],
+      "boundary": "Chaque boutique est découverte via registre/provider autorisé et réellement disponibleFR ; aucun scraping arbitraire ou marketplace de clés ajouté par défaut."
+    }
+  ],
+  "identityRules": {
+    "discovery": "Le champ de recherche peut proposer plusieurs jeux, indépendamment de la bibliothèque ; les résultats sans rapport au terme sont exclus ou explicitement recommandations, jamais joints aux prix.",
+    "crossStoreJoin": "IDs de fournisseur/crosswalk vérifiés + édition et contenu exacts ; égalité de titre normalisé seule ne suffit pas pour comparer les prix.",
+    "requiredDimensions": [
+      "canonicalProductID",
+      "productKind",
+      "editionID",
+      "storeID",
+      "storeProductID",
+      "offerOrPackageIDWhenKnown",
+      "includedContent",
+      "activationDRM",
+      "market",
+      "nativePlatforms"
+    ],
+    "neverMerge": [
+      "base game vs deluxe/ultimate",
+      "game vs DLC/upgrade/soundtrack/demo",
+      "single title vs bundle",
+      "one-time purchase vs subscription/trial/rental",
+      "PC SKU vs console-only SKU",
+      "personalized complete-your-collection vs public price"
+    ],
+    "ambiguous": "Conserver une candidature séparée avec identité non résolue ; pas de meilleur-prix ni fausse disponibilité."
+  },
+  "priceRules": {
+    "market": {
+      "country": "FR",
+      "currency": "EUR",
+      "exponent": 2
+    },
+    "amountEncoding": "Entier mineur exact (ou Decimal source vérifié), jamais Double*100 ; null signifie inconnu, jamais zéro.",
+    "fullPriceIncluded": true,
+    "saleOnly": false,
+    "subscriptionAccessSeparate": true,
+    "conditionalCouponPricesInMainRanking": false,
+    "displayRows": "Uniquement offre existante avec disponibilité available et produit/édition vérifiés ; boutiques absentes/unknown non fabriquées en lignes de prix.",
+    "ranking": "Achat oneTime même produit/édition, référence marchand vérifiée, EURFR, source ready fraîche, aucune condition. Libellé limité aux offres affichées, jamais meilleur marché universel.",
+    "zeroPrice": "Seulement gratuité explicitement identifiée freeToKeep ou freeToPlay ; section distincte, aucune conversion absence de prix→gratuit.",
+    "freshness": {
+      "applicationPriceTTLSeconds": 300,
+      "searchTTLSeconds": 600,
+      "identityTTLSeconds": 86400,
+      "negativeTTLSeconds": 60,
+      "providerUpdatedAt": "Préserver valeur quand fournie ; source âgée explicitement>24h exclue classement ; âge inconnu affiché comme inconnu, retrievedAt ne devient pas date fournisseur.",
+      "expiry": "Retirer du classement une offre expirée, même cache encore présent."
+    },
+    "taxes": "Ne pas inventer TTC ; si statut fiscal non confirmé, taxUnconfirmed exclut le classement.",
+    "affiliateURL": "Conserver paramètres et destination fournis ; vérifier HTTPS et hôtes vendeur/redirecteur autorisés ; ne pas supprimer tags affiliés."
+  },
+  "compatibilityRules": {
+    "storePlatforms": "Plateformes natives publiées par source, sans inférence Wine.",
+    "localMac": "Mac natif avec architecture quand connue ; Windows via moteur = état Playmelt indépendant à preuve ; console-only jamais jouableMac par déduction.",
+    "ownership": "Disponibilité commerciale ne confère pas droit jeu, accès téléchargement, bibliothèque ou entitlement Playmelt."
+  },
+  "proposedAPI": {
+    "implemented": false,
+    "transport": "Natif vers backend Playmelt ; fournisseurs à clés côté serveur uniquement.",
+    "routes": [
+      "GET /v1/catalog/search?q={query}&country=FR&currency=EUR&limit=20&cursor={opaque}",
+      "GET /v1/catalog/products/{canonicalProductID}?country=FR&currency=EUR"
+    ],
+    "responseModel": "StoreCatalogContract.swift (proposition non intégrée)",
+    "searchPolicy": {
+      "minQueryCharacters": 2,
+      "maxQueryCharacters": 120,
+      "defaultLimit": 20,
+      "maxLimit": 50,
+      "debounceMillisecondsProposed": 300,
+      "cursor": "Opaque signé ou stocké serveur, jamais URL de destination arbitrary."
+    },
+    "operatingPolicy": [
+      "Plafonds globaux par fournisseur partagés entre clients, cache par pays/édition et coalescence",
+      "Respect429/Retry-After, circuit breaker ; pas de boucle de retry permanente",
+      "Cancellations/générations pour ignorer résultats obsolètes",
+      "Aucune requête de tout le catalogue à chaque saisie/render",
+      "Keys/URLs sensibles expurgées des logs ; réponses bornées ; données publiques seulement"
+    ],
+    "sourceStateValues": [
+      "ready",
+      "partial",
+      "notConfigured",
+      "approvalRequired",
+      "unavailable",
+      "rateLimited",
+      "previewOnly"
+    ],
+    "absenceRule": "Aucune donnée ou source inaccessible = unknown/partial, jamais produit absent de la boutique sans preuve."
+  },
+  "progressiveDelivery": [
+    {
+      "phase": 0,
+      "state": "this_proposal_only",
+      "outcome": "Modèle séparé, preuves sources et tests de garde ; zéro écran/routes déployés."
+    },
+    {
+      "phase": 1,
+      "state": "not_started",
+      "outcome": "Recherche marchéSteam/GOG sur demande horsbibliothèque, résultats typés, fichemédias et prixdirect parSKU vérifié ; couverture explicite Steam/GOG seulement.",
+      "gates": [
+        "adapter/source usage review",
+        "fixtures fallback négatif et éditions",
+        "métadonnées/prix FR/EUR fraîches",
+        "QA réelle recherche→fiche sans propriété inventée"
+      ]
+    },
+    {
+      "phase": 2,
+      "state": "blocked_on_provider_access",
+      "outcome": "Agrégateur multi-boutiquesPC autorisé (ITAD si compatibilité ToS validée +clé) ; enrichissement réel de couverture sans fakeprix.",
+      "gates": [
+        "accord fournisseur applicable",
+        "secretbackend configuré",
+        "shop coverageFR",
+        "mapper éditions/DRM et caches/quota"
+      ]
+    },
+    {
+      "phase": 3,
+      "state": "not_started",
+      "outcome": "Feeds partenaires Epic/Microsoft/autres selon accès documenté ; achats et abonnements séparés, disponibilitéPC/console prouvée."
+    }
+  ],
+  "publicReadOnlyProbes": {
+    "performed": "2026-11-14",
+    "authentication": false,
+    "pricesPersisted": false,
+    "steamSearch": {
+      "http": 200,
+      "query": "Clair Obscur",
+      "returned": 5,
+      "observedKinds": [
+        "jeu",
+        "soundtrack",
+        "Deluxe Edition Upgrade"
+      ],
+      "meaning": "Ne jamais fusionner les5résultats en une édition."
+    },
+    "gogPositive": {
+      "http": 200,
+      "query": "Clair Obscur",
+      "returned": 2,
+      "observedTitles": [
+        "Clair Obscur: Expedition 33",
+        "Clair Obscur: Expedition 33 Deluxe Edition"
+      ],
+      "currency": "EUR"
+    },
+    "gogNegative": {
+      "http": 200,
+      "query": "playmeltzznonexistent7f21c9",
+      "returned": 3,
+      "titlesRelatedToQuery": false,
+      "meaning": "Produits sans rapport observés ; inférence de fallback, pas preuve d’offre correspondant à la requête."
+    }
+  },
+  "notPerformed": [
+    "registration",
+    "ToS acceptance",
+    "email/contact fournisseur",
+    "credential reads",
+    "purchase",
+    "account/client/game launch",
+    "UI/browser authenticated session",
+    "source central change",
+    "deployment"
+  ],
+  "productPresentation": {
+    "fields": [
+      "descriptionText",
+      "publisher",
+      "developers",
+      "images[id,url,thumbnail,sourceURL]",
+      "mediaSteamAppID"
+    ],
+    "onSearch": "Présentation légère issue source ; fiche riche chargée à la sélection, jamais dépendante de la bibliothèque.",
+    "onDetail": "Présentation et visuels officiels de l’édition ; source/observation conservées. GameMediaCatalog pour vidéos si mapping Steam validé.",
+    "limits": {
+      "images": 32,
+      "descriptionCharacters": 20000
+    },
+    "security": "Description en texte ; aucune insertion HTML distant dans la webview privilégiée. Images HTTPS sur liste d’hôtes officielle par fournisseur, métadonnées échappées côté rendu."
+  }
+}

@@ -90,12 +90,13 @@ private final class NoNetworkProtocol: URLProtocol {
         until{launcher.activeCount==0}
         expect(!unwantedCallback && fm.fileExists(atPath:completedFile.path) && gone(client),"client finishes naturally after silent shutdown")
 
-        for mode in ["normal","active","cancel","handoff","late-handoff","stop-error","spawn-error"]{
+        for mode in ["normal","active","active-wrapper","active-wrapper-server","cancel","handoff","late-handoff","stop-error","spawn-error"]{
             let folder=temp.appendingPathComponent(mode),descriptor=try fixtureDescriptor(folder),mock=FixtureProcessRunner()
             let operation=SteamInstallerOperation(runner:mock)
             mock.handler={request,cancelled,handoff in
                 if request.executable.lastPathComponent=="ps"{
-                    let text=mode=="active" ? "123 "+descriptor.wineURL.path+"\n" : ""
+                    let observed=mode=="active-wrapper" ? folder.appendingPathComponent("PlaymeltGame.app/Contents/MacOS/wine") : mode=="active-wrapper-server" ? folder.appendingPathComponent("PlaymeltGame.app/Contents/MacOS/wineserver") : descriptor.wineURL
+                    let text=mode.hasPrefix("active") ? "123 "+observed.path+"\n" : ""
                     return .init(output:Data(text.utf8),exitCode:0,pid:0,handedOff:false)
                 }
                 if request.executable==descriptor.wineURL{
@@ -114,12 +115,15 @@ private final class NoNetworkProtocol: URLProtocol {
                 return .init(output:Data(),exitCode:mode=="stop-error" && request.arguments==["-k"] ? 1 : 0,pid:123,handedOff:false)
             }
             let run={try operation.run(installer:folder.appendingPathComponent("SteamSetup-fixture.exe"),descriptor:descriptor,current:{descriptor},onDetachedExit:{_ in})}
-            if ["active","cancel","stop-error","spawn-error"].contains(mode){rejects("installer "+mode){_=try run()}}
+            if mode.hasPrefix("active") || ["cancel","stop-error","spawn-error"].contains(mode){rejects("installer "+mode){_=try run()}}
             else{let result=try run();if mode=="late-handoff"{expect(result.handedOff,"Steam appearing on leader exit retains installer ownership record")}}
             let commands=mock.requests(),cleanup=commands.filter{$0.executable==descriptor.wineserverURL}
-            if ["active","handoff","late-handoff","spawn-error"].contains(mode){expect(cleanup.isEmpty,"no prefix signals without installer ownership / after handoff")}
+            if mode.hasPrefix("active") || ["handoff","late-handoff","spawn-error"].contains(mode){expect(cleanup.isEmpty,"no prefix signals without installer ownership / after handoff")}
             else{expect(cleanup.map(\.arguments)==[["-k"],["-w"]],"independent cleanup attempts are prefix-scoped")}
-            if mode=="active"{expect(!commands.contains{$0.executable==descriptor.wineURL},"existing engine process is preserved")}
+            if mode.hasPrefix("active"){
+                expect(!commands.contains{$0.executable==descriptor.wineURL},"existing engine or game-category wrapper process is preserved")
+                expect(!fm.fileExists(atPath:folder.appendingPathComponent("PlaymeltGame.app").path),"process observation never creates the wrapper bundle")
+            }
             expect(commands.filter{$0.executable==descriptor.wineURL || $0.executable==descriptor.wineserverURL}.allSatisfy{$0.environment["WINEPREFIX"]==descriptor.prefixURL.path},"installer never selects a different prefix")
         }
         do{
@@ -130,6 +134,7 @@ private final class NoNetworkProtocol: URLProtocol {
         }
         do{
             let descriptor=try fixtureDescriptor(temp.appendingPathComponent("closed-bootstrap")),mock=FixtureProcessRunner()
+            try put(Data([0x4d,0x5a]),descriptor.steamRoot.appendingPathComponent("steam.exe")) // inert fixture; fresh disk presence, never a real client
             let present=PlaymeltRuntimeDescriptor(engineID:descriptor.engineID,wineURL:descriptor.wineURL,wineserverURL:descriptor.wineserverURL,prefixURL:descriptor.prefixURL,steamRoot:descriptor.steamRoot,environment:descriptor.environment,readyEngine:true,steamInstalled:true)
             let bootstrap=SteamWindowsBootstrap(downloadsRoot:temp.appendingPathComponent("unused-downloads"),descriptor:{present},runner:mock)
             var cancelled=false,retryAccepted=false;bootstrap.cancel{cancelled=true};until{cancelled}

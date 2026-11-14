@@ -1,98 +1,16 @@
-"use strict";
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
-const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-const start = html.indexOf("function art(game)"),
-  end = html.indexOf("function platforms(", start);
-assert(start > 0 && end > start);
-const nodes = [];
-function el(tag) {
-  const node = {
-    tag,
-    children: [],
-    listeners: new Map(),
-    assigned: [],
-    cleared: [],
-    removed: false,
-    append(child) {
-      this.children.push(child);
-    },
-    addEventListener(name, handler) {
-      this.listeners.set(name, handler);
-    },
-    removeEventListener(name, handler) {
-      if (this.listeners.get(name) === handler) this.listeners.delete(name);
-    },
-    removeAttribute(name) {
-      this.cleared.push(name);
-    },
-    remove() {
-      this.removed = true;
-    },
-    set src(value) {
-      this.assigned.push(value);
-    },
-  };
-  nodes.push(node);
-  return node;
-}
-let sources = [
-  "cache://portrait",
-  "cache://header",
-  "https://cdn.example/portrait",
-];
-const art = vm.runInNewContext(html.slice(start, end) + ";art", {
-  el,
-  imageSources: () => sources,
-});
-const visible = art({});
-const image = visible.children[0];
-assert.equal(image.loading, "lazy");
-assert.equal(image.decoding, "async");
-const error = image.listeners.get("error");
-error();
-assert.deepEqual(
-  image.assigned,
-  sources.slice(0, 2),
-  "A retained card can use its real fallback",
-);
-visible.disposeArtwork();
-assert.equal(
-  image.listeners.size,
-  0,
-  "Retired artwork detaches its error handler",
-);
-assert.deepEqual(
-  image.cleared,
-  ["src"],
-  "The current image source is released",
-);
-assert.equal(image.removed, true);
-error();
-error();
-assert.deepEqual(
-  image.assigned,
-  sources.slice(0, 2),
-  "Already queued error callbacks cannot start another fallback after eviction",
-);
-visible.disposeArtwork();
-assert.deepEqual(image.cleared, ["src"], "Disposal is idempotent");
-sources = ["cache://only"];
-const failed = art({}),
-  failedImage = failed.children[0];
-failedImage.listeners.get("error")();
-assert.equal(
-  failedImage.listeners.size,
-  0,
-  "Exhausted fallbacks also detach handlers",
-);
-assert.equal(failedImage.removed, true);
-sources = [];
-const empty = art({});
-empty.disposeArtwork();
-assert.equal(empty.children.length, 0);
-console.log(
-  "Artwork lifecycle passed: retained fallback works; eviction blocks late fallbacks and releases handlers/source",
-);
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const timers=new Map();let timerID=0;
+const sandbox={module:{exports:{}},setTimeout:fn=>{timers.set(++timerID,fn);return timerID;},clearTimeout:id=>timers.delete(id),Date};sandbox.globalThis=sandbox;
+vm.runInNewContext(fs.readFileSync('Resources/Artwork.js','utf8'),sandbox);const loader=sandbox.module.exports;
+function image(){return {assigned:[],classList:{add(){},remove(){}},set src(x){this.assigned.push(x);},removeAttribute(){this.cleared=true;}};}
+const images=Array.from({length:9},image);
+images.forEach((img,i)=>loader.bind(img,[`https://cdn.example/${i}`,`https://fallback.example/${i}`],{eager:true}));
+assert.equal(loader.stats().active,6);assert.equal(loader.stats().pending,3);assert.equal(images[6].assigned.length,0);
+images[0].onerror();assert.equal(images[0].assigned[1],'https://fallback.example/0');
+const oldError=images[0].onerror;loader.dispose(images[0]);oldError();assert.equal(images[0].assigned.length,2);assert.equal(images[0].onerror,null);assert.equal(images[6].assigned.length,1);
+images[1].onload();const next=image();loader.bind(next,['https://cdn.example/1','https://fallback.example/1'],{eager:true});
+images.forEach(x=>loader.dispose(x));assert.equal(next.assigned[0],'https://cdn.example/1');loader.dispose(next);
+assert.equal(loader.stats().active,0);assert.equal(loader.stats().tracked,0);assert.equal(timers.size,0);
+const fail=image();loader.bind(fail,['https://bad.example/image']);fail.onerror();loader.dispose(fail);const retry=image();loader.bind(retry,['https://bad.example/image','https://good.example/image']);assert.equal(retry.assigned[0],'https://good.example/image');loader.dispose(retry);
+console.log('Artwork queue: concurrency, fallback, cancelled callbacks, cleanup, source reuse and failed-source cooldown passed');

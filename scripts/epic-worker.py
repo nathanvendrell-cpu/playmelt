@@ -18,6 +18,7 @@ claim of Epic endorsement. GPLv3 notices/source apply when redistributing.
 import contextlib
 import copy
 import importlib.metadata
+import hashlib
 import io
 import json
 import logging
@@ -25,6 +26,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -41,6 +43,9 @@ ERRORS = {
     "accountChanged": "Le compte Epic a changé. Reconnectez le compte voulu avant de continuer.",
     "networkError": "Epic est temporairement indisponible. La bibliothèque n’a pas été actualisée.",
     "adapterError": "Le connecteur Epic n’a pas pu lire la réponse. Aucune bibliothèque complète n’est annoncée.",
+    "notOwned": "Ce jeu n’est pas disponible pour ce compte Epic sur cette plateforme.",
+    "installationFailed": "L’installation Epic n’est pas vérifiée. Aucun état prêt à jouer n’est annoncé.",
+    "invalidInstallation": "Cette installation Epic doit être vérifiée ou réinstallée avant le lancement.",
 }
 
 
@@ -234,23 +239,245 @@ def establish_session(core, action, session, code=None):
         raise ValueError("session unavailable")
     if not isinstance(data, dict) or not isinstance(data.get("account_id"), str) or not data["account_id"]:
         raise ValueError("invalid session response")
-    if action == "sync" and data["account_id"] != session.get("account_id"):
+    if action != "authenticate" and data["account_id"] != session.get("account_id"):
         raise AccountChangedError()
     with core.lgd.userdata_lock as lock:
         lock.data = data
-    try:
-        from legendary.core import LegendaryCore
-        direct_core = LegendaryCore()
-        with direct_core.lgd.userdata_lock as dlock:
-            dlock.data = data
-    except Exception:
-        pass
     core.logged_in = True
     return data
 
 
-def handle(request, core_module=None, version_lookup=None, manifest_reader=installed_manifests):
-    if not isinstance(request, dict) or request.get("action") not in ("status", "authURL", "authenticate", "sync"):
+class OperationError(Exception):
+    def __init__(self, code): self.code = code
+
+
+def managed_root():
+    return Path.home() / "Library/Application Support/Playmelt/Games"
+
+
+def operation_input(request, session):
+    app = request.get("appName")
+    account = request.get("expectedAccountId")
+    platform = request.get("platform")
+    if (not isinstance(app, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,512}", app)
+            or app in (".", "..") or platform not in ("Mac", "Windows")
+            or not isinstance(account, str) or not account or len(account) > 128):
+        raise OperationError("invalidRequest")
+    if not session: raise OperationError("requiresLogin")
+    if session.get("account_id") != account: raise AccountChangedError()
+    return app, platform, account
+
+
+def owned_game(core, app, platform):
+    games, _ = core.get_game_and_dlc_list(platform=platform, skip_ue=True)
+    for game in games:
+        if game.app_name == app and not game.is_dlc and game.metadata.get("namespace") != "ue":
+            return game
+    raise OperationError("notOwned")
+
+
+def safe_target(root, relative, allow_symlink=False):
+    if (not isinstance(relative, str) or not relative or "\x00" in relative
+            or relative.startswith(("/", "\\")) or ".." in relative.replace("\\", "/").split("/")):
+        raise OperationError("invalidInstallation")
+    target = root / relative.replace("\\", "/")
+    if root.resolve() not in target.resolve().parents or (target.is_symlink() and not allow_symlink):
+        raise OperationError("invalidInstallation")
+    return target
+
+
+def checked_directory(root):
+    # Only this app's managed game root; no imported Legendary configuration.
+    if root != Path.home() and Path.home() not in root.parents:
+        raise OperationError("invalidInstallation")
+    current = root
+    while current != Path.home().parent:
+        if current.exists() and (current.is_symlink() or current.stat().st_uid != os.getuid()):
+            raise OperationError("invalidInstallation")
+        if current == Path.home(): break
+        current = current.parent
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
+def verify_manifest(root, manifest):
+    entries = manifest.file_manifest_list.elements
+    if not entries: raise OperationError("installationFailed")
+    for entry in entries:
+        path = safe_target(root, entry.filename, allow_symlink=bool(getattr(entry, "symlink_target", "")))
+        if getattr(entry, "symlink_target", ""):
+            if not path.is_symlink() or os.readlink(path) != entry.symlink_target:
+                raise OperationError("installationFailed")
+            continue
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            mode = os.fstat(fd)
+            if not stat.S_ISREG(mode.st_mode) or mode.st_size != entry.file_size:
+                raise OperationError("installationFailed")
+            digest = hashlib.sha1()
+            while True:
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk: break
+                digest.update(chunk)
+            if digest.digest() != entry.hash: raise OperationError("installationFailed")
+        finally: os.close(fd)
+
+
+def save_installation(root, account, install, session=None, verification="manifest-sha1"):
+    # Explicit non-credential allowlist; never persist base URLs, session or exchange code.
+    keys = ("app_name", "title", "version", "install_path", "executable", "launch_parameters",
+            "can_run_offline", "requires_ot", "platform", "prereq_info")
+    record = {"schema": 1, "accountId": account, "verification": verification,
+              "installed": {key: getattr(install, key, None) for key in keys}}
+    data = json.dumps(record, ensure_ascii=False).encode("utf8")
+    if len(data) > 65536: raise OperationError("invalidInstallation")
+    for name in ("access_token", "refresh_token"):
+        token = (session or {}).get(name)
+        if token and token.encode("utf8") in data: raise OperationError("invalidInstallation")
+    target = root / ".playmelt-epic-install.json"
+    if target.exists():
+        old = read_installation(root, account, install.app_name)
+        if old["installed"]["platform"] != install.platform: raise OperationError("invalidInstallation")
+    fd, name = tempfile.mkstemp(prefix=".epic-install-", dir=root)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as stream: stream.write(data); stream.flush(); os.fsync(stream.fileno())
+        os.replace(name, target)
+    finally:
+        if os.path.exists(name): os.unlink(name)
+    return record
+
+
+def read_installation(root, account, app):
+    path = root / ".playmelt-epic-install.json"
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        s = os.fstat(fd)
+        if not stat.S_ISREG(s.st_mode) or s.st_uid != os.getuid() or s.st_nlink != 1 or s.st_mode & 0o077 or s.st_size > 65536:
+            raise OperationError("invalidInstallation")
+        record = json.loads(os.read(fd, 65537))
+    finally: os.close(fd)
+    install = record.get("installed", {})
+    if record.get("schema") != 1 or record.get("accountId") != account or install.get("app_name") != app or Path(install.get("install_path", "")).resolve() != root:
+        raise OperationError("invalidInstallation")
+    return record
+
+
+def install_owned(core, request, game, account, root=None):
+    app, platform, _ = operation_input(request, core.lgd.userdata)
+    workers = request.get("maxWorkers", max(8, min((os.cpu_count() or 1) * 3, 32)))
+    memory = request.get("sharedMemoryMiB", 1024)
+    if type(workers) is not int or not 8 <= workers <= 32 or type(memory) is not int or memory not in (1024, 2048, 4096):
+        raise OperationError("invalidRequest")
+    base = checked_directory(root or managed_root())
+    destination = base / (app + "-" + platform.lower())
+    partial = destination / ".playmelt-epic-partial.json"
+    partial_bytes = json.dumps({"schema": 1, "accountId": account, "appName": app, "platform": platform}, sort_keys=True).encode()
+    if destination.exists():
+        if destination.is_symlink() or destination.stat().st_uid != os.getuid(): raise OperationError("invalidInstallation")
+        # Refuse another account's receipt before any download or overwrite.
+        if (destination / ".playmelt-epic-install.json").exists():
+            read_installation(destination.resolve(), account, app)
+        elif partial.is_symlink() or not partial.is_file() or partial.read_bytes() != partial_bytes:
+            raise OperationError("invalidInstallation")
+    else:
+        destination.mkdir(mode=0o700)
+        fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as stream: stream.write(partial_bytes)
+    resume = destination / ".playmelt-epic-download-state"
+    if resume.is_symlink(): raise OperationError("invalidInstallation")
+    resume.mkdir(mode=0o700, exist_ok=True)
+    core.lgd.get_tmp_path = lambda: str(resume)  # Only non-credential resumable file hashes.
+    dlm = None
+    try:
+        dlm, analysis, install = core.prepare_download(game, base_path=str(base), game_folder=destination.name,
+            platform=platform, max_workers=workers, max_shm=memory, dl_timeout=20,
+            preferred_cdn="egdownload.fastly-edge.com", disable_https=False)
+        if Path(install.install_path).resolve() != destination: raise OperationError("invalidInstallation")
+        conditions = core.check_installation_conditions(analysis, install, game, updating=False, ignore_space_req=False)
+        if conditions.failures: raise OperationError("installationFailed")
+        if analysis.dl_size:
+            dlm.start(); dlm.join()
+            if dlm.exitcode != 0: raise OperationError("installationFailed")
+        manifest = core.load_manifest(core.lgd.load_manifest(app, install.version, platform))
+        verify_manifest(destination, manifest)
+        executable = safe_target(destination, install.executable)
+        if not executable.is_file(): raise OperationError("installationFailed")
+        save_installation(destination, account, install, session=core.lgd.userdata)
+        return {"accountId": account, "appName": app, "platform": platform,
+                "installPath": str(destination), "executable": install.executable,
+                "filesVerified": True, "prerequisitesRequired": bool(install.prereq_info),
+                "title": install.title, "version": install.version}
+    finally:
+        if dlm is not None and dlm.pid is not None:
+            if dlm.is_alive(): dlm.terminate()
+            dlm.join(timeout=5)
+            if dlm.is_alive(): dlm.kill(); dlm.join(timeout=5)
+
+
+def launch_owned(core, request, game, account, root=None, installed_factory=None):
+    app, platform, _ = operation_input(request, core.lgd.userdata)
+    base = checked_directory(root or managed_root())
+    raw_path = request.get("installPath")
+    if not isinstance(raw_path, str): raise OperationError("invalidRequest")
+    destination = Path(raw_path)
+    if destination.is_symlink() or destination.resolve().parent != base: raise OperationError("invalidInstallation")
+    destination = destination.resolve()
+    if installed_factory is None:
+        from legendary.models.game import InstalledGame
+        installed_factory = InstalledGame.from_json
+    receipt = destination / ".playmelt-epic-install.json"
+    if not receipt.exists():
+        # Explicit launch of an older Playmelt installation: verify against the
+        # current owned manifest without reading Legendary's global profile.
+        data, _, _, secrets = core.get_cdn_manifest(game, platform, disable_https=False)
+        manifest = core.load_manifest(data)
+        if not manifest.decrypt(secrets): raise OperationError("invalidInstallation")
+        target = safe_target(destination, manifest.meta.launch_exe)
+        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode): raise OperationError("invalidInstallation")
+            magic = os.read(fd, 4)
+            if platform == "Windows" and not magic.startswith(b"MZ"): raise OperationError("invalidInstallation")
+            if platform == "Mac" and magic not in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf", b"\xbe\xba\xfe\xca", b"\xbf\xba\xfe\xca"):
+                raise OperationError("invalidInstallation")
+        finally: os.close(fd)
+        attributes = game.metadata.get("customAttributes", {})
+        install = installed_factory({"app_name": app, "title": game.app_title,
+            "version": manifest.meta.build_version, "install_path": str(destination),
+            "executable": manifest.meta.launch_exe, "launch_parameters": manifest.meta.launch_command,
+            "platform": platform, "requires_ot": attributes.get("OwnershipToken", {}).get("value", "false").lower() == "true",
+            "can_run_offline": attributes.get("CanRunOffline", {}).get("value", "true").lower() == "true"})
+        save_installation(destination, account, install, session=core.lgd.userdata, verification="declared-executable")
+    record = read_installation(destination.resolve(), account, app)
+    if record["installed"].get("platform") != platform: raise OperationError("invalidInstallation")
+    core.lgd.set_installed_game(app, installed_factory(record["installed"]))
+    params = core.get_launch_parameters(app, offline=False, disable_wine=True)
+    executable = safe_target(destination, params.game_executable)
+    working = Path(params.working_directory).resolve()
+    if not executable.is_file() or (working != destination and destination not in working.parents): raise OperationError("invalidInstallation")
+    args = params.game_parameters + params.egl_parameters + params.user_parameters
+    if not all(isinstance(arg, str) and len(arg) <= 16384 and "\x00" not in arg for arg in args): raise OperationError("invalidInstallation")
+    # Access/refresh credentials may never become game parameters, even on a malformed SDK response.
+    for name in ("access_token", "refresh_token"):
+        token = core.lgd.userdata.get(name)
+        if token and any(token in arg for arg in args): raise OperationError("invalidInstallation")
+    ownership = None
+    for index, arg in enumerate(args):
+        if arg.startswith("-epicovt="):
+            token_path = Path(arg.split("=", 1)[1]).resolve()
+            if Path(core.lgd.path).resolve() not in token_path.parents or token_path.stat().st_size > 65536:
+                raise OperationError("invalidInstallation")
+            import base64
+            ownership = base64.b64encode(token_path.read_bytes()).decode("ascii")
+            args[index] = "-epicovt=__PLAYMELT_PRIVATE_OWNERSHIP_TOKEN__"
+    return {"accountId": account, "appName": app, "platform": platform, "executablePath": str(executable),
+            "workingDirectory": str(working), "arguments": args, "ownershipToken": ownership}
+
+
+def handle(request, core_module=None, version_lookup=None, manifest_reader=installed_manifests,
+           operation_root=None, installed_factory=None):
+    if not isinstance(request, dict) or request.get("action") not in ("status", "authURL", "authenticate", "sync", "install", "launchAuthorization"):
         return failure("invalidRequest")
     try:
         version = (version_lookup or importlib.metadata.version)("legendary-gl")
@@ -269,6 +496,10 @@ def handle(request, core_module=None, version_lookup=None, manifest_reader=insta
     if session is not None and not isinstance(session, dict):
         return failure("invalidRequest")
     action = request["action"]
+    if action in ("install", "launchAuthorization"):
+        try: operation_input(request, session)
+        except AccountChangedError: return failure("accountChanged")
+        except OperationError as error: return failure(error.code)
     if action == "sync" and not session:
         return failure("requiresLogin")
     if action == "sync" and (not isinstance(session.get("account_id"), str) or not session["account_id"]):
@@ -289,6 +520,14 @@ def handle(request, core_module=None, version_lookup=None, manifest_reader=insta
                 except (ValueError, TypeError):
                     return failure("invalidRequest")
             updated_session = establish_session(core, action, session, code)
+            if action in ("install", "launchAuthorization"):
+                app, platform, account = operation_input(request, updated_session)
+                game = owned_game(core, app, platform)  # Before prepare_download or any exchange code.
+                if action == "install":
+                    value = install_owned(core, request, game, account, root=operation_root)
+                    return {"ok": True, "session": updated_session, "installation": value}
+                value = launch_owned(core, request, game, account, root=operation_root, installed_factory=installed_factory)
+                return {"ok": True, "session": updated_session, "launch": value}
             games = load_library(core)
             installed = manifest_reader()
             # Credentials travel only to native through its private pipe, never to WebKit.
@@ -300,6 +539,7 @@ def handle(request, core_module=None, version_lookup=None, manifest_reader=insta
                                  "updatedAt": datetime.now(timezone.utc).isoformat(),
                                  "credentialStorage": "memory", "sessionLifetime": "until-app-closes"}}
     except Exception as error:
+        if isinstance(error, OperationError): return failure(error.code)
         if isinstance(error, AccountChangedError):
             return failure("accountChanged")
         if type(error).__name__ == "InvalidCredentialsError":
@@ -315,9 +555,24 @@ def handle(request, core_module=None, version_lookup=None, manifest_reader=insta
         return result
 
 
+@contextlib.contextmanager
+def quiet_process_output():
+    # FD-level redirection is inherited by download children; even C/library logs
+    # cannot contaminate the private JSON response or emit signed CDN URLs.
+    saved = [os.dup(1), os.dup(2)]
+    try:
+        with open(os.devnull, "w") as sink:
+            os.dup2(sink.fileno(), 1); os.dup2(sink.fileno(), 2)
+            with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink): yield
+    finally:
+        os.dup2(saved[0], 1); os.dup2(saved[1], 2)
+        for fd in saved: os.close(fd)
+
+
 def main():
     # Never emit imported-library logs, exception reprs, response bodies, codes or tokens.
     logging.disable(logging.CRITICAL)
+    os.umask(0o077)
     def interrupted(signum, _frame):
         # Let context managers close HTTP sessions and remove metadata scratch.
         raise SystemExit(128 + signum)
@@ -329,7 +584,7 @@ def main():
             result = failure("invalidRequest")
         else:
             request = json.loads(raw)
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with quiet_process_output():
                 result = handle(request)
     except Exception:
         result = failure("invalidRequest")

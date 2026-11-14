@@ -192,6 +192,19 @@ def apply_preferences(plan,preferences):
     if 'display.screenID' in mask:
         if not isinstance(selected,dict) or type(selected.get('wineIndex'))!=int or not 0<=selected['wineIndex']<64:raise RuntimeError('selected display could not be resolved')
         vals['Monitor']=selected['wineIndex']
+    safe=plan.get('displayHints',{}).get('safeLaunchTarget')
+    if safe is not None:
+        # Safety is evaluated for every launch, independently of saved field revisions.
+        # The DXGI output is resolved inside the owned Wine prefix, never inferred
+        # from NSScreen ordering. Physical desktop modes are not changed.
+        if not isinstance(safe,dict) or type(safe.get('windowsMonitorIndex'))!=int or not 0<=safe['windowsMonitorIndex']<64:raise RuntimeError('Windows display target not resolved')
+        width=safe['desktopWidth'];height=safe['desktopHeight'];hz=round(safe['refreshRate'])
+        if type(width)!=int or type(height)!=int or not 640<=width<=16384 or not 480<=height<=16384 or not 1<hz<=1000:raise RuntimeError('invalid current external mode')
+        windowed=d.get('mode','windowed')=='windowed'
+        w=min(d.get('width',width),width-32) if windowed else width
+        h=min(d.get('height',height),height-80) if windowed else height
+        vals.update(Fullscreen=int(not windowed),ExclusiveFullscreen=0,Monitor=safe['windowsMonitorIndex'],RefreshRate=hz,FullscreenWidth=w,FullscreenHeight=h,WindowWidth=w,WindowHeight=h,UserWindowWidth=w,UserWindowHeight=h,WindowLeft=int(safe['originX'])+(16 if windowed else 0),WindowTop=int(safe['originY'])+(40 if windowed else 0))
+        groups.setdefault(r'Software\\Wine\\Mac Driver',{}).update(CaptureDisplaysForFullscreen='"N"',RetinaMode='"N"')
     if 'graphics.upscaler' in mask:vals['UpscaleMethod']=2 if (s_backend in ('d3dmetal-nv','d3dmetal-nv-rt') or g.get('upscaler')=='dlss') else 3
     if 'graphics.quality' in mask:vals['UpscaleQuality']=3
     if 'graphics.dynamicFPS' in mask:vals['DynamicResolutionTargetFPS']=g['dynamicFPS']
@@ -307,6 +320,29 @@ def digest(path):
     with path.open('rb') as f:
         for block in iter(lambda:f.read(1024*1024),b''):h.update(block)
     return h.hexdigest()
+
+def resolve_safe_display(plan,manifest):
+    target=plan.get('displayHints',{}).get('safeLaunchTarget')
+    if target is None:return
+    if SETTINGS.is_symlink() or not SETTINGS.is_file() or digest(SETTINGS)!=manifest['settings']:raise RuntimeError('display helper identity mismatch')
+    reuse.require_idle_prefix(PREFIX)
+    marker=str(uuid.uuid4());env=tx.private_environment(plan,marker)
+    output=PROFILE/('display-'+marker+'.log');child=None;shutdown={'shutdown':{}}
+    try:
+        with output.open('xb',buffering=0) as log:
+            child,timed,capped=base.run_command([plan['wine'],str(SETTINGS),'--display'],env,str(PROFILE),log,30,base.Inspector(),marker,{})
+        code=child.poll()
+    finally:
+        base.bounded_shutdown(plan['server'],env,str(PROFILE),shutdown);base.reap_child(child)
+    if timed or capped or code!=0 or any(shutdown['shutdown'].get(k,{}).get('exit')!=0 for k in ('-k','-w')):raise RuntimeError('Windows display identification failed; game not launched')
+    records=[json.loads(line) for line in output.read_text().splitlines() if line.strip().startswith('{')]
+    if len(records)!=1:raise RuntimeError('ambiguous Windows display response')
+    value=records[0]
+    expected={'x':int(target['originX']),'y':int(target['originY']),'width':target['desktopWidth'],'height':target['desktopHeight']}
+    if value.get('ok') is not True or any(type(value.get(k))!=int or value[k]!=v for k,v in expected.items()) or abs(value.get('refreshRate',0)-target['refreshRate'])>1:raise RuntimeError('Windows output differs from selected external screen; game not launched')
+    if type(value.get('monitorIndex'))!=int or not 0<=value['monitorIndex']<64:raise RuntimeError('invalid Windows output index')
+    target['windowsMonitorIndex']=value['monitorIndex']
+    atomic_json(PROFILE/'display-routing.json',{'schema':1,'policy':'external-windowed-v1','target':target['id'],'windowsOutput':value,'globalModesChanged':False})
 
 def migration_source():
     config=PROFILE/'source-import.json'
@@ -573,6 +609,7 @@ def main():
         # Registry writes happen only while the private prefix is idle. The old
         # Wine helper is unnecessary here and cannot add an unsolicited default.
         reuse.require_idle_prefix(PREFIX)
+        resolve_safe_display(plan,manifest)
         apply_preferences(plan,preferences)
         if mode=='--prepare-only':
             print('Profil Spider-Man 2 préparé ; aucun lancement du jeu.',flush=True)

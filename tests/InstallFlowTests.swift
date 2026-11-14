@@ -123,12 +123,37 @@ private final class EpicFlowRunner: OwnedProcessRunning {
         check(direct.beginDirect(gameID: "steam:30", appID: "30", title: "C", accountID: account) == nil, "shutdown refuses new direct workers")
 
         let gameRoot = root.appendingPathComponent("games")
+        let declaredFolder = root.appendingPathComponent("Epic With Declared Target")
+        let declaredName = "Preferred Client.exe", heuristicName = "B.exe"
+        try put(Data([0x4d,0x5a]), at: declaredFolder.appendingPathComponent("Windows/" + declaredName))
+        try put(Data([0x4d,0x5a]), at: declaredFolder.appendingPathComponent("Windows/" + heuristicName))
+        let declaredData: [String:Any] = ["schema":1, "id":UUID().uuidString, "title":"Declared fixture", "executable":declaredName]
+        try put(JSONSerialization.data(withJSONObject:declaredData), at:declaredFolder.appendingPathComponent(".playmelt-game.json"))
+        check(localGameExecutable(appID:"fixture-epic",files:[declaredName,heuristicName]) == heuristicName, "two-executable fixture exposes a genuinely different heuristic choice")
+        for order in [[declaredName,heuristicName],[heuristicName,declaredName]] {
+            check(resolvedGameExecutable(appID:"fixture-epic",folder:declaredFolder,files:order) == declaredName, "shared dispatcher/script selection preserves the declared executable regardless of scan order")
+        }
+        check(declaredFolder.appendingPathComponent("Windows/" + resolvedGameExecutable(appID:"fixture-epic",folder:declaredFolder,files:[declaredName,heuristicName])!).path.hasSuffix("/Windows/Preferred Client.exe"), "the shared selection yields the same absolute executable for authenticated Epic dispatch")
         let gameFolder = gameRoot.appendingPathComponent("Game A")
         try put(Data("fixture data".utf8), at: gameFolder.appendingPathComponent("save.dat"))
         try put(Data("other game".utf8), at: gameRoot.appendingPathComponent("Game A Other/save.dat"))
         var removalGame = Game(id: "local:10", appId: "10", title: "Game A", store: "steam", installed: true, platform: "windows", runtimeId: "", runtimeName: "", ownership: "installed-only", path: gameFolder, complete: true, installSource: "local")
         let removal = try GameUninstallPlan.make(game: removalGame, installRoots: [gameRoot], steamRoots: [])
         check(removal.items.map(\.path) == [gameFolder.path] && fm.fileExists(atPath: gameFolder.appendingPathComponent("save.dat").path), "uninstall dry run is exact and does not delete files")
+        let nativeRoot = root.appendingPathComponent("Native Applications")
+        let gogFolder = nativeRoot.appendingPathComponent("GOG Registered Game")
+        try put(Data("native executable fixture".utf8), at: gogFolder.appendingPathComponent("Game.app/Contents/MacOS/Game"))
+        try put(Data("game assets".utf8), at: gogFolder.appendingPathComponent("archive/assets.bin"))
+        var gogRemoval = Game(id: "gog:1423049311", appId: "1423049311", title: "Registered game", store: "gog", installed: true, platform: "mac", runtimeId: "gog-mac", runtimeName: "GOG · Mac natif", ownership: "owned", path: gogFolder, complete: true, installSource: "gog")
+        let gogPlan = try GameUninstallPlan.make(game: gogRemoval, installRoots: [nativeRoot], steamRoots: [])
+        check(gogPlan.items.map(\.path) == [gogFolder.resolvingSymlinksInPath().path] && gogPlan.installation.path == gogFolder.resolvingSymlinksInPath().path, "GOG removal targets the registered game directory, including its assets")
+        check(fm.fileExists(atPath: gogFolder.appendingPathComponent("archive/assets.bin").path), "GOG removal planning preserves all real files")
+        gogRemoval.path = nil
+        rejects("a phantom GOG entry has no uninstall target") { _ = try GameUninstallPlan.make(game: gogRemoval, installRoots: [nativeRoot], steamRoots: []) }
+        gogRemoval.path = nativeRoot
+        rejects("GOG removal cannot target the entire Applications root") { _ = try GameUninstallPlan.make(game: gogRemoval, installRoots: [nativeRoot], steamRoots: []) }
+        gogRemoval.path = gameFolder
+        rejects("GOG removal refuses paths outside its verified registration root") { _ = try GameUninstallPlan.make(game: gogRemoval, installRoots: [nativeRoot], steamRoots: []) }
         removalGame.path = gameRoot
         rejects("uninstall refuses the whole games root") { _ = try GameUninstallPlan.make(game: removalGame, installRoots: [gameRoot], steamRoots: []) }
         removalGame.path = fm.homeDirectoryForCurrentUser

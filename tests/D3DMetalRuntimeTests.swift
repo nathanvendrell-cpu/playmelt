@@ -3,18 +3,25 @@ import Darwin
 import CryptoKit
 
 private final class MockD3DRunner: D3DMetalCommandRunning {
-    enum Mode { case success, missingSymbol, active, leftover, inspectionError, bootError, stopError, waitError, hold, mutate }
+    enum Mode { case success, missingSymbol, active, leftover, inspectionError, bootError, stopError, waitError, hold, holdNative, mutate }
     let lock = NSLock()
     var mode: Mode = .success
     var commands: [D3DMetalCommand] = []
     var cleanupSawCancellation = false
     var occupancyChecks = 0
     var mutate: (() throws -> Void)?
+    var nativePIDFile:URL?
     func list() -> [D3DMetalCommand] { lock.lock(); defer { lock.unlock() }; return commands }
     func run(_ command: D3DMetalCommand, cancelled: () -> Bool) throws -> String {
         lock.lock(); commands.append(command); let mode = self.mode; lock.unlock()
         if command.executable.lastPathComponent == "nm" { return mode == .missingSymbol ? "0000 T _other\n" : "0000 D _macdrv_functions\n" }
         if command.arguments == ["wineboot","-u"] {
+            if mode == .holdNative {
+                guard let file=nativePIDFile else{throw RuntimeSetupError.failed("missing fixture PID file")}
+                // Only this CPU-only shell/sleep group is spawned, never Wine.
+                let child=D3DMetalCommand(executable:URL(fileURLWithPath:"/bin/sh"),arguments:["-c","printf '%s' \"$$\" > \"$1\"; exec /bin/sleep 10","fixture",file.path],environment:["PATH":"/usr/bin:/bin"],timeout:command.timeout)
+                return try D3DMetalProcessRunner().run(child,cancelled:cancelled)
+            }
             if mode == .hold {
                 let deadline = Date().addingTimeInterval(3)
                 while !cancelled() && Date() < deadline { Thread.sleep(forTimeInterval:0.005) }
@@ -174,6 +181,56 @@ private final class MockD3DRunner: D3DMetalCommandRunning {
             expect(!r.cleanupSawCancellation && r.list().contains{$0.arguments == ["-w"]},"cleanup ignores cancellation but remains scoped")
             expect(fm.fileExists(atPath:s.isolatedRoot.appendingPathComponent("prefix").path),"partial owned prefix retained")
             r.mode = .success;expect(success(start(t,b)),"owned partial prefix can be retried explicitly")
+        }
+        do {
+            let (s,b,r,t)=try fixture(temp.appendingPathComponent("owned-steam-cancel"));r.mode = .holdNative
+            let owner=UUID(),pidFile=temp.appendingPathComponent("owned-wineboot-fixture.pid");r.nativePIDFile=pidFile
+            var result:Result<PlaymeltRuntimeDescriptor,Error>?,stopped=false
+            t.start(base:b,ownerID:owner,progress:{_ in},completion:{result=$0})
+            until {fm.fileExists(atPath:pidFile.path)}
+            let pid=Int32(try String(contentsOf:pidFile,encoding:.utf8))!
+            t.cancel(ifOwnedBy:owner){stopped=true};until{stopped}
+            expect(result != nil && !success(result!),"owned cancel waits for its runtime completion")
+            expect(kill(pid,0) == -1 && errno == ESRCH,"owned wineboot fixture child reaped before cancel completion")
+            expect(!fm.fileExists(atPath:s.isolatedRoot.appendingPathComponent("prefix-ready.json").path),"owned cancellation never publishes a ready receipt")
+            expect(!r.cleanupSawCancellation && r.list().suffix(2).map(\.arguments)==[["-k"],["-w"]],"owned cancellation waits for scoped stop and wait")
+            _=RunLoop.current.run(mode:.default,before:Date().addingTimeInterval(0.1))
+            expect(r.list().filter{$0.arguments == ["wineboot","-u"]}.count==1,"cancelled Steam renderer preparation cannot retry itself")
+        }
+        do {
+            let (_,b,r,t)=try fixture(temp.appendingPathComponent("manual-renderer-preserved"));r.mode = .hold
+            var result:Result<PlaymeltRuntimeDescriptor,Error>?,stopped=false
+            t.start(base:b,progress:{_ in},completion:{result=$0})
+            until{r.list().contains{$0.arguments == ["wineboot","-u"]}}
+            t.cancel(ifOwnedBy:UUID()){stopped=true};until{stopped}
+            expect(result == nil && t.snapshot(base:b)["busy"] as? Bool == true,"Steam intent cannot cancel a manual renderer preparation")
+            t.cancel();until{result != nil}
+            expect(!success(result!),"existing generic/queued cancellation remains functional")
+        }
+        do {
+            let (_,b,r,t)=try fixture(temp.appendingPathComponent("different-renderer-owner"));r.mode = .hold
+            let owner=UUID();var result:Result<PlaymeltRuntimeDescriptor,Error>?,ignored=false,stopped=false
+            t.start(base:b,ownerID:owner,progress:{_ in},completion:{result=$0})
+            until{r.list().contains{$0.arguments == ["wineboot","-u"]}}
+            t.cancel(ifOwnedBy:UUID()){ignored=true};until{ignored}
+            expect(result == nil && t.snapshot(base:b)["busy"] as? Bool == true,"another intent cannot cancel this runtime")
+            t.cancel(ifOwnedBy:owner){stopped=true};until{stopped}
+            expect(result != nil && !success(result!),"matching owner alone can cancel and await the runtime")
+        }
+        do {
+            let (_,b,r,t)=try fixture(temp.appendingPathComponent("manual-replacement-preserved"));r.mode = .hold
+            let owner=UUID();var first:Result<PlaymeltRuntimeDescriptor,Error>?,manual:Result<PlaymeltRuntimeDescriptor,Error>?,stopped=false,late=false
+            t.start(base:b,ownerID:owner,progress:{_ in},completion:{result in
+                first=result
+                t.start(base:b,progress:{_ in},completion:{manual=$0})
+            })
+            until{r.list().contains{$0.arguments == ["wineboot","-u"]}}
+            t.cancel(ifOwnedBy:owner){stopped=true}
+            until{stopped && r.list().filter{$0.arguments == ["wineboot","-u"]}.count==2}
+            expect(first != nil && manual == nil,"owned wait does not wait for or cancel a replacement manual run")
+            t.cancel(ifOwnedBy:owner){late=true};until{late}
+            expect(manual == nil && t.snapshot(base:b)["busy"] as? Bool == true,"late cancellation cannot capture a new manual operation")
+            t.cancel();until{manual != nil}
         }
         do {
             let (_,b,r,t)=try fixture(temp.appendingPathComponent("shutdown"));r.mode = .hold

@@ -19,19 +19,27 @@ enum GraphicsMemoryBudgetTests {
             Budget.Inputs(totalUnifiedBytes: total, recommendedWorkingSetBytes: recommended, observedOwnAllocatedBytes: own,
                           hasUnifiedMemory: unified, renderProtectionEnabled: renders, pressure: pressure, observationSequence: sequence)
         }
-        let policy = Budget.Policy(maximumBudgetBytes: 1000, unifiedMemoryBasisPoints: 10_000, recommendedWorkingSetBasisPoints: 10_000)
-        let normal = Budget.evaluate(inputs: inputs(2*gib, total: 48*gib, recommended: 36*gib))
+        let policy = Budget.Policy(maximumBudgetBytes: 1000, unifiedMemoryBasisPoints: 10_000, recommendedWorkingSetBasisPoints: 10_000, enforceRecommendedWorkingSet: true, reduceBudgetOnWarning: true)
+        let constrained = Budget.Policy(maximumBudgetBytes: 16*gib, unifiedMemoryBasisPoints: 5_000, recommendedWorkingSetBasisPoints: 8_000, maximumTrackedAllocations: 16_384, enforceRecommendedWorkingSet: true, reduceBudgetOnWarning: true)
+        let full = Budget.evaluate(inputs: inputs(2*gib, total: 48*gib, recommended: 36*gib))
+        require(full.policyCeilingBytes == 48*gib && full.effectiveAdmissionBytes == 46*gib, "default bookkeeping uses full physical capacity without a 16GiB or percentage cap")
+        require(Budget.Policy().maximumTrackedAllocations == Int.max, "no default artificial allocation-count cap")
+        require(Budget.evaluate(inputs: inputs(2*gib, pressure: .warning, total: 48*gib, recommended: 36*gib)).budgetBytes == 48*gib, "a warning does not arbitrarily halve the default capacity")
+        require(Budget.evaluate(inputs: inputs(total: 192*gib, recommended: 144*gib)).policyCeilingBytes == 192*gib, "larger Macs are not capped at a fixed amount")
+        require(Budget.evaluate(inputs: inputs(total: 8000, recommended: 3000)).policyCeilingBytes == 8000, "Apple performance recommendation is not a default hard quota")
+        require(Budget.evaluate(inputs: inputs(recommended: nil)).admissionOpen, "a missing optional recommendation does not impose a quota")
+        let normal = Budget.evaluate(inputs: inputs(2*gib, total: 48*gib, recommended: 36*gib), policy: constrained)
         require(normal.configuredTargetBytes == 16*gib && normal.policyCeilingBytes == 16*gib, "16GiB is the configured ceiling, not a reservation")
         require(normal.effectiveAdmissionBytes == 14*gib && normal.accountedUsageBytes == 2*gib, "existing own footprint consumes budget")
-        let warning = Budget.evaluate(inputs: inputs(2*gib, pressure: .warning, total: 48*gib, recommended: 36*gib))
+        let warning = Budget.evaluate(inputs: inputs(2*gib, pressure: .warning, total: 48*gib, recommended: 36*gib), policy: constrained)
         require(warning.budgetBytes == 8*gib && warning.effectiveAdmissionBytes == 6*gib, "warning halves the policy ceiling")
-        let protected = Budget.evaluate(inputs: inputs(2*gib, renders: true, total: 48*gib, recommended: 36*gib))
+        let protected = Budget.evaluate(inputs: inputs(2*gib, renders: true, total: 48*gib, recommended: 36*gib), policy: constrained)
         require(protected.policyCeilingBytes == 16*gib && protected.effectiveAdmissionBytes == 0 && protected.reasons.contains("render-protection"), "render guard closes admission without inventing a physical quota")
         for input in [inputs(pressure: .unknown), inputs(pressure: .critical), inputs(nil), inputs(recommended: nil), inputs(recommended: 0), inputs(total: 0), inputs(unified: false)] {
             require(!Budget.evaluate(inputs: input, policy: policy).admissionOpen, "unknown/unsupported telemetry fails closed")
         }
-        require(Budget.evaluate(inputs: inputs(total: 8000, recommended: 6000)).policyCeilingBytes == 4000, "unified memory fraction limits small machines")
-        require(Budget.evaluate(inputs: inputs(total: 8000, recommended: 3000)).policyCeilingBytes == 2400, "recommended working set is an independent bound")
+        require(Budget.evaluate(inputs: inputs(total: 8000, recommended: 6000), policy: constrained).policyCeilingBytes == 4000, "explicitly requested bounded policies retain their fraction")
+        require(Budget.evaluate(inputs: inputs(total: 8000, recommended: 3000), policy: constrained).policyCeilingBytes == 2400, "explicitly requested recommendation bounds remain supported")
         let invalid = Budget.Policy(unifiedMemoryBasisPoints: 10_001)
         require(Budget.evaluate(inputs: inputs(), policy: invalid).budgetBytes == 0, "invalid diagnostics policy fails closed")
         rejects(.invalidPolicy) { _ = try Budget(inputs: inputs(), policy: invalid) }

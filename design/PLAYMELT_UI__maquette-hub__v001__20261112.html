@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playmelt — maquette hub v001</title>
+<style>
+/* ===== Jetons ===== */
+:root{
+  --ink:#1c2326; --ink-2:#3a4650; --muted:#68737e; --faint:#9aa3ac;
+  --line:rgba(28,35,38,.075); --line-2:rgba(28,35,38,.13);
+  --brand:#dc5a2e; --brand-hi:#ec6f42; --brand-lo:#c34a22;
+  --blue:#234e70; --glow:#4a91ff; --ok:#2f9e5b;
+  --win:#f3f5f7; --side:rgba(233,237,241,.92); --card:#fff;
+  --r-s:8px; --r:11px; --r-l:16px; --r-xl:20px;
+  --sh-1:0 1px 2px rgba(20,28,36,.06),0 0 0 1px rgba(20,28,36,.05);
+  --sh-2:0 1px 2px rgba(20,28,36,.05),0 8px 24px -10px rgba(20,28,36,.18),0 0 0 1px rgba(20,28,36,.05);
+  --sh-3:0 30px 80px -20px rgba(16,22,30,.45),0 0 0 1px rgba(20,28,36,.08);
+  --mono:"SF Mono",ui-monospace,Menlo,monospace;
+  --steam:#1b6fb5; --epic:#2a2a2a; --xbox:#178a2c; --gog:#7b3fd1; --local:#8a939c;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
+html,body{height:100%;background:#cfd6dd}
+body{font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;display:grid;place-items:center;overflow:hidden}
+img{display:block}
+.num{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--mono);font-size:11px;letter-spacing:.01em}
+
+/* ===== Fenêtre ===== */
+.window{width:1380px;height:900px;border-radius:12px;overflow:hidden;background:var(--win);box-shadow:0 40px 120px -30px rgba(10,16,24,.55),0 0 0 .5px rgba(0,0,0,.25);display:grid;grid-template-columns:232px 1fr;position:relative;transform-origin:center}
+.lights{position:absolute;top:18px;left:18px;display:flex;gap:8px;z-index:50}
+.lights i{width:12px;height:12px;border-radius:50%;background:#ff5f57;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.18)}
+.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+
+/* ===== Barre latérale ===== */
+.side{background:var(--side);border-right:1px solid var(--line);padding:58px 12px 14px;display:flex;flex-direction:column;gap:2px;backdrop-filter:blur(30px)}
+.logo{height:26px;margin:2px 10px 22px;align-self:flex-start}
+.group{margin:14px 10px 6px;font-size:10.5px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.nav{display:flex;align-items:center;gap:10px;height:30px;padding:0 10px;border-radius:7px;color:var(--ink-2);font-weight:510;font-size:13px;cursor:default}
+.nav svg{width:16px;height:16px;flex:none;color:var(--muted)}
+.nav .count{margin-left:auto;font-size:11.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.nav.on{background:rgba(255,255,255,.95);color:var(--ink);box-shadow:var(--sh-1)}
+.nav.on svg{color:var(--brand)}
+.nav .dot{width:8px;height:8px;border-radius:50%;flex:none;margin:0 4px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)}
+.nav .badge{margin-left:auto;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--brand);color:#fff;font-size:10.5px;font-weight:700;display:grid;place-items:center}
+.side .spacer{flex:1}
+.account{display:flex;align-items:center;gap:10px;padding:10px;border-radius:12px;background:rgba(255,255,255,.6);box-shadow:var(--sh-1)}
+.avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(140deg,#2b3a46,#1c2326);color:#fff;font-weight:700;font-size:12px;display:grid;place-items:center}
+.account b{font-size:12.5px;font-weight:600;display:block}
+.account small{font-size:11px;color:var(--faint);display:flex;align-items:center;gap:5px}
+.account small::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok)}
+
+/* ===== Zone principale ===== */
+.main{overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.scroll{overflow:auto;flex:1;padding:0 32px 40px}
+.scroll::-webkit-scrollbar{display:none}
+
+/* Bandeau de section */
+.head{display:flex;align-items:flex-end;gap:20px;padding:50px 32px 16px;border-bottom:1px solid var(--line);background:linear-gradient(var(--win),rgba(243,245,247,.86));backdrop-filter:blur(20px);position:relative;z-index:5}
+.head h1{font-size:26px;line-height:1.1;font-weight:720;letter-spacing:-.025em}
+.head .meta{margin-top:7px;display:flex;gap:14px;color:var(--muted);font-size:12px}
+.head .meta span{display:flex;align-items:center;gap:6px}
+.head .meta i{width:7px;height:7px;border-radius:50%}
+.head .tools{margin-left:auto;display:flex;gap:8px;align-items:center}
+.search{width:250px;height:32px;border-radius:9px;background:#fff;box-shadow:var(--sh-1);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--faint);font-size:12.5px}
+.search svg{width:14px;height:14px}
+.search kbd{margin-left:auto;font:600 10.5px var(--mono);color:var(--faint);background:var(--win);border-radius:5px;padding:2px 5px;box-shadow:inset 0 0 0 1px var(--line-2)}
+.seg{display:flex;background:rgba(28,35,38,.06);border-radius:9px;padding:2px;height:32px}
+.seg b{display:grid;place-items:center;padding:0 10px;border-radius:7px;font-size:12px;font-weight:560;color:var(--muted)}
+.seg b.on{background:#fff;color:var(--ink);box-shadow:var(--sh-1)}
+.seg svg{width:15px;height:15px}
+
+/* Boutons */
+.btn{height:32px;padding:0 13px;border-radius:9px;display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:590;background:#fff;color:var(--ink);box-shadow:var(--sh-1);border:0;white-space:nowrap}
+.btn svg{width:14px;height:14px}
+.btn.icon{width:32px;padding:0;justify-content:center}
+.play{height:40px;padding:0 20px 0 16px;border-radius:11px;display:inline-flex;align-items:center;gap:9px;font-size:14px;font-weight:650;color:#fff;letter-spacing:-.005em;
+  background:linear-gradient(180deg,var(--brand-hi),var(--brand) 55%,var(--brand-lo));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.32),inset 0 -1px 0 rgba(0,0,0,.12),0 10px 22px -10px rgba(220,90,46,.85),0 0 0 1px rgba(160,58,24,.55)}
+.play svg{width:15px;height:15px}
+.play.sm{height:30px;padding:0 13px 0 11px;font-size:12.5px;border-radius:8px;gap:7px}
+.play.sm svg{width:12px;height:12px}
+.glass{height:40px;padding:0 16px;border-radius:11px;display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#fff;background:rgba(255,255,255,.14);box-shadow:inset 0 0 0 1px rgba(255,255,255,.26);backdrop-filter:blur(18px) saturate(1.4)}
+.glass svg{width:15px;height:15px}
+.glass.icon{width:40px;padding:0;justify-content:center}
+.store{height:28px;padding:0 10px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-2);box-shadow:inset 0 0 0 1px var(--line-2)}
+.store svg{width:11px;height:11px;color:var(--faint)}
+
+/* Titres de rangée */
+.row-h{display:flex;align-items:baseline;gap:10px;margin:30px 0 12px}
+.row-h h2{font-size:16px;font-weight:700;letter-spacing:-.012em}
+.row-h .n{font-size:12px;color:var(--faint);font-weight:550}
+.row-h a{margin-left:auto;font-size:12px;font-weight:590;color:var(--muted);text-decoration:none;display:flex;align-items:center;gap:3px}
+.row-h a svg{width:11px;height:11px}
+
+/* Plateformes */
+.pf{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--muted)}
+.pf i{width:6px;height:6px;border-radius:50%}
+.tag{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:6px;font:650 10px/1 -apple-system,sans-serif;letter-spacing:.06em;text-transform:uppercase}
+.tag.upd{background:rgba(220,90,46,.12);color:var(--brand-lo)}
+.tag.news{background:rgba(35,78,112,.1);color:var(--blue)}
+.tag.free{background:rgba(47,158,91,.12);color:#23794a}
+.tag.onimg{background:rgba(255,255,255,.18);color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25);backdrop-filter:blur(12px)}
+
+/* ===== Accueil ===== */
+.hero{position:relative;height:340px;border-radius:var(--r-xl);overflow:hidden;margin-top:24px;box-shadow:var(--sh-2);background:#20262a}
+.hero>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.hero::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(10,14,18,.78) 0%,rgba(10,14,18,.45) 38%,rgba(10,14,18,0) 70%),linear-gradient(0deg,rgba(10,14,18,.55),transparent 45%)}
+.hero .copy{position:absolute;left:36px;bottom:32px;right:40%;z-index:2;color:#fff}
+.hero .copy .lg{height:64px;width:auto;margin-bottom:22px;filter:drop-shadow(0 4px 18px rgba(0,0,0,.4))}
+.hero h3{font-size:24px;line-height:1.15;font-weight:720;letter-spacing:-.022em;margin:12px 0 6px}
+.hero p{font-size:13px;color:rgba(255,255,255,.72)}
+.hero .acts{display:flex;gap:10px;margin-top:20px}
+.hero .side-meta{position:absolute;right:24px;bottom:24px;z-index:2;display:flex;gap:6px}
+.pager{position:absolute;right:24px;top:22px;z-index:2;display:flex;gap:6px}
+.pager i{width:18px;height:3px;border-radius:2px;background:rgba(255,255,255,.35)}
+.pager i.on{background:#fff;width:28px}
+
+.updates{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.ucard{background:var(--card);border-radius:var(--r-l);overflow:hidden;box-shadow:var(--sh-2)}
+.ucard .art{aspect-ratio:460/215;position:relative;overflow:hidden}
+.ucard .art img{width:100%;height:100%;object-fit:cover}
+.ucard .art .tag{position:absolute;left:10px;top:10px}
+.ucard .body{padding:12px 14px 14px}
+.ucard .g{font-size:11px;color:var(--faint);font-weight:600;display:flex;align-items:center;justify-content:space-between}
+.ucard h4{font-size:13.5px;font-weight:650;letter-spacing:-.008em;margin:5px 0 10px;line-height:1.3;height:35px;overflow:hidden}
+.ucard .foot{display:flex;align-items:center;justify-content:space-between}
+.ver{font:600 11px var(--mono);color:var(--ink-2);background:var(--win);padding:3px 7px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line)}
+
+.duo{display:grid;grid-template-columns:1.35fr 1fr;gap:28px}
+.feed{background:var(--card);border-radius:var(--r-l);box-shadow:var(--sh-2);overflow:hidden}
+.item{display:grid;grid-template-columns:120px 1fr auto;gap:14px;align-items:center;padding:12px 14px;border-top:1px solid var(--line)}
+.item:first-child{border-top:0}
+.item img{width:120px;height:56px;border-radius:8px;object-fit:cover;box-shadow:0 0 0 1px var(--line)}
+.item .g{font-size:11px;color:var(--faint);font-weight:600;display:flex;gap:8px;align-items:center}
+.item h5{font-size:13px;font-weight:620;margin-top:3px;letter-spacing:-.005em;line-height:1.3}
+.item time{font-size:11.5px;color:var(--faint);white-space:nowrap}
+
+.free{border-radius:var(--r-l);overflow:hidden;box-shadow:var(--sh-2);background:var(--card)}
+.free .pair{display:grid;grid-template-columns:1fr 1fr}
+.free .tile{position:relative;aspect-ratio:16/10;overflow:hidden}
+.free .tile img{width:100%;height:100%;object-fit:cover}
+.free .tile::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,rgba(8,10,14,.75),transparent 60%)}
+.free .tile .t{position:absolute;left:12px;right:12px;bottom:10px;z-index:2;color:#fff}
+.free .tile .t b{font-size:13px;font-weight:680;display:block}
+.free .tile .t small{font-size:11px;color:rgba(255,255,255,.75)}
+.free .bar{display:flex;align-items:center;gap:10px;padding:12px 14px}
+.free .bar .next{font-size:12px;color:var(--muted)}
+.free .bar .next b{color:var(--ink);font-weight:620}
+.countdown{font:650 11px var(--mono);color:var(--brand-lo)}
+
+.releases{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.rcard{display:flex;gap:12px;align-items:center;background:var(--card);border-radius:var(--r-l);padding:10px;box-shadow:var(--sh-2)}
+.rcard img{width:128px;height:60px;border-radius:8px;object-fit:cover}
+.rcard b{font-size:13px;font-weight:640;display:block}
+.rcard .price{font-size:12px;color:var(--muted);margin:3px 0 7px}
+
+/* ===== Bibliothèque ===== */
+.cont{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:22px}
+.ccard{position:relative;height:150px;border-radius:var(--r-l);overflow:hidden;box-shadow:var(--sh-2)}
+.ccard img{width:100%;height:100%;object-fit:cover}
+.ccard::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,rgba(8,10,14,.82),rgba(8,10,14,.1) 60%)}
+.ccard .t{position:absolute;left:14px;right:14px;bottom:12px;z-index:2;color:#fff;display:flex;align-items:flex-end;gap:10px}
+.ccard .t b{font-size:13.5px;font-weight:680;display:block}
+.ccard .t small{font-size:11px;color:rgba(255,255,255,.7)}
+.ccard .t .play{margin-left:auto}
+.ccard .prog{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.18);z-index:3}
+.ccard .prog i{display:block;height:100%;background:var(--brand)}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:18px}
+.cover{position:relative}
+.cover .p{aspect-ratio:2/3;border-radius:12px;overflow:hidden;box-shadow:var(--sh-2);position:relative}
+.cover .p img{width:100%;height:100%;object-fit:cover}
+.cover .state{position:absolute;left:8px;top:8px;display:flex;gap:4px}
+.cover .chip{height:20px;padding:0 7px;border-radius:6px;background:rgba(14,18,22,.62);backdrop-filter:blur(10px);color:#fff;font-size:10.5px;font-weight:650;display:flex;align-items:center;gap:5px}
+.cover .chip i{width:6px;height:6px;border-radius:50%}
+.cover .new{position:absolute;right:8px;top:8px;width:8px;height:8px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 3px rgba(220,90,46,.3)}
+.cover b{display:block;font-size:12.5px;font-weight:620;margin-top:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cover small{font-size:11px;color:var(--faint)}
+
+/* ===== Fiche ===== */
+.ghero{position:relative;height:360px;margin:0 -32px;overflow:hidden;background:#161a1e}
+.ghero>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.ghero::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,var(--win) 0%,rgba(243,245,247,0) 28%),linear-gradient(90deg,rgba(8,10,14,.55),transparent 55%)}
+.ghero .back{position:absolute;left:32px;top:54px;z-index:3}
+.ghero .back .glass{height:30px;font-size:12px;padding:0 12px 0 9px;border-radius:9px}
+.ghero .lg{position:absolute;left:32px;bottom:92px;height:92px;z-index:3;filter:drop-shadow(0 6px 22px rgba(0,0,0,.5))}
+.gbar{position:relative;z-index:4;margin-top:-64px;display:flex;align-items:center;gap:12px}
+.gbar .info{display:flex;gap:22px;margin-left:22px}
+.stat small{display:block;font-size:10.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.stat b{font-size:13.5px;font-weight:650}
+.gbar .right{margin-left:auto;display:flex;gap:8px}
+.tabs{display:flex;gap:24px;border-bottom:1px solid var(--line);margin-top:26px}
+.tabs b{padding:0 0 11px;font-size:13px;font-weight:590;color:var(--muted);position:relative;display:flex;gap:6px;align-items:center}
+.tabs b.on{color:var(--ink)}
+.tabs b.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;border-radius:2px;background:var(--ink)}
+.tabs b em{font-style:normal;font-size:10.5px;font-weight:700;color:var(--faint)}
+.gcols{display:grid;grid-template-columns:1fr 330px;gap:28px;margin-top:22px}
+.panel{background:var(--card);border-radius:var(--r-l);box-shadow:var(--sh-2);padding:16px}
+.panel h6{font-size:10.5px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin-bottom:12px;display:flex;justify-content:space-between}
+.panel h6 span{letter-spacing:0;text-transform:none;font-size:11.5px;color:var(--muted);font-weight:590}
+.ach{display:flex;gap:14px;align-items:center}
+.ring{width:58px;height:58px;flex:none}
+.ach b{font-size:20px;font-weight:720;letter-spacing:-.02em}
+.ach small{display:block;font-size:11.5px;color:var(--muted)}
+.alist{margin-top:14px;display:grid;gap:8px}
+.alist div{display:flex;align-items:center;gap:10px;font-size:12.5px;font-weight:560}
+.alist i{width:26px;height:26px;border-radius:7px;background:linear-gradient(140deg,#e9d3a6,#b88a43);box-shadow:inset 0 0 0 1px rgba(0,0,0,.08);flex:none}
+.alist small{margin-left:auto;font-size:11px;color:var(--faint);font-weight:500}
+.kv{display:grid;gap:9px}
+.kv div{display:flex;justify-content:space-between;font-size:12.5px}
+.kv span{color:var(--muted)}
+.kv b{font-weight:620}
+.kv .mono{font-size:11.5px}
+.story{display:grid;grid-template-columns:240px 1fr;gap:16px;padding:14px;border-top:1px solid var(--line)}
+.story:first-of-type{border-top:0}
+.story img{width:240px;height:112px;object-fit:cover;border-radius:10px}
+.story h5{font-size:14.5px;font-weight:680;letter-spacing:-.01em;margin:6px 0 5px;line-height:1.3}
+.story p{font-size:12.5px;color:var(--muted);line-height:1.5}
+
+/* ===== Abonnement ===== */
+.scrim{position:absolute;inset:0;z-index:40;background:rgba(232,236,240,.55);backdrop-filter:blur(16px) saturate(.9);display:grid;place-items:center}
+.sheet{width:540px;border-radius:22px;background:rgba(255,255,255,.97);box-shadow:var(--sh-3);overflow:hidden}
+.sheet .top{position:relative;padding:30px 32px 26px;background:radial-gradient(120% 140% at 0% 0%,#2a3640 0%,#161c20 60%),#161c20;color:#fff;overflow:hidden}
+.sheet .top::before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:22px 22px;mask-image:radial-gradient(90% 90% at 85% 0%,#000 10%,transparent 75%)}
+.sheet .top::after{content:"";position:absolute;right:-60px;top:-80px;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,rgba(236,111,66,.55),transparent 65%)}
+.sheet .brandrow{position:relative;z-index:2;display:flex;align-items:center;gap:12px}
+.sheet .brandrow img{width:44px;height:44px;border-radius:11px;box-shadow:0 8px 20px -6px rgba(0,0,0,.6)}
+.sheet .brandrow b{font-size:19px;font-weight:720;letter-spacing:-.02em;display:block}
+.sheet .brandrow small{font-size:12.5px;color:rgba(255,255,255,.6)}
+.sheet .x{position:absolute;right:18px;top:18px;z-index:3;width:26px;height:26px;border-radius:50%;background:rgba(255,255,255,.12);display:grid;place-items:center;color:rgba(255,255,255,.8)}
+.sheet .x svg{width:11px;height:11px}
+.perks{position:relative;z-index:2;display:flex;gap:18px;margin-top:22px}
+.perks span{display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,.82);font-weight:530}
+.perks svg{width:13px;height:13px;color:var(--brand-hi)}
+.sheet .bodyp{padding:24px 32px 26px}
+.durs{display:grid;grid-template-columns:repeat(5,1fr);background:rgba(28,35,38,.055);border-radius:12px;padding:3px;gap:2px}
+.durs button{all:unset;cursor:pointer;height:46px;border-radius:9px;display:grid;place-items:center;align-content:center;gap:1px;font-size:12.5px;font-weight:620;color:var(--ink-2);text-align:center}
+.durs button small{font-size:10.5px;font-weight:650;color:#23794a;height:13px}
+.durs button.on{background:#fff;color:var(--ink);box-shadow:var(--sh-1)}
+.price{display:flex;align-items:baseline;gap:8px;margin:24px 0 2px}
+.price b{font-size:44px;font-weight:760;letter-spacing:-.035em;line-height:1;font-variant-numeric:tabular-nums}
+.price span{font-size:14px;color:var(--muted);font-weight:560}
+.price .save{margin-left:auto;align-self:center}
+.billing{font-size:12.5px;color:var(--muted);height:18px}
+.cta{margin-top:22px;width:100%;justify-content:center;height:46px;font-size:14.5px;border-radius:12px}
+.fine{display:flex;justify-content:space-between;margin-top:14px;font-size:12px;color:var(--faint)}
+.fine a{color:var(--ink-2);font-weight:590;text-decoration:none}
+
+
+.mini{width:30px;height:30px;border-radius:50%;border:0;display:grid;place-items:center;color:#fff;background:var(--ink);box-shadow:0 4px 10px -4px rgba(20,28,36,.5)}
+.mini svg{width:11px;height:11px;margin-left:2px}
+.ucard .art .tag,.tag.onimg{background:rgba(12,16,20,.66);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+.head .meta span+span::before{content:"";width:3px;height:3px;border-radius:50%;background:var(--faint);margin-right:8px}
+.head .meta.num span+span::before{display:none}
+.ucard .art::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,10,14,.35),transparent 40%)}
+.ucard .art .tag{z-index:2}
+.free .bar>*{white-space:nowrap}
+.free .tile::after{background:linear-gradient(0deg,rgba(8,10,14,.9),rgba(8,10,14,.35) 45%,transparent 70%)}
+.ghero>img.lg{inset:auto auto 96px 32px;width:auto;height:96px;object-fit:contain;max-width:46%}
+.ghero::after{background:linear-gradient(0deg,var(--win) 0%,rgba(243,245,247,.92) 14%,rgba(243,245,247,0) 42%),linear-gradient(90deg,rgba(8,10,14,.5),transparent 55%)!important}
+.gbar{margin-top:-44px!important}
+.grid>*,.cont>*,.updates>*{min-width:0}
+.ccard .t>div{min-width:0}
+.ccard .t b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.price .save{display:none}
+.screen{display:none}.screen.on{display:contents}
+nav.pick{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);display:flex;gap:4px;background:rgba(20,26,30,.8);padding:4px;border-radius:10px;z-index:99;backdrop-filter:blur(10px)}
+nav.pick a{color:#cfd6dd;text-decoration:none;font-size:12px;font-weight:600;padding:6px 10px;border-radius:7px}
+nav.pick a.on{background:#fff;color:#111}
+body.shot nav.pick{display:none}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 16 16"><path d="M2.5 7 8 2.5 13.5 7v6a.5.5 0 0 1-.5.5h-3v-4H6v4H3a.5.5 0 0 1-.5-.5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+    <symbol id="i-lib" viewBox="0 0 16 16"><rect x="2" y="2.5" width="5" height="5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="2.5" width="5" height="5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="2" y="9.5" width="5" height="5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9.5" width="5" height="5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+    <symbol id="i-dl" viewBox="0 0 16 16"><path d="M8 2.5v8m0 0L4.8 7.3M8 10.5l3.2-3.2M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-star" viewBox="0 0 16 16"><path d="m8 2.3 1.7 3.6 3.9.5-2.9 2.7.8 3.9L8 11.1 4.5 13l.8-3.9-2.9-2.7 3.9-.5Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 5v3.2l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-chip" viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 1.5v2m4-2v2m-4 9v2m4-2v2M1.5 6h2m-2 4h2m9-4h2m-2 4h2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-news" viewBox="0 0 16 16"><path d="M3 3h8v10H4a1 1 0 0 1-1-1Zm8 3h2v6a1 1 0 0 1-2 0M5 6h4M5 8.5h4M5 11h2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 16 16"><path d="M4.5 2.8v10.4a.6.6 0 0 0 .9.5l8.3-5.2a.6.6 0 0 0 0-1L5.4 2.3a.6.6 0 0 0-.9.5Z" fill="currentColor"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m10.5 10.5 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-list" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-out" viewBox="0 0 12 12"><path d="M4.5 2.5h5v5m0-5-7 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 12 12"><path d="m4.5 2.5 3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-back" viewBox="0 0 12 12"><path d="M7.5 2.5 4 6l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.8v1.8m0 8.8v1.8M1.8 8h1.8m8.8 0h1.8M3.6 3.6l1.3 1.3m6.2 6.2 1.3 1.3m0-8.8-1.3 1.3m-6.2 6.2-1.3 1.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5a1 1 0 0 1 1-1h3l1.5 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+    <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 14 14"><path d="m3 7.3 2.6 2.6L11 4.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 12 12"><path d="m3 3 6 6M9 3 3 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 16 16"><path d="M13 8a5 5 0 0 1-8.7 3.4M3 8a5 5 0 0 1 8.7-3.4M11.7 2v2.6H9.1M4.3 14v-2.6h2.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="window" id="win">
+  <div class="lights"><i></i><i></i><i></i></div>
+
+  <aside class="side">
+    <img class="logo" src="../Resources/PlaymeltLogo.png" alt="Playmelt">
+    <div class="nav" data-nav="accueil"><svg><use href="#i-home"/></svg>Accueil<span class="badge">4</span></div>
+    <div class="nav" data-nav="bibliotheque"><svg><use href="#i-lib"/></svg>Bibliothèque<span class="count">1 318</span></div>
+    <div class="nav"><svg><use href="#i-play"/></svg>Installés<span class="count">5</span></div>
+    <div class="nav"><svg><use href="#i-star"/></svg>Favoris<span class="count">0</span></div>
+    <div class="nav"><svg><use href="#i-news"/></svg>Actus<span class="count">12</span></div>
+    <div class="group">Plateformes</div>
+    <div class="nav"><i class="dot" style="background:var(--steam)"></i>Steam<span class="count">199</span></div>
+    <div class="nav"><i class="dot" style="background:var(--epic)"></i>Epic Games<span class="count">251</span></div>
+    <div class="nav"><i class="dot" style="background:var(--xbox)"></i>Xbox Game Pass<span class="count">767</span></div>
+    <div class="nav"><i class="dot" style="background:var(--gog)"></i>GOG<span class="count">100</span></div>
+    <div class="nav"><i class="dot" style="background:var(--local)"></i>Local<span class="count">1</span></div>
+    <div class="group">Système</div>
+    <div class="nav"><svg><use href="#i-dl"/></svg>Téléchargements<span class="count">0</span></div>
+    <div class="nav"><svg><use href="#i-chip"/></svg>Moteur & Mac</div>
+    <div class="spacer"></div>
+    <div class="account"><div class="avatar">L</div><div><b>lafripsi</b><small>Synchronisé</small></div></div>
+  </aside>
+
+  <main class="main">
+
+    <!-- ================= ACCUEIL ================= -->
+    <section class="screen" data-screen="accueil">
+      <header class="head">
+        <div>
+          <h1>Bonjour</h1>
+          <div class="meta"><span>Jeudi 12 novembre</span><span>4 mises à jour</span><span>2 jeux offerts aujourd’hui</span></div>
+        </div>
+        <div class="tools">
+          <div class="search"><svg><use href="#i-search"/></svg>Rechercher un jeu<kbd>⌘K</kbd></div>
+          <button class="btn icon"><svg><use href="#i-sync"/></svg></button>
+        </div>
+      </header>
+      <div class="scroll">
+        <div class="hero">
+          <img src="https://cdn.cloudflare.steamstatic.com/steam/apps/427520/library_hero.jpg" alt="">
+          <div class="pager"><i class="on"></i><i></i><i></i></div>
+          <div class="copy">
+            <img class="lg" src="https://cdn.cloudflare.steamstatic.com/steam/apps/427520/logo.png" alt="Factorio">
+            <span class="tag onimg">Mise à jour · 2.1</span>
+            <h3>Factorio 2.1 passe en version stable</h3>
+            <p>Friday Facts #449 · 23 octobre · Steam</p>
+            <div class="acts">
+              <button class="play"><svg><use href="#i-play"/></svg>Jouer</button>
+              <button class="glass">Lire l’annonce</button>
+            </div>
+          </div>
+          <div class="side-meta"><span class="tag onimg">Installé · 837 h</span></div>
+        </div>
+
+        <div class="row-h"><h2>Mises à jour</h2><span class="n">de tes jeux</span><a>Tout voir<svg><use href="#i-chev"/></svg></a></div>
+        <div class="updates">
+          <div class="ucard"><div class="art"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2651280/header.jpg" alt=""><span class="tag onimg">Correctif</span></div>
+            <div class="body"><div class="g"><span class="pf"><i style="background:var(--local)"></i>Local</span><span>11 août</span></div><h4>Marvel’s Spider-Man 2 — Hotfix PC</h4><div class="foot"><span class="ver">hotfix</span><button class="mini" aria-label="Jouer"><svg><use href="#i-play"/></svg></button></div></div></div>
+          <div class="ucard"><div class="art"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2651280/library_hero.jpg" alt=""><span class="tag onimg">Correctif</span></div>
+            <div class="body"><div class="g"><span class="pf"><i style="background:var(--local)"></i>Local</span><span>8 juil.</span></div><h4>Meilleure prise en charge de la DualSense Edge</h4><div class="foot"><span class="ver">patch</span><button class="mini" aria-label="Jouer"><svg><use href="#i-play"/></svg></button></div></div></div>
+          <div class="ucard"><div class="art"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2909400/header.jpg" alt=""><span class="tag onimg">Version</span></div>
+            <div class="body"><div class="g"><span class="pf"><i style="background:var(--epic)"></i>Epic Games</span><span>3 juin</span></div><h4>FINAL FANTASY VII REBIRTH — notes de version</h4><div class="foot"><span class="ver">1.005</span><button class="mini" aria-label="Jouer"><svg><use href="#i-play"/></svg></button></div></div></div>
+          <div class="ucard"><div class="art"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/3405340/header.jpg" alt=""><span class="tag onimg">Correctif</span></div>
+            <div class="body"><div class="g"><span class="pf"><i style="background:var(--steam)"></i>Steam</span><span>25 déc. 2025</span></div><h4>Megabonk — Christmas Patch</h4><div class="foot"><span class="ver">patch</span><button class="mini" aria-label="Jouer"><svg><use href="#i-play"/></svg></button></div></div></div>
+        </div>
+
+        <div class="duo">
+          <div>
+            <div class="row-h"><h2>Actus</h2><span class="n">annonces officielles</span><a>Tout voir<svg><use href="#i-chev"/></svg></a></div>
+            <div class="feed">
+              <div class="item"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2909400/library_hero.jpg" alt=""><div><div class="g"><span class="tag news">Annonce</span>FINAL FANTASY VII REBIRTH</div><h5>FINAL FANTASY VII REVELATION annoncé pour le printemps 2027</h5></div><time>25 juin</time></div>
+              <div class="item"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/427520/header.jpg" alt=""><div><div class="g"><span class="tag news">Blog dev</span>Factorio</div><h5>Friday Facts #448 — Tuning platforms</h5></div><time>9 oct.</time></div>
+              <div class="item"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2651280/library_hero.jpg" alt=""><div><div class="g"><span class="tag news">Contenu</span>Marvel’s Spider-Man 2</div><h5>Deux nouveaux costumes pour Peter Parker</h5></div><time>28 juil.</time></div>
+              <div class="item"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/3405340/library_hero.jpg" alt=""><div><div class="g"><span class="tag news">Contenu</span>Megabonk</div><h5>H A T S</h5></div><time>25 janv.</time></div>
+            </div>
+          </div>
+          <div>
+            <div class="row-h"><h2>Offerts</h2><span class="n">Epic Games Store</span></div>
+            <div class="free">
+              <div class="pair">
+                <div class="tile"><img src="https://cdn1.epicgames.com/spt-assets/5c36b876e80d4285b9993947efeeaf2b/flotsam-1yczl.jpg" alt=""><div class="t"><b>Flotsam</b><small>Gratuit jusqu’à 17 h</small></div></div>
+                <div class="tile"><img src="https://cdn1.epicgames.com/spt-assets/a53f91e55c6840018cb5de0b204f1ad9/idle-champions-of-the-forgotten-realms-a4c7m.jpg" alt=""><div class="t"><b>Idle Champions</b><small>Gratuit jusqu’à 17 h</small></div></div>
+              </div>
+              <div class="bar"><span class="countdown">Dernier jour</span><span class="next">Ensuite <b>Knightica</b></span><span class="store" style="margin-left:auto">Récupérer<svg><use href="#i-out"/></svg></span></div>
+            </div>
+            <div class="row-h"><h2>Sorties</h2><span class="n">cette semaine sur Steam</span></div>
+            <div class="feed">
+              <div class="item" style="grid-template-columns:96px 1fr auto"><img style="width:96px;height:45px" src="https://cdn.cloudflare.steamstatic.com/steam/apps/1374680/header.jpg" alt=""><div><h5 style="margin:0">Hazard Levels</h5><div class="g">9,99 €</div></div><span class="store">Steam<svg><use href="#i-out"/></svg></span></div>
+              <div class="item" style="grid-template-columns:96px 1fr auto"><img style="width:96px;height:45px" src="https://cdn.cloudflare.steamstatic.com/steam/apps/2660460/header.jpg" alt=""><div><h5 style="margin:0">Aviassembly</h5><div class="g">6,82 €</div></div><span class="store">Steam<svg><use href="#i-out"/></svg></span></div>
+              <div class="item" style="grid-template-columns:96px 1fr auto"><img style="width:96px;height:45px" src="https://cdn.cloudflare.steamstatic.com/steam/apps/2983480/header.jpg" alt=""><div><h5 style="margin:0">Cinema Manager Simulator</h5><div class="g">7,75 €</div></div><span class="store">Steam<svg><use href="#i-out"/></svg></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= BIBLIOTHÈQUE ================= -->
+    <section class="screen" data-screen="bibliotheque">
+      <header class="head">
+        <div>
+          <h1>Bibliothèque</h1>
+          <div class="meta num">
+            <span><i style="background:var(--steam)"></i>Steam 199</span>
+            <span><i style="background:var(--epic)"></i>Epic 251</span>
+            <span><i style="background:var(--xbox)"></i>Xbox 767</span>
+            <span><i style="background:var(--gog)"></i>GOG 100</span>
+            <span><i style="background:var(--local)"></i>Local 1</span>
+          </div>
+        </div>
+        <div class="tools">
+          <div class="search"><svg><use href="#i-search"/></svg>Rechercher dans 1 318 jeux<kbd>⌘K</kbd></div>
+          <div class="seg"><b class="on">Tous</b><b>Installés</b><b>Mac</b><b>Cloud</b></div>
+          <div class="seg"><b><svg><use href="#i-list"/></svg></b><b class="on"><svg><use href="#i-lib"/></svg></b></div>
+        </div>
+      </header>
+      <div class="scroll">
+        <div class="row-h" style="margin-top:24px"><h2>Reprendre</h2><a>Installés sur ce Mac<svg><use href="#i-chev"/></svg></a></div>
+        <div class="cont" style="margin-top:0">
+          <div class="ccard"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2909400/library_hero.jpg" alt=""><div class="t"><div><b>FINAL FANTASY VII REBIRTH</b><small>1 h 22 min · Epic</small></div><button class="play sm"><svg><use href="#i-play"/></svg>Jouer</button></div><div class="prog"><i style="width:13%"></i></div></div>
+          <div class="ccard"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/427520/library_hero.jpg" alt=""><div class="t"><div><b>Factorio</b><small>837 h · Steam · Mac</small></div><button class="play sm"><svg><use href="#i-play"/></svg>Jouer</button></div><div class="prog"><i style="width:72%"></i></div></div>
+          <div class="ccard"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/3405340/library_hero.jpg" alt=""><div class="t"><div><b>Megabonk</b><small>19 h 47 min · Steam</small></div><button class="play sm"><svg><use href="#i-play"/></svg>Jouer</button></div><div class="prog"><i style="width:40%"></i></div></div>
+          <div class="ccard"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2651280/library_hero.jpg" alt=""><div class="t"><div><b>Marvel’s Spider-Man 2</b><small>Local · DX12</small></div><button class="play sm"><svg><use href="#i-play"/></svg>Jouer</button></div></div>
+        </div>
+        <div class="row-h"><h2>Tous les jeux</h2><span class="n num">1 318</span><a>Récemment joués<svg><use href="#i-chev"/></svg></a></div>
+        <div class="grid">
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/427520/library_600x900.jpg" alt=""><div class="state"><span class="chip"><i style="background:#3ddc84"></i>Installé</span></div><i class="new"></i></div><b>Factorio</b><small>Steam · Mac</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2909400/library_600x900.jpg" alt=""><div class="state"><span class="chip"><i style="background:#3ddc84"></i>Installé</span></div></div><b>FINAL FANTASY VII REBIRTH</b><small>Epic · Windows</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2651280/library_600x900.jpg" alt=""><div class="state"><span class="chip"><i style="background:#3ddc84"></i>Installé</span></div><i class="new"></i></div><b>Marvel’s Spider-Man 2</b><small>Local · Windows</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/3405340/library_600x900.jpg" alt=""><div class="state"><span class="chip"><i style="background:#3ddc84"></i>Installé</span></div></div><b>Megabonk</b><small>Steam · Windows</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/1145360/library_600x900.jpg" alt=""></div><b>Hades</b><small>Steam · Mac</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/1091500/library_600x900.jpg" alt=""><div class="state"><span class="chip"><i style="background:#4cc2ff"></i>Cloud</span></div></div><b>Cyberpunk 2077</b><small>Game Pass · Cloud</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2358720/library_600x900.jpg" alt=""></div><b>Black Myth: Wukong</b><small>Steam · Windows</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/1245620/library_600x900.jpg" alt=""></div><b>ELDEN RING</b><small>Steam · Windows</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/413150/library_600x900.jpg" alt=""></div><b>Stardew Valley</b><small>GOG · Mac</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2050650/library_600x900.jpg" alt=""></div><b>Resident Evil 4</b><small>Steam · Windows</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/1374680/library_600x900.jpg" alt=""></div><b>Hazard Levels</b><small>Steam · Windows</small></div>
+          <div class="cover"><div class="p"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2660460/library_600x900.jpg" alt=""></div><b>Aviassembly</b><small>Steam · Windows</small></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= FICHE ================= -->
+    <section class="screen" data-screen="fiche">
+      <div class="scroll" style="padding-top:0">
+        <div class="ghero">
+          <img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2909400/library_hero.jpg" alt="">
+          <div class="back"><span class="glass"><svg><use href="#i-back"/></svg>Bibliothèque</span></div>
+          <img class="lg" src="https://cdn.cloudflare.steamstatic.com/steam/apps/2909400/logo.png" alt="FINAL FANTASY VII REBIRTH">
+        </div>
+        <div class="gbar">
+          <button class="play" style="height:44px;padding:0 26px 0 20px;font-size:15px"><svg><use href="#i-play"/></svg>Jouer</button>
+          <div class="info">
+            <div class="stat"><small>Plateforme</small><b><span class="pf" style="font-size:13.5px;color:var(--ink)"><i style="background:var(--epic);width:7px;height:7px"></i>Epic Games</span></b></div>
+            <div class="stat"><small>Temps de jeu</small><b class="num">1 h 22 min</b></div>
+            <div class="stat"><small>Moteur</small><b>D3DMetal · DX12</b></div>
+            <div class="stat"><small>Succès</small><b class="num">8 / 61</b></div>
+          </div>
+          <div class="right">
+            <button class="btn"><svg><use href="#i-gear"/></svg>Réglages</button>
+            <button class="btn icon"><svg><use href="#i-folder"/></svg></button>
+            <button class="btn icon"><svg><use href="#i-star"/></svg></button>
+            <button class="btn icon"><svg><use href="#i-more"/></svg></button>
+          </div>
+        </div>
+        <div class="tabs"><b class="on">Aperçu</b><b>Actus<em>4</em></b><b>Mises à jour<em>1</em></b><b>Succès</b><b>Réglages</b></div>
+        <div class="gcols">
+          <div>
+            <div class="feed">
+              <div class="story"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2909400/header.jpg" alt=""><div><span class="tag news">Annonce · 25 juin</span><h5>FINAL FANTASY VII REVELATION annoncé pour le printemps 2027</h5><p>Le dernier volet de la trilogie Remake a une fenêtre de sortie.</p></div></div>
+              <div class="story"><img src="https://cdn.cloudflare.steamstatic.com/steam/apps/2909400/library_hero.jpg" alt=""><div><span class="tag upd">Version 1.005 · 3 juin</span><h5>Notes de version 1.005</h5><p>Correctifs de stabilité et de performances.</p></div></div>
+            </div>
+          </div>
+          <div style="display:grid;gap:16px;align-content:start">
+            <div class="panel">
+              <h6>Succès<span>Epic</span></h6>
+              <div class="ach">
+                <svg class="ring" viewBox="0 0 58 58"><circle cx="29" cy="29" r="24" fill="none" stroke="rgba(28,35,38,.08)" stroke-width="6"/><circle cx="29" cy="29" r="24" fill="none" stroke="var(--brand)" stroke-width="6" stroke-linecap="round" stroke-dasharray="19.6 150.8" transform="rotate(-90 29 29)"/></svg>
+                <div><b class="num">13 %</b><small>8 sur 61 · 80 XP</small></div>
+              </div>
+              <div class="alist">
+                <div><i></i>Never Meet Your Heroes</div>
+                <div><i></i>Unfettered Friendship</div>
+                <div><i></i>No “I” in “Synergy”</div>
+              </div>
+            </div>
+            <div class="panel">
+              <h6>Rendu sur ce Mac<span>Écran 2K</span></h6>
+              <div class="kv">
+                <div><span>Route</span><b>D3DMetal · DX12</b></div>
+                <div><span>Upscaling</span><b>DLSS → MetalFX</b></div>
+                <div><span>Mode conseillé</span><b>Qualité</b></div>
+                <div><span>Rendu interne</span><b class="mono">1707 × 960</b></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= ABONNEMENT ================= -->
+    <section class="screen" data-screen="abonnement"></section>
+  </main>
+
+  <div class="scrim" id="paywall" hidden>
+    <div class="sheet">
+      <div class="top">
+        <span class="x"><svg><use href="#i-x"/></svg></span>
+        <div class="brandrow"><img src="../Resources/PlaymeltIcon.png" alt=""><div><b>Playmelt</b><small>Toutes tes plateformes. Une seule app.</small></div></div>
+        <div class="perks">
+          <span><svg><use href="#i-check"/></svg>Jeux Windows sur Mac</span>
+          <span><svg><use href="#i-check"/></svg>DLSS → MetalFX</span>
+          <span><svg><use href="#i-check"/></svg>Moteur mis à jour</span>
+        </div>
+      </div>
+      <div class="bodyp">
+        <div class="durs" id="durs">
+          <button data-i="0">1 mois<small></small></button>
+          <button data-i="1">3 mois<small>−10 %</small></button>
+          <button data-i="2">6 mois<small>−20 %</small></button>
+          <button data-i="3" class="on">1 an<small>−30 %</small></button>
+          <button data-i="4">À vie<small></small></button>
+        </div>
+        <div class="price"><b id="pp">14,00 €</b><span id="pu">/ mois</span><span class="tag free save" id="ps">−30 %</span></div>
+        <div class="billing" id="pb">167,99 € facturés une fois par an</div>
+        <button class="play cta">Continuer vers le paiement</button>
+        <div class="fine"><span>Paiement sécurisé · résiliable à tout moment</span><a>J’ai une clé de licence</a></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<nav class="pick">
+  <a href="#accueil">Accueil</a><a href="#bibliotheque">Bibliothèque</a><a href="#fiche">Fiche jeu</a><a href="#abonnement">Abonnement</a>
+</nav>
+
+<script>
+const plans=[
+  {p:"19,99 €",u:"/ mois",s:"",b:"Facturé chaque mois"},
+  {p:"18,00 €",u:"/ mois",s:"−10 %",b:"53,99 € facturés tous les 3 mois"},
+  {p:"16,00 €",u:"/ mois",s:"−20 %",b:"95,99 € facturés tous les 6 mois"},
+  {p:"14,00 €",u:"/ mois",s:"−30 %",b:"167,99 € facturés une fois par an"},
+  {p:"399 €",u:"une seule fois",s:"",b:"Accès à vie, mises à jour comprises"}];
+document.getElementById("durs").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#durs button").forEach(x=>x.classList.toggle("on",x===b));
+  const p=plans[+b.dataset.i]; pp.textContent=p.p; pu.textContent=p.u; pb.textContent=p.b;
+  ps.textContent=p.s; ps.style.visibility=p.s?"visible":"hidden";
+});
+function route(){
+  let h=(location.hash||"#accueil").slice(1); const pay=h==="abonnement";
+  const screen=pay?"accueil":h;
+  document.querySelectorAll(".screen").forEach(s=>s.classList.toggle("on",s.dataset.screen===screen));
+  document.querySelectorAll("[data-nav]").forEach(n=>n.classList.toggle("on",n.dataset.nav===(screen==="fiche"?"bibliotheque":screen)));
+  paywall.hidden=!pay;
+  document.querySelectorAll("nav.pick a").forEach(a=>a.classList.toggle("on",a.hash==="#"+h));
+}
+addEventListener("hashchange",route); route();
+const q=new URLSearchParams(location.search); if(q.has("shot")) document.body.classList.add("shot");
+if(q.has("y")) requestAnimationFrame(()=>document.querySelectorAll(".screen.on .scroll").forEach(e=>e.scrollTop=+q.get("y")));
+function fit(){const s=Math.min(innerWidth/1420,innerHeight/940,1);win.style.transform=`scale(${s})`}
+addEventListener("resize",fit); fit();
+</script>
+</body>
+</html>

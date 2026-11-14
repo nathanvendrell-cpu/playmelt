@@ -72,6 +72,27 @@ struct SteamAppInfo {
     let type: String
     var portraitAssets: [String] = []
     var landscapeAssets: [String] = []
+    var windowsInstallIssue = ""
+    static func publishedWindowsLaunches(_ app:[String:Any])->[[String:Any]] {
+        app.object("config").object("launch").values.compactMap{$0 as? [String:Any]}.filter { option in
+            let c=option.object("config"),os=c.string("oslist").split(separator:",")
+            return (os.isEmpty || os.contains("windows")) && ["","default"].contains(c.string("BetaKey"))
+        }
+    }
+    static func publishedPlatforms(_ app:[String:Any])->Set<String> {
+        let declared=Set(app.object("common").string("oslist").split(separator:",").map(String.init))
+        if !declared.isEmpty{return declared}
+        // Older store entries omit common.oslist, but publish Windows launch
+        // options. Use those official entry points, never a title-based guess.
+        return publishedWindowsLaunches(app).contains(where:{$0.string("executable").lowercased().hasSuffix(".exe")}) ? ["windows"] : []
+    }
+    static func windowsInstallationIssue(_ app:[String:Any])->String {
+        let launches=publishedWindowsLaunches(app)
+        guard !launches.isEmpty else{return "Les fichiers Windows de cette édition ne sont pas publiés dans le cache Steam. Actualisez Steam ou consultez sa fiche."}
+        guard launches.contains(where:{$0.string("executable").lowercased().hasSuffix(".exe")}) else{return "Cette édition utilise un lanceur tiers. Son installation doit être vérifiée avec Steam."}
+        guard launches.contains(where:{$0.object("config").string("ownsdlc").isEmpty}) else{return "L’édition et sa licence Steam doivent être vérifiées avant l’installation."}
+        return ""
+    }
     static func validArtworkPath(_ path: String) -> Bool {
         guard path.count < 200, !path.contains("%"), !path.contains("\\") else { return false }
         let pattern = "^(?:[a-fA-F0-9]{40}/)?(?:library_capsule|library_600x900|library_header|header|library_hero)(?:_[A-Za-z0-9_-]+)?\\.(?:jpg|jpeg|png|webp)$"
@@ -154,10 +175,11 @@ struct SteamAppInfo {
                 // Record prefix: appID,size,state,lastUpdated,accessToken,sha1,
                 // changeNumber, then (v28+) binary-data SHA1.
                 if let root = try? readObject(&body, next, 0) {
-                    let common = root.object("appinfo").object("common")
+                    let app=root.object("appinfo")
+                    let common = app.object("common")
                     let name = common.string("name")
                     if !name.isEmpty {
-                        result[String(id)] = SteamAppInfo(name: name, platforms: Set(common.string("oslist").split(separator: ",").map(String.init)), type: common.string("type").lowercased(), portraitAssets: artworkPaths(common, portrait: true), landscapeAssets: artworkPaths(common, portrait: false))
+                        result[String(id)] = SteamAppInfo(name: name, platforms: publishedPlatforms(app), type: common.string("type").lowercased(), portraitAssets: artworkPaths(common, portrait: true), landscapeAssets: artworkPaths(common, portrait: false),windowsInstallIssue:windowsInstallationIssue(app))
                     }
                 }
                 position = next
@@ -196,8 +218,14 @@ struct Runtime {
         if let appURL { return FileManager.default.fileExists(atPath: appURL.path) }
         return platform == "windows" && verifiedIndependentEngine && wineURL.map { FileManager.default.isExecutableFile(atPath: $0.path) } == true && FileManager.default.fileExists(atPath: steamRoot.appendingPathComponent("steam.exe").path)
     }
+    // Depot downloads use the authenticated macOS Steam client. Installing the
+    // Windows Steam UI is not a prerequisite for preparing files in this engine.
+    var installationAvailable: Bool {
+        platform == "windows" ? executionAllowed && verifiedIndependentEngine &&
+            wineURL.map { FileManager.default.isExecutableFile(atPath: $0.path) } == true && prefixURL != nil : available
+    }
     var displayName: String { platform == "mac" ? "Mac natif" : renderer == "d3dmetal" ? "DirectX 12" : "DirectX 11" }
-    var json: [String: Any] { ["id": id, "name": name, "displayName": displayName, "platform": platform, "available": available, "executionAllowed": executionAllowed, "renderer": renderer, "graphicsValidated": graphicsValidated] }
+    var json: [String: Any] { ["id": id, "name": name, "displayName": displayName, "platform": platform, "available": available, "installationAvailable": installationAvailable, "executionAllowed": executionAllowed, "renderer": renderer, "graphicsValidated": graphicsValidated] }
 }
 struct Account {
     let id: String, name: String, source: String, recent: Bool
@@ -207,13 +235,15 @@ final class PlaytimeStore {
     static let shared = PlaytimeStore()
     private let lock = NSLock()
     private let fileURL: URL
+    private let clock:()->TimeInterval
     private var data: [String: [String: Any]] = [:]
 
-    init() {
+    init(fileURL:URL?=nil,clock:@escaping()->TimeInterval={Date().timeIntervalSince1970}) {
+        self.clock=clock
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         let playmeltDir = appSupport.appendingPathComponent("Playmelt")
         try? FileManager.default.createDirectory(at: playmeltDir, withIntermediateDirectories: true)
-        self.fileURL = playmeltDir.appendingPathComponent("playtime.json")
+        self.fileURL = fileURL ?? playmeltDir.appendingPathComponent("playtime.json")
         load()
     }
 
@@ -236,6 +266,11 @@ final class PlaytimeStore {
         }
         return 0
     }
+    func lastPlayed(for key:String)->Int64 {
+        lock.lock();defer{lock.unlock()}
+        guard let entry=data[key],let seconds=(entry["lastSessionSeconds"] as? NSNumber)?.int64Value,seconds>0 else{return 0}
+        return (entry["lastPlayed"] as? NSNumber)?.int64Value ?? 0
+    }
 
     func addSession(key: String, seconds: Int64) {
         guard seconds > 0 else { return }
@@ -245,7 +280,7 @@ final class PlaytimeStore {
         let newTotal = currentTotal + seconds
         entry["totalSeconds"] = newTotal
         entry["lastSessionSeconds"] = seconds
-        entry["lastPlayed"] = Int64(Date().timeIntervalSince1970)
+        entry["lastPlayed"] = Int64(clock())
         data[key] = entry
         saveLocked()
         lock.unlock()
@@ -258,7 +293,6 @@ final class PlaytimeStore {
         let currentTotal = (entry["totalSeconds"] as? NSNumber)?.int64Value ?? (entry["totalSeconds"] as? Int64 ?? 0)
         if totalSeconds > currentTotal {
             entry["totalSeconds"] = totalSeconds
-            entry["lastPlayed"] = max((entry["lastPlayed"] as? NSNumber)?.int64Value ?? 0, Int64(Date().timeIntervalSince1970))
             data[key] = entry
             saveLocked()
         }
@@ -340,6 +374,123 @@ final class AchievementStore {
     }
 }
 
+/// Lecture seule des succès Steam que le client Steam garde en local
+/// (appcache/stats : schéma + progression du compte). Aucun réseau, aucune clé.
+final class SteamLocalAchievements {
+    static let shared = SteamLocalAchievements()
+    private let lock = NSLock()
+    private var cache: [String: (schemaStamp: Date, userStamp: Date, userName: String, value: [String: Any]?)] = [:]
+    private let dir: URL
+    init(directory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Steam/appcache/stats", isDirectory: true)) { dir = directory }
+
+    static func userCacheNames(appID: String, accountID: String) -> [String] {
+        guard !appID.isEmpty, appID.count <= 10, appID.allSatisfy({ $0.isASCII && $0.isNumber }),
+              let app = UInt32(appID), app > 0,
+              accountID.count == 17, accountID.allSatisfy({ $0.isASCII && $0.isNumber }),
+              let account = UInt64(accountID), account >= 76561197960265728,
+              account - 76561197960265728 <= UInt64(UInt32.max) else { return [] }
+        // Steam's local cache normally uses the 32-bit account number. Accept
+        // the full ID too, but never select another user's newest cache file.
+        return [String(account & 0xffff_ffff), accountID].map { "UserGameStats_\($0)_\(appID).bin" }
+    }
+
+    func payload(appID: String, accountID: String) -> [String: Any]? {
+        let candidates = Self.userCacheNames(appID: appID, accountID: accountID)
+        guard !candidates.isEmpty else { return nil }
+        let fm = FileManager.default
+        lock.lock(); defer { lock.unlock() }
+        let schemaURL = dir.appendingPathComponent("UserGameStatsSchema_\(appID).bin")
+        func mtime(_ url: URL) -> Date { ((try? fm.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date) ?? .distantPast }
+        let present = candidates.filter { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }
+        guard let userName = present.max(by: { mtime(dir.appendingPathComponent($0)) < mtime(dir.appendingPathComponent($1)) }) else { return nil }
+        let userURL = dir.appendingPathComponent(userName)
+        let schemaStamp = mtime(schemaURL), userStamp = mtime(userURL)
+        let cacheKey = accountID + ":" + appID
+        if let hit = cache[cacheKey], hit.schemaStamp == schemaStamp, hit.userStamp == userStamp, hit.userName == userName { return hit.value }
+        let value = build(appID: appID, schemaURL: schemaURL, userURL: userURL)
+        cache[cacheKey] = (schemaStamp, userStamp, userName, value)
+        return value
+    }
+
+    private func build(appID: String, schemaURL: URL, userURL: URL) -> [String: Any]? {
+        func validFile(_ url: URL) -> Bool {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                  values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize else { return false }
+            return size > 0 && size < 8_000_000
+        }
+        guard validFile(schemaURL), validFile(userURL),
+              let schemaData = try? Data(contentsOf: schemaURL), schemaData.count < 8_000_000,
+              let userData = try? Data(contentsOf: userURL), userData.count < 8_000_000,
+              let schemaRoot = (Self.parse([UInt8](schemaData)).first?.value as? [String: Any]),
+              let stats = schemaRoot["stats"] as? [String: Any] else { return nil }
+        let user = (Self.parse([UInt8](userData)).first?.value as? [String: Any]) ?? [:]
+        func text(_ v: Any?) -> String {
+            if let s = v as? String { return s }
+            if let d = v as? [String: Any] { return (d["french"] as? String) ?? (d["english"] as? String) ?? (d.values.first as? String) ?? "" }
+            return ""
+        }
+        var total = 0, unlocked: [(Int, [String: Any])] = []
+        for (statID, raw) in stats {
+            guard let stat = raw as? [String: Any], let bits = stat["bits"] as? [String: Any] else { continue }
+            let entry = user[statID] as? [String: Any]
+            let field = UInt32(truncatingIfNeeded: (entry?["data"] as? Int) ?? 0)
+            let times = entry?["AchievementTimes"] as? [String: Any] ?? [:]
+            for (bitKey, rawAch) in bits {
+                guard let bit = Int(bitKey), bit >= 0, bit < 32, let ach = rawAch as? [String: Any] else { continue }
+                total += 1
+                guard (field >> UInt32(bit)) & 1 == 1 else { continue }
+                let display = ach["display"] as? [String: Any] ?? [:]
+                let icon = (display["icon"] as? String ?? "").filter { $0.isLetter || $0.isNumber || $0 == "." }
+                let when = times[bitKey] as? Int ?? 0
+                unlocked.append((when, [
+                    "name": ach["name"] as? String ?? "",
+                    "displayName": String(text(display["name"]).prefix(120)),
+                    "description": String(text(display["desc"]).prefix(240)),
+                    "iconLink": icon.isEmpty ? "" : "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/\(appID)/\(icon)",
+                    "unlockDate": when > 0 ? ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: TimeInterval(when))) : "",
+                    "xp": 0, "tier": "", "rarity": 0.0
+                ]))
+            }
+        }
+        guard total > 0 else { return nil }
+        unlocked.sort { $0.0 > $1.0 }
+        return ["total": total, "unlockedCount": unlocked.count,
+                "percentage": Int(Double(unlocked.count) / Double(total) * 100.0),
+                "userXP": 0, "totalXP": 0, "source": "steam-local",
+                "completed": unlocked.prefix(12).map { $0.1 }]
+    }
+
+    /// Binary KeyValues (format appcache de Steam).
+    static func parse(_ b: [UInt8]) -> [(key: String, value: Any)] {
+        var i = 0
+        func cstring() -> String? {
+            guard let end = b[i...].firstIndex(of: 0) else { return nil }
+            let s = String(decoding: b[i..<end], as: UTF8.self); i = end + 1; return s
+        }
+        func int32() -> Int? { guard i + 4 <= b.count else { return nil }; let v = Int32(bitPattern: UInt32(b[i]) | UInt32(b[i+1]) << 8 | UInt32(b[i+2]) << 16 | UInt32(b[i+3]) << 24); i += 4; return Int(v) }
+        func node(_ depth: Int) -> [String: Any]? {
+            guard depth < 32 else { return nil }
+            var out: [String: Any] = [:]
+            while i < b.count {
+                let type = b[i]; i += 1
+                if type == 8 || type == 11 { return out }
+                guard let key = cstring() else { return nil }
+                switch type {
+                case 0: guard let child = node(depth + 1) else { return nil }; out[key] = child
+                case 1: guard let s = cstring() else { return nil }; out[key] = s
+                case 2, 4, 6: guard let v = int32() else { return nil }; out[key] = v
+                case 3: guard let v = int32() else { return nil }; out[key] = Float(bitPattern: UInt32(bitPattern: Int32(v)))
+                case 7, 10: guard i + 8 <= b.count else { return nil }; i += 8; out[key] = 0
+                default: return nil
+                }
+            }
+            return out
+        }
+        guard let root = node(0) else { return [] }
+        return root.map { ($0.key, $0.value) }
+    }
+}
+
 struct Game {
     var id: String, appId: String, title: String, store: String, installed: Bool, platform: String, runtimeId: String, runtimeName: String, ownership: String
     var path: URL?, complete: Bool = false, epicLaunchID: String = ""
@@ -348,31 +499,40 @@ struct Game {
     var customPortraitURL = ""
     var lastPlayed: Int64 = 0
     var installSource: String = "steam"
+    var cloudInputMode: String = ""
+    var gamePassRecent: Int = -1
+    var installBlockReason = ""
     var playtime: Int64 {
         let key = appId.isEmpty ? id : appId
         let storeTime = PlaytimeStore.shared.playtime(for: key)
         let fallbackTime = key != id ? PlaytimeStore.shared.playtime(for: id) : 0
         return max(storeTime, fallbackTime)
     }
-    func json(runtimes: [Runtime], availability: [String: Bool]? = nil, completedRuntimeIDs: Set<String>? = nil) -> [String: Any] {
+    func json(runtimes: [Runtime], availability: [String: Bool]? = nil, completedRuntimeIDs: Set<String>? = nil, launchPreflight: GameLaunchPreflight? = nil, steamAccountID: String = "") -> [String: Any] {
         func usable(_ runtime: Runtime) -> Bool { runtime.executionAllowed && (availability?[runtime.id] ?? runtime.available) }
-        let runtime = runtimes.first { $0.id == runtimeId && usable($0) }
-        let available = runtime != nil
+        func installUsable(_ runtime:Runtime)->Bool {runtime.platform == "windows" ? runtime.installationAvailable : usable(runtime)}
+        let runtime = runtimes.first { $0.id == runtimeId && installUsable($0) }
+        let available = runtime.map(usable) ?? false
+        let installAvailable = runtime.map(installUsable) ?? false
         let routeMatches = runtime.map { SteamGameLaunchProfile.supportsInstallation(appID: appId, runtime: $0) } ?? false
         let launchSupported = store != "steam" || (routeMatches && SteamGameLaunchProfile.blockReason(appID: appId, platform: platform, renderer: runtime?.renderer ?? "", graphicsValidated: runtime?.graphicsValidated ?? false) == nil)
         let platforms = supportedPlatforms.isEmpty ? (platform == "unknown" ? [] : [platform]) : supportedPlatforms
         let completedRoutes = completedRuntimeIDs ?? (complete ? [runtimeId] : [])
         let routes: [[String: Any]] = store == "steam" ? runtimes.filter {
-            usable($0) && platforms.contains($0.platform) && SteamGameLaunchProfile.supportsInstallation(appID: appId, runtime: $0)
+            installUsable($0) && platforms.contains($0.platform) && SteamGameLaunchProfile.supportsInstallation(appID: appId, runtime: $0)
         }.map { candidate in
-            let allowed = !completedRoutes.contains(candidate.id)
+            let allowed = !completedRoutes.contains(candidate.id) && (candidate.platform != "windows" || installBlockReason.isEmpty)
             let canPlay = SteamGameLaunchProfile.blockReason(appID: appId, platform: candidate.platform, renderer: candidate.renderer, graphicsValidated: candidate.graphicsValidated) == nil
             return ["runtimeId": candidate.id, "canInstall": allowed, "canInstallAndPlay": allowed && canPlay]
         } : []
-        let directCanLaunch = installed && complete && (installSource == "local" || findLaunchScript(in: path) != nil)
+        let preflight = launchPreflight ?? GameLaunchPreflight.inspect(self, steamAccountID: steamAccountID)
+        let steamDepot = store == "steam" ? path.flatMap{SteamDepotLaunchManifest.read($0,appID:appId)} : nil
+        let directCandidate = preflight.directCandidate
+        let launchIssue = preflight.issue
+        let directCanLaunch = directCandidate && complete && launchIssue == nil
         let standardCanLaunch = installed && complete && launchSupported && (store == "epic" ? WindowsExecutionPolicy.permits(platform: platform) && FileManager.default.fileExists(atPath: "/Applications/Epic Games Launcher.app") : available)
         let cloudCanLaunch = store == "xbox" && platform == "cloud"
-        let canLaunch = directCanLaunch || standardCanLaunch || cloudCanLaunch
+        let canLaunch = launchIssue == nil && (directCanLaunch || standardCanLaunch || cloudCanLaunch)
         let effectivePlaytime = playtime
         return ["id": id, "appId": appId, "title": title, "store": store, "installed": installed,
                 "platform": platform, "runtimeId": runtimeId, "runtimeName": runtimeName, "ownership": ownership,
@@ -384,18 +544,55 @@ struct Game {
                 "portraitImageURL": !customPortraitURL.isEmpty ? customPortraitURL : store == "steam" ? "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appId)/library_600x900.jpg" : "",
                 "localPortraitURL": store == "steam" ? "metalmaxart://steam/\(appId)/portrait" : "",
                 "canLaunch": canLaunch,
-                "canInstall": store == "steam" && !complete && platform != "unknown" && available && routeMatches,
-                "canInstallAndPlay": store == "steam" && !complete && platform != "unknown" && available && launchSupported,
+                "launchIsTest":steamDepot != nil,
+                "requiresOfficialSteam":steamDepot?.requiresOfficialSteam ?? false,
+                "steamCompletionRuntime":steamDepot?.renderer == "d3dmetal" ? "playmelt-d3dmetal":"playmelt-windows",
+                "rendererNeedsSelection":steamDepot?.renderer == "auto",
+                "declaredGraphicsAPI":store == "steam" ? SteamGameLaunchProfile.publisherAPI(appID:appId):"unknown",
+                "rendererCandidate":store == "steam" ? SteamGameLaunchProfile.publisherCandidate(appID:appId) ?? "auto":"auto",
+                "cloudInputMode": cloudInputMode,
+                "launchBlockReason": launchIssue ?? "",
+                "installBlockReason":installBlockReason,
+                "canInstall": store == "steam" && !complete && platform != "unknown" && installAvailable && routeMatches && installBlockReason.isEmpty,
+                "canInstallAndPlay": store == "steam" && !complete && platform != "unknown" && installAvailable && launchSupported && installBlockReason.isEmpty,
                 "installComplete": complete,
-                "lastPlayed": lastPlayed > 0 ? lastPlayed : (effectivePlaytime > 0 ? Int64(Date().timeIntervalSince1970) : 0),
+                "lastPlayed": max(lastPlayed,PlaytimeStore.shared.lastPlayed(for:appId.isEmpty ? id : appId)),
                 "playtime": effectivePlaytime,
                 "playtimeFormatted": PlaytimeStore.formatted(seconds: effectivePlaytime),
-                "achievements": AchievementStore.shared.cachedAchievements(for: appId.isEmpty ? id : appId) ?? NSNull(),
+                "achievements": AchievementStore.shared.cachedAchievements(for: appId.isEmpty ? id : appId) ?? (store == "steam" ? SteamLocalAchievements.shared.payload(appID: appId, accountID: steamAccountID) : nil) ?? NSNull(),
+                "gamePassRecent": gamePassRecent,
                 "installSource": installSource]
     }
 }
 
+/// A worker-produced display snapshot. Launch dispatch still performs its own
+/// current filesystem/runtime validation; this value never authorizes execution.
+struct GameLaunchPreflight {
+    let directCandidate: Bool
+    let issue: String?
+    static func inspect(_ game:Game, steamAccountID:String, runtimeDescriptor:PlaymeltRuntimeDescriptor? = nil)->Self {
+        let direct=game.installed && game.platform == "windows" && (game.installSource == "local" || game.installSource == "steam-depots" || findLaunchScript(in:game.path) != nil)
+        return Self(directCandidate:direct,issue:direct ? localLaunchBlockReason(for:game, steamAccountID:steamAccountID, runtimeDescriptor:runtimeDescriptor) : nil)
+    }
+    static func unchecked(_ game:Game)->Self {
+        let needsCheck=game.installed && game.platform == "windows"
+        return Self(directCandidate:needsCheck,issue:needsCheck ? "Vérification des fichiers en cours. Actualisez la bibliothèque." : nil)
+    }
+}
+
 enum SteamGameLaunchProfile {
+    private static let publisherProfiles:[String:[String:Any]] = {
+        guard let url=Bundle.main.url(forResource:"SteamRendererProfiles",withExtension:"json"),
+              let size=try? url.resourceValues(forKeys:[.fileSizeKey]).fileSize,size<500000,
+              let data=try? Data(contentsOf:url),let raw=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any],raw["schemaVersion"] as? Int == 1 else{return [:]}
+        return raw["apps"] as? [String:[String:Any]] ?? [:]
+    }()
+    // Minimum requirements guide setup; they do not certify the selected API.
+    static func publisherCandidate(appID:String)->String? {
+        guard let p=publisherProfiles[appID],p["evidence"] as? String == "publisher-minimum-requirements",let renderer=p["rendererCandidate"] as? String,["dxmt","d3dmetal"].contains(renderer) else{return nil}
+        return renderer
+    }
+    static func publisherAPI(appID:String)->String {publisherProfiles[appID]?["graphicsAPI"] as? String ?? "unknown"}
     static func localRenderer(appID: String, unity: Bool, dx12Markers: Bool) -> String {
         let required = requiredRenderer(appID: appID)
         if required != "auto" { return required }
@@ -407,7 +604,7 @@ enum SteamGameLaunchProfile {
     }
     // The open beta has a distinct Steam app ID; it must retain the same DX12
     // requirement as the retail game instead of falling through to DX11.
-    private static let directX12Games: Set<String> = ["1783560", "2584270", "4711740", "2651280"]
+    private static let directX12Games: Set<String> = ["1783560", "2584270", "4711740", "2651280", "1903340"]
     static func requiredRenderer(appID: String) -> String {
         let lower = appID.lowercased()
         if directX12Games.contains(appID) || lower.contains("rebirth") || lower.contains("catnip") || lower.contains("spiderman") { return "d3dmetal" }
@@ -426,7 +623,12 @@ enum SteamGameLaunchProfile {
     static func blockReason(appID: String, platform: String, renderer: String = "dxmt", graphicsValidated: Bool = false) -> String? {
         guard platform == "windows" else { return nil }
         if requiredRenderer(appID: appID) == "d3dmetal", renderer != "d3dmetal" { return "Ce jeu nécessite le moteur DirectX 12 de Playmelt." }
-        return renderer == "d3dmetal" && !graphicsValidated ? "DirectX 12 doit encore être validé avant le lancement de ce jeu." : nil
+        // Compatibility is an observation made after running a title, not a
+        // prerequisite that can prohibit its very first official Steam launch.
+        // Engine preparation, executable integrity, account and entitlement
+        // checks remain mandatory at dispatch. Keep graphicsValidated false
+        // until there is actual evidence; do not manufacture that evidence.
+        return nil
     }
     static func windowsArguments(appID: String, renderer: String = "dxmt", graphicsValidated: Bool = false) -> [String]? {
         guard LibraryModel.validAppID(appID), blockReason(appID: appID, platform: "windows", renderer: renderer, graphicsValidated: graphicsValidated) == nil else { return nil }
@@ -485,7 +687,9 @@ struct GameUninstallPlan: Equatable {
 enum RenderProtection {
     static let preferenceKey = "renderProtectionEnabled"
     static let executionActions: Set<String> = ["launchGame", "installGame", "installAndPlay", "uninstallGame", "setupWindowsRuntime", "installSteamWindows", "openWindowsSteam", "setupD3DMetalRuntime", "installSteamD3DMetal", "openD3DMetalSteam", "openSteam", "openEpic"]
-    static func enabled(in preferences: UserDefaults) -> Bool { preferences.object(forKey: preferenceKey) as? Bool ?? true }
+    /// Retiré le 12/11/2026 : garde-fou interne de studio (rendus en cours), sans objet dans l'app.
+    /// Toujours inactif, quelle que soit l'ancienne préférence ; plus aucun réglage ne l'expose.
+    static func enabled(in preferences: UserDefaults) -> Bool { false }
     static func blocks(_ action: String, enabled: Bool) -> Bool { enabled && executionActions.contains(action) }
 }
 
@@ -513,6 +717,72 @@ final class SteamRequestGate {
 
 func shellLiteral(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
+/// Wine lancé depuis un bundle déclaré « jeu ». Vérifié le 14/11/2026 dans le journal de gamepolicyd :
+/// le Wine nu n'est jamais reconnu comme jeu (même avec un plist embarqué modifié), alors que le même
+/// binaire placé dans ce bundle obtient « Found game … LSSupportsGameMode » puis « Game mode enabled »
+/// dès que sa fenêtre couvre l'écran. Aucun fichier du moteur n'est modifié : copies APFS + liens.
+enum GameModeRuntime {
+    static let engineID = "playmelt-wine10-dxmt-20261017"
+    static let bundleName = "PlaymeltGame.app"
+    static let scriptWine = "$RUNTIME_DIR/" + engineID + "/" + bundleName + "/Contents/MacOS/wine"
+    static let engineScriptWine = "$RUNTIME_DIR/" + engineID + "/engine/bin/wine"
+    static let infoPlist = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0"><dict>
+    <key>CFBundleExecutable</key><string>wine</string>
+    <key>CFBundleIdentifier</key><string>fr.playmelt.game-runtime</string>
+    <key>CFBundleName</key><string>Playmelt</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>10.0</string>
+    <key>CFBundleVersion</key><string>10.0</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+    <key>LSSupportsGameMode</key><true/>
+    <key>GCSupportsGameMode</key><true/>
+    <key>NSPrincipalClass</key><string>WineApplication</string>
+    <key>NSHighResolutionCapable</key><true/>
+    </dict></plist>
+
+    """
+    private static func same(_ a: URL, _ b: URL) -> Bool {
+        let fm = FileManager.default
+        guard let x = try? fm.attributesOfItem(atPath: a.path), let y = try? fm.attributesOfItem(atPath: b.path),
+              x[.type] as? FileAttributeType == .typeRegular, y[.type] as? FileAttributeType == .typeRegular,
+              fm.isExecutableFile(atPath: a.path), fm.isExecutableFile(atPath: b.path) else { return false }
+        return (x[.size] as? NSNumber) == (y[.size] as? NSNumber) && (x[.modificationDate] as? Date) == (y[.modificationDate] as? Date)
+    }
+    /// Crée ou rafraîchit le bundle à côté du moteur. `false` : garder le Wine du moteur.
+    static func ensure(runtimeRoot: URL) -> Bool {
+        let fm = FileManager.default
+        let root = runtimeRoot.appendingPathComponent(engineID, isDirectory: true)
+        let engine = root.appendingPathComponent("engine", isDirectory: true)
+        let bundle = root.appendingPathComponent(bundleName, isDirectory: true)
+        let binaries = ["wine", "wineserver"]
+        guard binaries.allSatisfy({ fm.isExecutableFile(atPath: engine.appendingPathComponent("bin/" + $0).path) }),
+              ["lib", "share"].allSatisfy({ fm.fileExists(atPath: engine.appendingPathComponent($0).path) }) else { return false }
+        let contents = bundle.appendingPathComponent("Contents", isDirectory: true)
+        let current = binaries.allSatisfy { same(engine.appendingPathComponent("bin/" + $0), contents.appendingPathComponent("MacOS/" + $0)) }
+            && ["lib", "share"].allSatisfy { (try? fm.destinationOfSymbolicLink(atPath: contents.appendingPathComponent($0).path)) == "../../engine/" + $0 }
+            && (try? String(contentsOf: contents.appendingPathComponent("Info.plist"), encoding: .utf8)) == infoPlist
+        if current { return true }
+        let staging = root.appendingPathComponent("." + bundleName + "." + UUID().uuidString, isDirectory: true)
+        do {
+            let staged = staging.appendingPathComponent("Contents", isDirectory: true)
+            try fm.createDirectory(at: staged.appendingPathComponent("MacOS", isDirectory: true), withIntermediateDirectories: true)
+            for name in binaries { try fm.copyItem(at: engine.appendingPathComponent("bin/" + name), to: staged.appendingPathComponent("MacOS/" + name)) }
+            for name in ["lib", "share"] { try fm.createSymbolicLink(atPath: staged.appendingPathComponent(name).path, withDestinationPath: "../../engine/" + name) }
+            try Data(infoPlist.utf8).write(to: staged.appendingPathComponent("Info.plist"), options: .atomic)
+            guard binaries.allSatisfy({ same(engine.appendingPathComponent("bin/" + $0), staged.appendingPathComponent("MacOS/" + $0)) }) else { throw CocoaError(.fileWriteUnknown) }
+            if fm.fileExists(atPath: bundle.path) || (try? fm.destinationOfSymbolicLink(atPath: bundle.path)) != nil { try fm.removeItem(at: bundle) }
+            try fm.moveItem(at: staging, to: bundle)
+            return true
+        } catch {
+            try? fm.removeItem(at: staging)
+            return false
+        }
+    }
+}
+
 func localGameEnvironmentExports(appID: String) -> String {
     let lower = appID.lowercased()
     var exports: [String] = []
@@ -521,6 +791,9 @@ func localGameEnvironmentExports(appID: String) -> String {
     }
     if lower.contains("rebirth") || appID == "33e6ac38b5a14098b079fd62d71aabc6" {
         exports.append("export WINEMSYNC=\"0\"")
+        // msync reste exclu pour ce jeu ; esync évite de repasser par le serveur Wine
+        // (≈2× plus rapide sur le banc wine-sync-bench du 14/11/2026, à confirmer en jeu).
+        exports.append("export WINEESYNC=\"1\"")
     }
     return exports.joined(separator: "\n")
 }
@@ -531,12 +804,14 @@ func localGameDX12Arguments(appID: String, projectName: String?) -> [String] {
 
 func localGameEpicAuthBlock(appID: String, store: String) -> String {
     guard store == "epic" || appID == "33e6ac38b5a14098b079fd62d71aabc6" || appID.lowercased().contains("rebirth") else { return "EPIC_PARAMS=()" }
+    guard let runtime = PortablePythonRuntime.resolve(requireLegendary:true,requireCertificates:true),let legendary = runtime.legendaryExecutableURL else { return "EPIC_PARAMS=()" }
+    let certificate = runtime.certificateURL.map { "SSL_CERT_FILE=" + shellLiteral($0.path) + " " } ?? ""
     return """
     EPIC_PARAMS=()
-    LEGENDARY_BIN="$HOME/Library/Application Support/Playmelt/Dependencies.noindex/epic-venv/bin/legendary"
-    PYTHON_BIN="$HOME/Library/Application Support/Playmelt/Dependencies.noindex/epic-venv/bin/python3"
+    LEGENDARY_BIN=\(shellLiteral(legendary.path))
+    PYTHON_BIN=\(shellLiteral(runtime.pythonURL.path))
     if [ -x "$LEGENDARY_BIN" ] && [ -x "$PYTHON_BIN" ]; then
-        AUTH_ARGS=$("$PYTHON_BIN" - "$LEGENDARY_BIN" "\(appID)" << 'EOF'
+        AUTH_ARGS=$(/usr/bin/env -u PYTHONHOME -u PYTHONPATH -u PYTHONUSERBASE \(certificate)"$PYTHON_BIN" -I -B - "$LEGENDARY_BIN" "\(appID)" << 'EOF'
     import sys, subprocess, re
 
     legendary, app_name = sys.argv[1], sys.argv[2]
@@ -570,83 +845,31 @@ func localGameEpicAuthBlock(appID: String, store: String) -> String {
 }
 
 func localGameDisplaySyncBlock(appID: String) -> String {
-    guard appID == "33e6ac38b5a14098b079fd62d71aabc6" || appID.lowercased().contains("rebirth") else { return "" }
+    // Display routing is provided by the native launch policy. Never rewrite
+    // arbitrary game quality settings or infer the target from NSScreen.main.
+    return ""
+}
+
+func localGameQualityPreparation(appID:String)->String? {
+    guard let script=PortablePythonRuntime.resource(named:"game_display_quality.py"),
+          let python=PortablePythonRuntime.resolve()?.pythonURL else{return nil}
     return """
-    # Synchronisation automatique de l'affichage (HDMI / Écran externe / Retina)
-    PYTHON_APPKIT=""
-    for p in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
-        if [ -x "$p" ] && "$p" -c "import AppKit" 2>/dev/null; then
-            PYTHON_APPKIT="$p"
-            break
-        fi
-    done
+    # Playmelt high DPI v1
+    QUALITY_COORDINATES=$(/usr/bin/env -u PYTHONHOME -u PYTHONPATH -u PYTHONUSERBASE PYTHONNOUSERSITE=1 \(shellLiteral(python.path)) -B \(shellLiteral(script.path)) --prepare \(shellLiteral(appID.isEmpty ? "local" : appID)))
+    read -r PLAYMELT_GAME_WIDTH PLAYMELT_GAME_HEIGHT PLAYMELT_GAME_X PLAYMELT_GAME_Y <<< "$QUALITY_COORDINATES"
+    export PLAYMELT_GAME_WIDTH PLAYMELT_GAME_HEIGHT PLAYMELT_GAME_X PLAYMELT_GAME_Y
+    """
+}
 
-    if [ -n "$PYTHON_APPKIT" ]; then
-        "$PYTHON_APPKIT" - << 'EOF'
-    import AppKit, os, re
-
-    try:
-        main = AppKit.NSScreen.mainScreen()
-        if main:
-            w = int(main.frame().size.width)
-            h = int(main.frame().size.height)
-            scale = int(main.backingScaleFactor())
-            retina = "Y" if scale == 2 else "N"
-            
-            runtime_dir = os.path.expanduser("~/Library/Application Support/Playmelt/Runtime")
-            user_reg = os.path.join(runtime_dir, "D3DMetal/prefix/user.reg")
-            if os.path.exists(user_reg):
-                with open(user_reg, "r", encoding="utf-8") as f:
-                    rcontent = f.read()
-                if "[Software\\\\\\\\Wine\\\\\\\\Mac Driver]" in rcontent:
-                    rcontent = re.sub(r'"RetinaMode"="[YN]"', f'"RetinaMode"="{retina}"', rcontent)
-                    if '"RetinaMode"' not in rcontent:
-                        rcontent = rcontent.replace("[Software\\\\\\\\Wine\\\\\\\\Mac Driver]", f'[Software\\\\\\\\Wine\\\\\\\\Mac Driver]\\n"RetinaMode"="{retina}"\\n"CaptureDisplaysForFullscreen"="N"')
-                    with open(user_reg, "w", encoding="utf-8") as f:
-                        f.write(rcontent)
-            
-            ini_path = os.path.expanduser("~/Library/Application Support/Playmelt/Runtime/D3DMetal/prefix/drive_c/users/robtech/Documents/My Games/FINAL FANTASY VII REBIRTH/Saved/Config/WindowsNoEditor/GameUserSettings.ini")
-            if os.path.exists(ini_path):
-                with open(ini_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                replacements = {
-                    r"ResolutionSizeX=\\\\d+": f"ResolutionSizeX={w}",
-                    r"ResolutionSizeY=\\\\d+": f"ResolutionSizeY={h}",
-                    r"LastUserConfirmedResolutionSizeX=\\\\d+": f"LastUserConfirmedResolutionSizeX={w}",
-                    r"LastUserConfirmedResolutionSizeY=\\\\d+": f"LastUserConfirmedResolutionSizeY={h}",
-                    r"DesiredScreenWidth=\\\\d+": f"DesiredScreenWidth={w}",
-                    r"DesiredScreenHeight=\\\\d+": f"DesiredScreenHeight={h}",
-                    r"LastUserConfirmedDesiredScreenWidth=\\\\d+": f"LastUserConfirmedDesiredScreenWidth={w}",
-                    r"LastUserConfirmedDesiredScreenHeight=\\\\d+": f"LastUserConfirmedDesiredScreenHeight={h}",
-                    r"FullscreenMode=\\\\d+": "FullscreenMode=1",
-                    r"LastConfirmedFullscreenMode=\\\\d+": "LastConfirmedFullscreenMode=1",
-                    r"PreferredFullscreenMode=\\\\d+": "PreferredFullscreenMode=1",
-                    r"WindowPosX=[-\\\\d]+": "WindowPosX=0",
-                    r"WindowPosY=[-\\\\d]+": "WindowPosY=0",
-                    r"sg\\\\.ViewDistanceQuality=\\\\d+": "sg.ViewDistanceQuality=3",
-                    r"sg\\\\.AntiAliasingQuality=\\\\d+": "sg.AntiAliasingQuality=3",
-                    r"sg\\\\.ShadowQuality=\\\\d+": "sg.ShadowQuality=3",
-                    r"sg\\\\.PostProcessQuality=\\\\d+": "sg.PostProcessQuality=3",
-                    r"sg\\\\.TextureQuality=\\\\d+": "sg.TextureQuality=3",
-                    r"sg\\\\.EffectsQuality=\\\\d+": "sg.EffectsQuality=3",
-                    r"sg\\\\.FoliageQuality=\\\\d+": "sg.FoliageQuality=3",
-                    r"sg\\\\.ShadingQuality=\\\\d+": "sg.ShadingQuality=3",
-                    r"sg\\\\.SkeletalMeshQuality=\\\\d+": "sg.SkeletalMeshQuality=3",
-                    r"sg\\\\.StaticMeshQuality=\\\\d+": "sg.StaticMeshQuality=3",
-                }
-                for pat, rep in replacements.items():
-                    content = re.sub(pat, rep, content)
-                with open(ini_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-            
-            engine_ini = os.path.expanduser("~/Library/Application Support/Playmelt/Runtime/D3DMetal/prefix/drive_c/users/robtech/Documents/My Games/FINAL FANTASY VII REBIRTH/Saved/Config/WindowsNoEditor/Engine.ini")
-            if not os.path.exists(engine_ini) or "r.SSR.Quality=4" not in open(engine_ini, encoding="utf-8").read():
-                with open(engine_ini, "w", encoding="utf-8") as f:
-                    f.write("[SystemSettings]\\nr.SSR.Quality=4\\nr.SSR.MaxRoughness=1.0\\nr.SSR.HalfResAtFillRatio=0\\nr.Shadow.MaxResolution=4096\\nr.Shadow.CSM.MaxCascades=5\\nr.Shadow.DistanceScale=2.0\\nr.Shadow.RadiusThreshold=0.01\\nr.ShadowQuality=5\\nr.VolumetricFog=1\\nr.VolumetricFog.GridPixelSizeHorizontal=4\\nr.VolumetricFog.GridPixelSizeVertical=4\\nr.VolumetricFog.GridSizeZ=128\\nr.ViewDistanceScale=2.0\\nr.StaticMeshLODDistanceScale=0.5\\nr.SkeletalMeshLODBias=-1\\nr.Streaming.PoolSize=4096\\nr.Streaming.LimitPoolSizeToVRAM=0\\nr.Streaming.FullyLoadUsedTextures=1\\nr.MaxAnisotropy=16\\nr.DynamicRes.OperationMode=0\\nr.Tonemapper.Sharpen=0.8\\nr.AmbientOcclusionLevels=3\\nr.BloomQuality=5\\nr.DepthOfFieldQuality=2\\n")
-    except Exception:
-        pass
-    EOF
+func localGameDisplayGuardBlock() -> String {
+    """
+    # Playmelt display guard v1
+    if [ "${PLAYMELT_DISPLAY_POLICY:-}" != "external-windowed-v1" ] || [ ! -f "${PLAYMELT_DISPLAY_GUARD_LIBRARY:-}" ]; then
+        echo "Écran externe ou protection des écrans non vérifié." >&2
+        exit 78
     fi
+    export DYLD_INSERT_LIBRARIES="$PLAYMELT_DISPLAY_INSERT_LIBRARIES"
+    export SDL_VIDEO_MAC_FULLSCREEN_SPACES=0
     """
 }
 
@@ -679,6 +902,79 @@ func localGameExecutable(appID: String, files: [String]) -> String? {
     return exeCandidates.first(where: { $0.lowercased().contains("-shipping.exe") }) ??
            exeCandidates.filter { !$0.contains("/") }.sorted(by: { $0.count < $1.count }).first ??
            exeCandidates.sorted(by: { $0.count < $1.count }).first
+}
+
+/// Share the exact declared-target precedence between preflight, script creation
+/// and the authenticated Epic dispatcher. A heuristic must not override a valid
+/// local manifest when the script already selected its executable.
+func resolvedGameExecutable(appID: String, folder: URL, files: [String], steamLaunch: SteamDepotLaunchManifest? = nil) -> String? {
+    steamLaunch?.executable ?? LocalGameManifest.read(folder)?.executable ?? localGameExecutable(appID: appID, files: files)
+}
+
+func resolvedLocalGameRenderer(appID: String, files: [String], manifestRenderer: String?, requestedBackend: String, executable: String = "") -> String {
+    let unity = executable.lowercased().contains("unity") || files.contains { $0.lowercased().contains("unityplayer.dll") || $0.lowercased().hasSuffix("_data") }
+    let dx12 = files.contains { $0.lowercased().contains("d3d12core.dll") || $0.lowercased().contains("d3d12sdklayers.dll") || $0.lowercased().contains("plugins/nne") }
+    return GamePerformanceRuntime.renderer(requested: requestedBackend, manifest: manifestRenderer, fallback: SteamGameLaunchProfile.localRenderer(appID: appID, unity: unity, dx12Markers: dx12))
+}
+
+/// Same executable precedence and renderer selection as the direct script.
+/// A Steam first-start/DRM route is deliberately not a direct process route.
+func localGamePerformanceSelection(for game: Game, requestedBackend: String) -> (executable: String, renderer: String, resolution: GamePerformanceResolutionStrategy)? {
+    guard game.platform == "windows", let folder = game.path,
+          game.installSource == "local" || game.store == "steam" || game.store == "epic" else { return nil }
+    let required = SteamGameLaunchProfile.requiredRenderer(appID: game.appId)
+    let bridge = requestedBackend == "d3dmetal-nv" || requestedBackend == "d3dmetal-nv-rt"
+    guard ["auto", "dxmt", "d3dmetal", "d3dmetal-nv", "d3dmetal-nv-rt"].contains(requestedBackend),
+          requestedBackend == "auto" || required == "auto" || requestedBackend == required || (bridge && required == "d3dmetal") else { return nil }
+    let windows = folder.appendingPathComponent("Windows")
+    let target = FileManager.default.fileExists(atPath: windows.path) ? windows : folder
+    guard let files = try? FileManager.default.subpathsOfDirectory(atPath: target.path) else { return nil }
+    let manifest = SteamDepotLaunchManifest.read(folder, appID: game.appId)
+    guard !FileManager.default.fileExists(atPath: SteamDepotLaunchManifest.file(folder).path) || manifest != nil,
+          manifest?.requiresOfficialSteam != true,
+          let executable = resolvedGameExecutable(appID: game.appId, folder: folder, files: files, steamLaunch: manifest) else { return nil }
+    return (executable, resolvedLocalGameRenderer(appID: game.appId, files: files, manifestRenderer: manifest?.renderer, requestedBackend: requestedBackend, executable: executable),
+            GamePerformanceRuntime.resolutionStrategy(executable: executable, files: files))
+}
+
+/// Read-only preflight used by the library and repeated at dispatch. A launcher
+/// file alone is never proof that the executable or runtime still exists.
+func localLaunchBlockReason(for game: Game, steamAccountID:String, runtimeDescriptor:PlaymeltRuntimeDescriptor? = nil) -> String? {
+    guard game.installed, let folder = game.path, FileManager.default.fileExists(atPath: folder.path) else {
+        return "Dossier du jeu introuvable. Actualisez la bibliothèque."
+    }
+    guard game.complete else { return "Installation incomplète. Vérifiez les fichiers du jeu." }
+    let fm = FileManager.default
+    let windows = folder.appendingPathComponent("Windows")
+    let target = fm.fileExists(atPath: windows.path) ? windows : folder
+    let steamLaunch=SteamDepotLaunchManifest.read(folder,appID:game.appId)
+    if fm.fileExists(atPath:SteamDepotLaunchManifest.file(folder).path),steamLaunch == nil {return "Le lancement publié par Steam doit être vérifié. Les fichiers sont conservés."}
+    if let launch=steamLaunch {
+        // Discovery may select the account in a scan before preferences are
+        // persisted. Validate the caller's current snapshot, never a global
+        // remembered selection from another account or application session.
+        if let issue=launch.requiresOfficialSteam ? launch.officialClientIssue(accountID:steamAccountID,descriptor:runtimeDescriptor):launch.preparationIssue(accountID:steamAccountID,descriptor:runtimeDescriptor){return issue}
+    }
+    guard let files = try? fm.subpathsOfDirectory(atPath: target.path),
+          let chosen = resolvedGameExecutable(appID: game.appId, folder: folder, files: files, steamLaunch: steamLaunch) else {
+        return "Exécutable du jeu introuvable. Vérifiez les fichiers de l’installation."
+    }
+    let executable = target.appendingPathComponent(chosen)
+    guard let values = try? executable.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+          values.isRegularFile == true, values.isSymbolicLink != true,
+          let handle = try? FileHandle(forReadingFrom: executable) else { return "Exécutable du jeu invalide ou inaccessible." }
+    defer { try? handle.close() }
+    guard (try? handle.read(upToCount: 2)) == Data([0x4d, 0x5a]) else { return "Exécutable du jeu incomplet ou invalide." }
+    let base = runtimeDescriptor ?? RuntimeSetup().descriptor()
+    guard base.readyEngine else { return "Le moteur Windows n’est pas prêt. Ouvrez Paramètres." }
+    let unity = files.contains { $0.lowercased().contains("unityplayer.dll") || $0.lowercased().hasSuffix("_data") }
+    let dx12 = files.contains { $0.lowercased().contains("d3d12core.dll") || $0.lowercased().contains("plugins/nne") }
+    if (steamLaunch?.renderer ?? SteamGameLaunchProfile.localRenderer(appID: game.appId, unity: unity, dx12Markers: dx12)) == "d3dmetal" {
+        do {
+            guard try D3DMetalRuntime(store: D3DMetalStore()).descriptor(base: base)?.readyEngine == true else { return "Le moteur DirectX 12 n’est pas préparé." }
+        } catch { return error.localizedDescription }
+    }
+    return nil
 }
 
 func findLaunchScript(in url: URL?) -> URL? {
@@ -715,18 +1011,36 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
     let winFolder = folder.appendingPathComponent("Windows")
     let targetDir = fm.fileExists(atPath: winFolder.path) ? winFolder : folder
     guard let files = try? fm.subpathsOfDirectory(atPath: targetDir.path) else { return nil }
-    guard let chosen = localGameExecutable(appID: game.appId, files: files) else { return nil }
+    let steamLaunch=SteamDepotLaunchManifest.read(folder,appID:game.appId)
+    if fm.fileExists(atPath:SteamDepotLaunchManifest.file(folder).path),steamLaunch == nil {return nil}
+    // Never generate a direct EXE launcher for a game whose first-start
+    // components or licence must be handled by the official Steam client.
+    if steamLaunch?.requiresOfficialSteam == true {return nil}
+    guard let chosen = resolvedGameExecutable(appID: game.appId, folder: folder, files: files, steamLaunch: steamLaunch) else { return nil }
+    let effectiveRenderer = resolvedLocalGameRenderer(appID: game.appId, files: files, manifestRenderer: steamLaunch?.renderer, requestedBackend: requestedBackend, executable: chosen)
+    // Mode Jeu macOS : Wine part du bundle « jeu » quand il a pu être préparé, sinon du moteur.
+    let gameModeWine = GameModeRuntime.ensure(runtimeRoot: fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/Runtime", isDirectory: true))
+    let wineLauncher = gameModeWine ? GameModeRuntime.scriptWine : GameModeRuntime.engineScriptWine
 
     if game.appId != "2651280", let existing = findLaunchScript(in: game.path) {
+        guard contentIsOwnedLaunchScript(existing) else { return nil }
         // Upgrade legacy flawed launch scripts that mixed D3DMetal into DXMT, or launched a wrapper bootstrap
         if let content = try? String(contentsOf: existing, encoding: .utf8),
-           content.contains("WINEDLLPATH_PREPEND=\"$RENDERER_DIR/wine:$RUNTIME_DIR") ||
+           steamLaunch != nil || content.contains("WINEDLLPATH_PREPEND=\"$RENDERER_DIR/wine:$RUNTIME_DIR") ||
            (game.appId == "1783560" && content.contains("-dx11")) ||
            !content.contains(chosen) ||
+           !content.contains(shellLiteral(targetDir.appendingPathComponent(chosen).path)) ||
+           ((game.appId.lowercased().contains("rebirth") || game.appId == "33e6ac38b5a14098b079fd62d71aabc6") && !content.contains("WINEESYNC=\"1\"")) ||
+           !content.contains("exec \"" + wineLauncher + "\" ") ||
+           content.contains(" -windowed -ResX=") || content.contains(" -screen-fullscreen 0 ") ||
            !content.contains("ROSETTA_ADVERTISE_AVX") ||
+           !content.contains("# Playmelt display guard v1") ||
+           !content.contains("# Playmelt performance request v1") ||
+           (effectiveRenderer == "dxmt" && content.contains("# Lanceur direct Playmelt (Wine / D3DMetal DX12)")) ||
+           (effectiveRenderer != "dxmt" && content.contains("# Lanceur direct Playmelt (Wine / DXMT)")) ||
+           (content.contains("# Lanceur direct Playmelt (Wine / D3DMetal DX12)") && !content.contains("# Playmelt high DPI v1")) ||
            (game.appId.lowercased().contains("rebirth") && content.contains("WINEMSYNC=\"1\"")) ||
            ((game.store == "epic" || game.appId == "33e6ac38b5a14098b079fd62d71aabc6") && !content.contains("EPIC_PARAMS")) ||
-           (game.appId.lowercased().contains("rebirth") && !content.contains("r.SSR.Quality=4")) ||
            (content.contains("# Lanceur direct Playmelt") && !content.contains("# Playmelt launcher v3")) {
             // Needs regeneration below
         } else if requestedBackend == "auto",
@@ -746,8 +1060,8 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
     }
 
     let isUnity = chosen.lowercased().contains("unity") || files.contains(where: { $0.lowercased().hasSuffix("_data") || $0.lowercased().contains("unityplayer.dll") })
-    let dx12Markers = files.contains(where: { $0.lowercased().contains("d3d12core.dll") || $0.lowercased().contains("d3d12sdklayers.dll") || $0.lowercased().contains("plugins/nne") })
-    let selectedBackend = requestedBackend == "auto" ? SteamGameLaunchProfile.localRenderer(appID: game.appId, unity: isUnity, dx12Markers: dx12Markers) : requestedBackend
+    let selectedBackend = effectiveRenderer
+    let resolutionStrategy = GamePerformanceRuntime.resolutionStrategy(executable: chosen, files: files)
     let isDX12 = ["d3dmetal", "d3dmetal-nv", "d3dmetal-nv-rt"].contains(selectedBackend)
     let useNvidiaBridge = selectedBackend == "d3dmetal-nv" || selectedBackend == "d3dmetal-nv-rt"
     // Ray tracing DXR : opt-in par jeu, uniquement avec le pont (Ray Reconstruction).
@@ -760,7 +1074,7 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
     }
 
     var projName: String? = nil
-    if chosen.lowercased().contains("-shipping.exe") {
+    if steamLaunch == nil,chosen.lowercased().contains("-shipping.exe") {
         projName = (try? fm.contentsOfDirectory(atPath: targetDir.path))?.first(where: { item in
             var isDir: ObjCBool = false
             return fm.fileExists(atPath: targetDir.appendingPathComponent(item).path, isDirectory: &isDir) && isDir.boolValue && !["engine", "communityresources", "binaries", "redist"].contains(item.lowercased())
@@ -769,21 +1083,31 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
 
     let extraArgs: String
     let scriptContent: String
+    // Chemin absolu pour tous les jeux : la mesure de session n'identifie le jeu
+    // que par son chemin complet (un chemin relatif donnait « target_not_identified »).
+    let launchExecutable=targetDir.appendingPathComponent(chosen).path
+    let publisherCWD=steamLaunch.map { $0.workingDirectory.isEmpty ? "" : "cd " + shellLiteral(targetDir.appendingPathComponent($0.workingDirectory).path) } ?? ""
     if game.appId == "2651280" {
         let expected = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/Games/MarvelsSpiderMan2", isDirectory: true).standardizedFileURL
         guard targetDir.standardizedFileURL == expected, chosen == "Spider-Man2.exe",
-              let runner = Bundle.main.url(forResource: "spiderman2_profile", withExtension: "py"),
-              let python = ["/opt/homebrew/bin/python3", "/usr/bin/python3", "/usr/local/bin/python3"].first(where: { fm.isExecutableFile(atPath: $0) }) else { return nil }
+              let runner = PortablePythonRuntime.resource(named:"spiderman2_profile.py"),
+              let python = PortablePythonRuntime.resolve()?.pythonURL else { return nil }
         extraArgs = ""
         scriptContent = """
         #!/bin/bash
         # Lanceur direct Playmelt (Wine / D3DMetal DX12)
         # Playmelt launcher v3
-        exec \(shellLiteral(python)) -B \(shellLiteral(runner.path)) --run
+        # Playmelt display guard v1: enforced by the verified plan helper
+        set -e
+        LOG_DIR="$HOME/Library/Application Support/Playmelt/Runtime/logs"
+        mkdir -p "$LOG_DIR"
+        exec /usr/bin/env -u PYTHONHOME -u PYTHONPATH -u PYTHONUSERBASE PYTHONNOUSERSITE=1 \(shellLiteral(python.path)) -B \(shellLiteral(runner.path)) --run >"$LOG_DIR/game-2651280.log" 2>&1
         \n
         """
     } else if isDX12 {
-        extraArgs = localGameDX12Arguments(appID: game.appId, projectName: projName).map(shellLiteral).joined(separator: " ")
+        guard let qualityPreparation=localGameQualityPreparation(appID:game.appId) else{return nil}
+        extraArgs = (steamLaunch?.arguments ?? localGameDX12Arguments(appID: game.appId, projectName: projName)).map(shellLiteral).joined(separator: " ")
+            + (projName != nil ? " -fullscreen -ResX=\"$PLAYMELT_GAME_WIDTH\" -ResY=\"$PLAYMELT_GAME_HEIGHT\"" : "")
         // Pont DLSS → MetalFX : exports runtime + répertoire wine du composant moteur.
         let bridgeExports = (useNvidiaBridge ? "export D3DM_ENABLE_METALFX=\"1\"\nexport WINEDLLOVERRIDES=\"nvapi64,nvngx=b,n;$WINEDLLOVERRIDES\"\n" : "")
             + (useDXR ? "export D3DM_SUPPORT_DXR=\"1\"\n" : "")
@@ -792,12 +1116,15 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
         #!/bin/bash
         # Lanceur direct Playmelt (Wine / D3DMetal DX12)
         # Playmelt launcher v3
+        # Playmelt performance request v1
         set -eo pipefail
+        \(localGameDisplayGuardBlock())
         GAME_DIR=\(shellLiteral(targetDir.path))
         RUNTIME_DIR="$HOME/Library/Application Support/Playmelt/Runtime"
         RENDERER_DIR="$HOME/Library/Application Support/Playmelt/Renderers/D3DMetal/payload"
 
         cd "$GAME_DIR"
+        \(publisherCWD)
 
         export ROSETTA_ADVERTISE_AVX="1"
         export WINEPREFIX="$RUNTIME_DIR/D3DMetal/prefix"
@@ -814,24 +1141,29 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
         export MVK_CONFIG_LOG_LEVEL=0
 
         \(localGameDisplaySyncBlock(appID: game.appId))
+        \(qualityPreparation)
 
         \(localGameEpicAuthBlock(appID: game.appId, store: game.store))
 
         mkdir -p "$RUNTIME_DIR/logs"
-        exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" \(shellLiteral(chosen)) \(extraArgs) "${EPIC_PARAMS[@]}" "$@" 2>&1 | /usr/bin/tail -c 1048576 >"$RUNTIME_DIR/logs/game-\(game.appId).log"
+        exec "\(wineLauncher)" \(shellLiteral(launchExecutable)) \(extraArgs) "${EPIC_PARAMS[@]}" "$@" 2>&1 | /usr/bin/tail -c 1048576 >"$RUNTIME_DIR/logs/game-\(game.appId).log"
         \n
         """
     } else {
-        extraArgs = (isUnity ? ["-force-d3d11"] : ((projName.map { [$0] } ?? []) + ["-dx11"])).map(shellLiteral).joined(separator: " ")
+        extraArgs = (steamLaunch?.arguments ?? (isUnity ? ["-force-d3d11"] : ((projName.map { [$0] } ?? []) + ["-dx11"]))).map(shellLiteral).joined(separator: " ")
+            + GamePerformanceRuntime.resolutionShellArguments(unity: isUnity, unreal: projName != nil || resolutionStrategy == .unreal)
         scriptContent = """
         #!/bin/bash
         # Lanceur direct Playmelt (Wine / DXMT)
         # Playmelt launcher v3
+        # Playmelt performance request v1
         set -eo pipefail
+        \(localGameDisplayGuardBlock())
         GAME_DIR=\(shellLiteral(targetDir.path))
         RUNTIME_DIR="$HOME/Library/Application Support/Playmelt/Runtime"
 
         cd "$GAME_DIR"
+        \(publisherCWD)
 
         export ROSETTA_ADVERTISE_AVX="1"
         export WINEPREFIX="$RUNTIME_DIR/prefix"
@@ -848,7 +1180,7 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
         \(localGameEpicAuthBlock(appID: game.appId, store: game.store))
 
         mkdir -p "$RUNTIME_DIR/logs"
-        exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" \(shellLiteral(chosen)) \(extraArgs) "${EPIC_PARAMS[@]}" "$@" 2>&1 | /usr/bin/tail -c 1048576 >"$RUNTIME_DIR/logs/game-\(game.appId).log"
+        exec "\(wineLauncher)" \(shellLiteral(launchExecutable)) \(extraArgs) "${EPIC_PARAMS[@]}" "$@" 2>&1 | /usr/bin/tail -c 1048576 >"$RUNTIME_DIR/logs/game-\(game.appId).log"
         \n
         """
     }
@@ -943,11 +1275,11 @@ final class LibraryModel {
         let nativeRoot = home.appendingPathComponent("Library/Application Support/Steam")
         let app = [URL(fileURLWithPath: "/Applications/Steam.app"), home.appendingPathComponent("Applications/Steam.app"), nativeRoot.appendingPathComponent("Steam.AppBundle/Steam")].first { fm.fileExists(atPath: $0.appendingPathComponent("Contents/MacOS/steam_osx").path) }
         var runtimes = [Runtime(id: "steam-mac", name: "Steam · macOS", platform: "mac", steamRoot: nativeRoot, appURL: app)]
-        if let engine = windowsDescriptor, engine.readyEngine && engine.steamInstalled {
+        if let engine = windowsDescriptor, engine.readyEngine {
             runtimes.append(Runtime(id: "playmelt-windows", name: "Playmelt · Windows", platform: "windows", steamRoot: engine.steamRoot, appURL: nil,
                                     wineURL: engine.wineURL, prefixURL: engine.prefixURL, environment: engine.environment, verifiedIndependentEngine: true))
         }
-        if let engine = d3dMetalDescriptor, engine.readyEngine && engine.steamInstalled {
+        if let engine = d3dMetalDescriptor, engine.readyEngine {
             runtimes.append(Runtime(id: "playmelt-d3dmetal", name: "Playmelt · DirectX 12", platform: "windows", steamRoot: engine.steamRoot, appURL: nil,
                                     wineURL: engine.wineURL, prefixURL: engine.prefixURL, environment: engine.environment, verifiedIndependentEngine: true,
                                     renderer: "d3dmetal", graphicsValidated: false))
@@ -957,6 +1289,7 @@ final class LibraryModel {
     private var scanGeneration: UInt64 = 0
     private let auditScanner = LibraryScanner()
     private var scannedAvailability: [String: Bool] = [:]
+    private var launchPreflights: [String: GameLaunchPreflight] = [:]
     private(set) var lastScanMetrics = LibraryScanMetrics()
     func makeScanRequest() -> LibraryScanRequest {
         scanGeneration &+= 1
@@ -973,6 +1306,7 @@ final class LibraryModel {
         runtimes = snapshot.runtimes; accounts = snapshot.accounts; metadata = snapshot.metadata
         selectedAccountID = snapshot.selectedAccountID; scannedAvailability = snapshot.runtimeAvailability
         lastScanMetrics = snapshot.metrics
+        launchPreflights = snapshot.launchPreflights
         if authenticatedGames[selectedAccountID] == nil, let saved = snapshot.savedLibrary, saved.accountID == selectedAccountID {
             authenticatedGames[selectedAccountID] = saved.games.map { $0 as [String: Any] }
             authenticatedDates[selectedAccountID] = saved.updatedAt
@@ -1008,9 +1342,10 @@ final class LibraryModel {
     static func makeGame(_ id: String, ownership: String, metadata: [String: SteamAppInfo], runtimes: [Runtime], availability: [String: Bool]? = nil) -> Game {
         let info = metadata[id]
         let platform = info?.platforms.contains("macos") == true ? "mac" : info?.platforms.contains("windows") == true ? "windows" : "unknown"
-        let runtime = runtimes.first { $0.executionAllowed && $0.platform == platform && (availability?[$0.id] ?? $0.available) && SteamGameLaunchProfile.supportsInstallation(appID: id, runtime: $0) }
+        let runtime = runtimes.first { $0.executionAllowed && $0.platform == platform && ($0.platform == "windows" ? $0.installationAvailable : (availability?[$0.id] ?? $0.available)) && SteamGameLaunchProfile.supportsInstallation(appID: id, runtime: $0) }
         var game = Game(id: "steam:\(id)", appId: id, title: info?.name ?? "Steam \(id)", store: "steam", installed: false, platform: platform, runtimeId: runtime?.id ?? "", runtimeName: runtime?.name ?? (platform == "windows" ? "Moteur Windows non configuré" : "Aucune route vérifiée"), ownership: ownership)
         game.supportedPlatforms = ["macos", "windows"].filter { info?.platforms.contains($0) == true }.map { $0 == "macos" ? "mac" : "windows" }
+        if platform == "windows" {game.installBlockReason=info?.windowsInstallIssue ?? "Métadonnées Windows manquantes. Actualisez Steam."}
         if let path = info?.portraitAssets.first { game.customPortraitURL = SteamAppInfo.artworkURL(appID: id, path: path) ?? "" }
         if let path = info?.landscapeAssets.first { game.customImageURL = SteamAppInfo.artworkURL(appID: id, path: path) ?? "" }
         return game
@@ -1219,9 +1554,9 @@ final class LibraryModel {
             epic["status"] = current ? "synced" : "snapshot"; epic["displayName"] = snapshot.displayName; epic["updatedAt"] = snapshot.updatedAt
             epic["message"] = current ? "\(snapshot.displayName) · \(snapshot.games.count) jeux dans la bibliothèque Epic." : "Dernière bibliothèque Epic de \(snapshot.displayName) : \(snapshot.games.count) jeux. Nouvelle connexion ou synchronisation à vérifier."
         }
-        return ["version": "2.0.0", "accounts": accounts.map { ["id": $0.id, "name": $0.name, "source": $0.source, "selected": $0.id == selectedAccountID] as [String: Any] },
+        return ["version": Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "dev", "accounts": accounts.map { ["id": $0.id, "name": $0.name, "source": $0.source, "selected": $0.id == selectedAccountID] as [String: Any] },
                 "selectedAccountId": selectedAccountID, "libraryStatus": ["status": libraryStatus, "message": libraryMessage, "updatedAt": lastSync],
-                "games": games.map { $0.json(runtimes: runtimes, availability: availability, completedRuntimeIDs: completedRoutes[$0.appId] ?? []) }, "runtimes": runtimes.map(\.json), "hardware": hardware,
+                "games": games.map { $0.json(runtimes: runtimes, availability: availability, completedRuntimeIDs: completedRoutes[$0.appId] ?? [], launchPreflight:launchPreflights[$0.id] ?? .unchecked($0), steamAccountID: selectedAccountID) }, "runtimes": runtimes.map(\.json), "hardware": hardware,
                 "warnings": warnings, "epic": epic, "xbox": xboxConnector.availability(), "gog": gogConnector.availability(), "executionPolicy": WindowsExecutionPolicy.json,
                 "graphicsFeatures": GraphicsFeatureContract.diagnosticsSnapshot(),
                 "graphicsFrameAdapters": GraphicsFrameAdapter.diagnosticsSnapshot()]

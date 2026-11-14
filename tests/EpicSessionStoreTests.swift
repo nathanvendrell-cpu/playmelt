@@ -16,6 +16,36 @@ private final class MockKeychain: EpicKeychainAccess {
     }
     func delete(_ query: [String: Any]) -> OSStatus { deleted += 1; queries.append(query); return deleteStatus }
 }
+/// Shared fake encrypted-item boundary, never the system keychain or a file.
+private final class PersistentMockKeychain: EpicKeychainAccess {
+    var items: [String: Data] = [:]
+    var queries: [[String: Any]] = [], values: [[String: Any]] = []
+    private func key(_ query: [String: Any]) -> String {
+        [query[kSecAttrService as String] as? String ?? "", query[kSecAttrAccount as String] as? String ?? "",
+         String(query[kSecUseDataProtectionKeychain as String] as? Bool ?? false)].joined(separator: "|")
+    }
+    func copy(_ query: [String: Any]) -> (OSStatus, Data?) {
+        queries.append(query)
+        guard let data = items[key(query)] else { return (errSecItemNotFound, nil) }
+        return (errSecSuccess, data)
+    }
+    func add(_ attributes: [String: Any]) -> OSStatus {
+        queries.append(attributes); values.append(attributes)
+        guard items[key(attributes)] == nil else { return errSecDuplicateItem }
+        guard let data = attributes[kSecValueData as String] as? Data else { return errSecParam }
+        items[key(attributes)] = data; return errSecSuccess
+    }
+    func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {
+        queries.append(query); values.append(attributes)
+        guard items[key(query)] != nil else { return errSecItemNotFound }
+        guard let data = attributes[kSecValueData as String] as? Data else { return errSecParam }
+        items[key(query)] = data; return errSecSuccess
+    }
+    func delete(_ query: [String: Any]) -> OSStatus {
+        queries.append(query)
+        return items.removeValue(forKey: key(query)) == nil ? errSecItemNotFound : errSecSuccess
+    }
+}
 private final class StoreSpy: EpicSessionStoring {
     let persistenceKind = "keychain" // Simulated successful persistence, never Security.
     var stored: [String: Any]?
@@ -109,6 +139,92 @@ private final class SessionRunner: OwnedProcessRunning {
             check(attributes[kSecAttrAccessible as String] as? String == kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String, "ThisDeviceOnly protection written")
             check((attributes[kSecValueData as String] as? Data)?.count == encoded.count, "only bounded envelope persisted")
         }
+
+        check(EpicKeychainBackend.configured(info: [:]) == .dataProtection, "missing internal flag retains production DP backend")
+        check(EpicKeychainBackend.configured(info: ["PlaymeltInternalBuild": false]) == .dataProtection, "release flag retains DP backend")
+        check(EpicKeychainBackend.configured(info: ["PlaymeltInternalBuild": "true"]) == .dataProtection, "string cannot opt into internal backend")
+        check(EpicKeychainBackend.configured(info: ["PlaymeltInternalBuild": true]) == .internalLogin, "explicit internal bundle chooses login keychain")
+        let internalAPI = MockKeychain(), internalStore = EpicKeychainSessionStore(access: internalAPI, backend: .internalLogin)
+        check(internalStore.persistenceBackend == "internal-login" && internalAPI.queries.isEmpty, "internal backend remains lazy and identifiable")
+        check(try internalStore.load() == nil, "internal absent item does not inspect DP or another app's item")
+        internalAPI.updateStatuses = [errSecItemNotFound]; try internalStore.save(session)
+        internalAPI.copyStatus = errSecSuccess; internalAPI.copyData = encoded
+        check(try internalStore.load()?["account_id"] as? String == "fixture-account", "internal login keychain envelope round trip uses mock")
+        try internalStore.clear()
+        for query in internalAPI.queries {
+            check(query[kSecAttrService as String] as? String == "fr.playmelt.epic.session.internal.v1" && query[kSecAttrAccount as String] as? String == EpicKeychainSessionStore.account, "internal load save clear share exact isolated namespace")
+            check(query[kSecUseDataProtectionKeychain as String] as? Bool == false && query[kSecAttrSynchronizable as String] as? Bool == false, "internal backend is explicit file-based and never iCloud")
+            check(query[kSecUseAuthenticationUI as String] as? String == kSecUseAuthenticationUIFail as String, "internal keychain never opens an unexpected system prompt")
+            check(query[kSecAttrAccessGroup as String] == nil && query[kSecAttrAccess as String] == nil && query[kSecAttrAccessControl as String] == nil, "internal backend never supplies a shared group or broader access control")
+        }
+        for value in internalAPI.values {
+            check(value[kSecAttrAccessible as String] == nil, "login keychain does not claim DP protection classes")
+            check((value[kSecValueData as String] as? Data)?.count == encoded.count, "internal encrypted item receives only bounded envelope")
+        }
+        internalAPI.updateStatuses = [errSecAuthFailed]
+        let additions = internalAPI.added
+        rejects("internal keychain access denial stays a visible failure") { try internalStore.save(session) }
+        check(internalAPI.added == additions && internalStore.persistenceKind == "memory" && internalStore.persistenceBackend == "internal-login", "internal failure does not switch backend or add plaintext storage")
+
+        let clientInfo: [String: Any] = ["PlaymeltClientCredentialChannel": "adhoc-login-v1",
+            "PlaymeltCommercialAccessEnabled": true, "PlaymeltDevelopmentBuild": false, "PlaymeltInternalBuild": false]
+        check(EpicKeychainBackend.configured(info: clientInfo) == .clientLogin, "only explicit licensed non-owner ad-hoc client chooses client login")
+        for key in clientInfo.keys {
+            var missing = clientInfo; missing.removeValue(forKey: key)
+            check(EpicKeychainBackend.configured(info: missing) == .dataProtection, "missing client condition retains DP: " + key)
+        }
+        for (key, badValues) in [
+            ("PlaymeltClientCredentialChannel", ["client-login", "adhoc-login-v1 ", "ADHOC-LOGIN-V1", true, 1, NSNull(), ["adhoc-login-v1"]] as [Any]),
+            ("PlaymeltCommercialAccessEnabled", [false, "true", 1, NSNumber(value: 1), NSNull()] as [Any]),
+            ("PlaymeltDevelopmentBuild", [true, "false", 0, NSNumber(value: 0), NSNull()] as [Any]),
+            ("PlaymeltInternalBuild", ["false", 0, NSNumber(value: 0), NSNull()] as [Any])
+        ] {
+            for bad in badValues {
+                var invalid = clientInfo; invalid[key] = bad
+                check(EpicKeychainBackend.configured(info: invalid) == .dataProtection, "wrong client condition value/type retains DP: " + key)
+            }
+        }
+        check(EpicKeychainBackend.configured(info: ["PlaymeltInternalBuild": 1]) == .dataProtection, "numeric one cannot opt into internal storage")
+        var ownerInfo = clientInfo; ownerInfo["PlaymeltInternalBuild"] = true
+        check(EpicKeychainBackend.configured(info: ownerInfo) == .internalLogin, "true internal flag retains its own backend, never client storage")
+        check(Set([EpicKeychainBackend.dataProtection.service, EpicKeychainBackend.internalLogin.service, EpicKeychainBackend.clientLogin.service]).count == 3,
+              "production DP, internal and explicit client namespaces are distinct")
+        check(EpicKeychainBackend.clientLogin.service == "fr.playmelt.epic.session.client-login.v1", "client namespace is exact and versioned")
+
+        let persisted = PersistentMockKeychain()
+        let dpInstance = EpicKeychainSessionStore(access: persisted, backend: .dataProtection)
+        let internalInstance = EpicKeychainSessionStore(access: persisted, backend: .internalLogin)
+        try dpInstance.save(session); try internalInstance.save(session)
+        persisted.queries.removeAll(); persisted.values.removeAll()
+        let firstClient = EpicKeychainSessionStore(access: persisted, backend: .clientLogin)
+        check(firstClient.persistenceBackend == "client-login" && persisted.queries.isEmpty, "client construction is lazy with explicit backend")
+        check(try firstClient.load() == nil, "client cannot restore another channel's mock item")
+        try firstClient.save(session)
+        let secondClient = EpicKeychainSessionStore(access: persisted, backend: .clientLogin)
+        check(try secondClient.load()?["refresh_token"] as? String == "fixture-refresh", "new client instance restores the shared mock item's envelope")
+        var rotated = session; rotated["refresh_token"] = "fixture-refresh-rotated"
+        try secondClient.save(rotated)
+        let thirdClient = EpicKeychainSessionStore(access: persisted, backend: .clientLogin)
+        check(try thirdClient.load()?["refresh_token"] as? String == "fixture-refresh-rotated", "updated mock credential survives a new client instance")
+        try secondClient.clear()
+        check(try thirdClient.load() == nil, "explicit client clear affects later instances")
+        for query in persisted.queries {
+            check(query[kSecAttrService as String] as? String == "fr.playmelt.epic.session.client-login.v1" && query[kSecAttrAccount as String] as? String == EpicKeychainSessionStore.account, "every client CRUD query targets only its exact namespace")
+            check(query[kSecUseDataProtectionKeychain as String] as? Bool == false && query[kSecAttrSynchronizable as String] as? Bool == false, "client explicitly uses local login keychain without iCloud")
+            check(query[kSecUseAuthenticationUI as String] as? String == kSecUseAuthenticationUIFail as String && query[kSecUseAuthenticationContext as String] == nil, "client does not open authentication UI")
+            check(query[kSecAttrAccessGroup as String] == nil && query[kSecAttrAccess as String] == nil && query[kSecAttrAccessControl as String] == nil, "client never broadens access through group or custom ACL")
+        }
+        for value in persisted.values {
+            check(value[kSecAttrAccessible as String] == nil, "client login writes no DP-only protection class")
+            check(((value[kSecValueData as String] as? Data)?.count ?? 0) <= EpicSessionEnvelope.maximumBytes, "client values remain bounded envelopes")
+        }
+        check(try dpInstance.load()?["refresh_token"] as? String == "fixture-refresh", "client clear preserves production DP mock item")
+        check(try internalInstance.load()?["refresh_token"] as? String == "fixture-refresh", "client clear preserves internal mock item")
+        let deniedClientAPI = MockKeychain(), deniedClient = EpicKeychainSessionStore(access: deniedClientAPI, backend: .clientLogin)
+        deniedClientAPI.updateStatuses = [errSecAuthFailed]
+        rejects("client access failure stays explicit") { try deniedClient.save(session) }
+        check(deniedClient.persistenceBackend == "client-login" && deniedClient.persistenceKind == "memory" && deniedClientAPI.added == 0, "client failure never changes backend or creates another storage")
+        check(deniedClientAPI.queries.allSatisfy { $0[kSecAttrService as String] as? String == EpicKeychainBackend.clientLogin.service }, "client failure never queries production or internal namespaces")
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("playmelt-keychain-fixture-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

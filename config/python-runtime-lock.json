@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "os": "macos",
+    "architecture": "arm64",
+    "python": "3.13.18",
+    "pythonMajorMinor": "3.13",
+    "release": "20261110"
+  },
+  "python": {
+    "filename": "cpython-3.13.18+20261110-aarch64-apple-darwin-install_only_stripped.tar.gz",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.13.18%2B20261110-aarch64-apple-darwin-install_only_stripped.tar.gz",
+    "size": 25479437,
+    "sha256": "7a2384641584ab9984221fcb0fc9265df465922af71be71410529e2a9c3f0540",
+    "digestSource": "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/20261110"
+  },
+  "pythonBuildMetadata": {
+    "filename": "cpython-3.13.18+20261110-aarch64-apple-darwin-pgo+lto-full.tar.zst",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.13.18%2B20261110-aarch64-apple-darwin-pgo%2Blto-full.tar.zst",
+    "size": 61374878,
+    "sha256": "11c316dfa24e1184e91de3c1434ed1d3e986c30b2d7a0273257067efe611a677",
+    "digestSource": "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/20261110"
+  },
+  "packages": [
+    {
+      "name": "legendary-gl",
+      "version": "0.21.1",
+      "license": "GPL-3.0-or-later",
+      "metadataURL": "https://pypi.org/pypi/legendary-gl/0.21.1/json",
+      "wheel": {
+        "filename": "legendary_gl-0.21.1-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/4c/d5/d9648a3ebc7af8251c2126b97a331cc29e31921298f217c09a536bf1d283/legendary_gl-0.21.1-py3-none-any.whl",
+        "size": 148739,
+        "sha256": "e1beedfaaed45ab372b7af047c092723f62a69e65666d81ffe654c61fac09e9c"
+      },
+      "source": {
+        "filename": "legendary_gl-0.21.1.tar.gz",
+        "url": "https://files.pythonhosted.org/packages/1a/6b/5ea752615e5317f182cce1f99d5338ec869dafb136bfa712aac76fa61153/legendary_gl-0.21.1.tar.gz",
+        "size": 144918,
+        "sha256": "e16301f3a66d3bda80a9bca54881edc2cb8868f962ebdb58314a3d62d050c9dd"
+      }
+    },
+    {
+      "name": "certifi",
+      "version": "2026.10.23",
+      "license": "MPL-2.0",
+      "metadataURL": "https://pypi.org/pypi/certifi/2026.10.23/json",
+      "wheel": {
+        "filename": "certifi-2026.10.23-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl",
+        "size": 135082,
+        "sha256": "e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1"
+      },
+      "source": {
+        "filename": "certifi-2026.10.23.tar.gz",
+        "url": "https://files.pythonhosted.org/packages/fd/11/b524cbd9bbdaca58608e4cf4053fd463417549e1959fa8d3aa18319f9555/certifi-2026.10.23.tar.gz",
+        "size": 136225,
+        "sha256": "a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd"
+      }
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.5.2",
+      "license": "MIT",
+      "metadataURL": "https://pypi.org/pypi/charset-normalizer/3.5.2/json",
+      "wheel": {
+        "filename": "charset_normalizer-3.5.2-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/fc/ad/d07d7862a62ffa6d79d68074d14823243dd235a77c45262acbf6adeb28bf/charset_normalizer-3.5.2-py3-none-any.whl",
+        "size": 68872,
+        "sha256": "b6b751274acb69d77b3323d6b7dbaa3c7fdfc1eb829b7eb61d262f32e1af9685"
+      },
+      "source": {
+        "filename": "charset_normalizer-3.5.2.tar.gz",
+        "url": "https://files.pythonhosted.org/packages/33/1c/f41d4e74c28ab327ff3acd36053f7ea506c55872d7a90b0fa71aa3ab0c89/charset_normalizer-3.5.2.tar.gz",
+        "size": 172659,
+        "sha256": "39de2a259fc954455c57274dc94c79d5842774e1247a016aff30bc0efed0f4ef"
+      }
+    },
+    {
+      "name": "filelock",
+      "version": "4.2.4",
+      "license": "MIT",
+      "metadataURL": "https://pypi.org/pypi/filelock/4.2.4/json",
+      "wheel": {
+        "filename": "filelock-4.2.4-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/e0/1b/5e74289a1878e666bb4b65fe5805a04cafcac2aa5f519ef1ead67ef91c56/filelock-4.2.4-py3-none-any.whl",
+        "size": 162475,
+        "sha256": "301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e"
+      },
+      "source": {
+        "filename": "filelock-4.2.4.tar.gz",
+        "url": "https://files.pythonhosted.org/packages/d8/28/3893324bcadf8f89b1616637468d766af3f625008c0735bf704fdfa86617/filelock-4.2.4.tar.gz",
+        "size": 652444,
+        "sha256": "c6d8663535e1650ee430507b4ffbac7b464dd64b7647ea0112a9f406499d163d"
+      }
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "license": "BSD-3-Clause",
+      "metadataURL": "https://pypi.org/pypi/idna/3.20/json",
+      "wheel": {
+        "filename": "idna-3.20-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+        "size": 69583,
+        "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
+      },
+      "source": {
+        "filename": "idna-3.20.tar.gz",
+        "url": "https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz",
+        "size": 216463,
+        "sha256": "a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44"
+      }
+    },
+    {
+      "name": "pycryptodomex",
+      "version": "3.24.1",
+      "license": "BSD, Public Domain",
+      "metadataURL": "https://pypi.org/pypi/pycryptodomex/3.24.1/json",
+      "wheel": {
+        "filename": "pycryptodomex-3.24.1-cp37-abi3-macosx_10_9_universal2.whl",
+        "url": "https://files.pythonhosted.org/packages/bf/ae/48679004ab908818326a62c35586b51ccd6ba0e3a03d0ae637cd13e8df99/pycryptodomex-3.24.1-cp37-abi3-macosx_10_9_universal2.whl",
+        "size": 2477923,
+        "sha256": "9bb353c764c144a9fc03302ef3763ad0c3e75bc7ca41f445cc98455f36da6c59"
+      },
+      "source": {
+        "filename": "pycryptodomex-3.24.1.tar.gz",
+        "url": "https://files.pythonhosted.org/packages/f4/e7/50e72301e32acb73a314e663c2014e1ddefc019d5f434ff14ec89861d664/pycryptodomex-3.24.1.tar.gz",
+        "size": 4934627,
+        "sha256": "09081666ffc599976c0b8b29caf2cf82212c0f05bed233c8f8ed53e4f6e1d356"
+      }
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "license": "Apache-2.0",
+      "metadataURL": "https://pypi.org/pypi/requests/2.34.2/json",
+      "wheel": {
+        "filename": "requests-2.34.2-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+        "size": 73075,
+        "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+      },
+      "source": {
+        "filename": "requests-2.34.2.tar.gz",
+        "url": "https://files.pythonhosted.org/packages/ac/c3/e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf/requests-2.34.2.tar.gz",
+        "size": 142856,
+        "sha256": "f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed"
+      }
+    },
+    {
+      "name": "urllib3",
+      "version": "2.8.0",
+      "license": "MIT",
+      "metadataURL": "https://pypi.org/pypi/urllib3/2.8.0/json",
+      "wheel": {
+        "filename": "urllib3-2.8.0-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+        "size": 135717,
+        "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
+      },
+      "source": {
+        "filename": "urllib3-2.8.0.tar.gz",
+        "url": "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz",
+        "size": 458972,
+        "sha256": "63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"
+      }
+    }
+  ],
+  "defaultCache": "/Volumes/Partage/03_PROJECT/1_APP/Playmelt/dependances/python-runtime",
+  "stockageUUID": "67ecdb2a-940f-4f6e-bef5-c5cb9b62e75a",
+  "buildSourceCommit": "9244801782b78e4c4afc5c82a4524aa2101d3298",
+  "componentSources": [
+    {
+      "name": "cpython",
+      "version": "3.13.18",
+      "filename": "Python-3.13.18.tar.xz",
+      "url": "https://www.python.org/ftp/python/3.13.18/Python-3.13.18.tar.xz",
+      "size": 23243936,
+      "sha256": "abb0102e6d4ae027509bcb82327d9dd85515b44a3ba8ad538cfc5e9847029f68",
+      "digestSource": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/9244801782b78e4c4afc5c82a4524aa2101d3298/pythonbuild/downloads.json"
+    },
+    {
+      "name": "openssl",
+      "version": "3.5.9",
+      "filename": "openssl-3.5.9.tar.gz",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+      "size": 53279637,
+      "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a",
+      "digestSource": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/9244801782b78e4c4afc5c82a4524aa2101d3298/pythonbuild/downloads.json"
+    }
+  ]
+}

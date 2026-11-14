@@ -1,0 +1,576 @@
+/* Playmelt — couche de finition v4 (13/11/2026). Chargée en dernier.
+   Règle : l'image du jeu reste nette (jamais voilée, floutée ni masquée) ; le texte gagne sa lisibilité
+   par un dégradé posé à côté, pas par-dessus l'image. Chaque bouton de plateforme porte sa marque. */
+
+/* ---------- Marques ---------- */
+.store-steam,.pf-btn.steam{--brand-a:#1aa0ff;--brand-b:#2a5ad6;--brand-ink:#fff;--brand-soft:#66c0f4}
+.store-epic,.pf-btn.epic{--brand-a:#36c3ff;--brand-b:#1898e0;--brand-ink:#07131c;--brand-soft:#8edbff}
+.store-xbox,.pf-btn.xbox{--brand-a:#22a522;--brand-b:#0e710e;--brand-ink:#fff;--brand-soft:#9bf00b}
+.store-gog,.pf-btn.gog{--brand-a:#a868f0;--brand-b:#7637c6;--brand-ink:#fff;--brand-soft:#cfa6f6}
+.store-local,.pf-btn.local{--brand-a:#5d6b78;--brand-b:#46525d;--brand-ink:#fff;--brand-soft:#c3ccd4}
+.pf-glyph{width:16px;height:16px;flex:none;display:block}
+.pf-glyph-wrap{display:inline-flex;flex:none}
+
+/* Bouton de plateforme (sections, sorties) */
+.pf-action{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 15px;border:0;border-radius:9px;
+ background:linear-gradient(135deg,var(--brand-a,#4b5965),var(--brand-b,#36414b));color:var(--brand-ink,#fff);
+ font:650 12px/1 inherit;letter-spacing:.005em;white-space:nowrap;cursor:pointer;box-shadow:0 4px 12px #0003,inset 0 1px 0 #ffffff2e;
+ transition:transform .15s,filter .15s}
+.pf-action:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.pf-action.pf-small{height:30px;padding:0 12px;font-size:11px}
+.pf-action.pf-small .pf-glyph{width:14px;height:14px}
+
+/* Barre d'outils : connexion et ouverture typées par plateforme */
+:root:root :is(#xboxPlugPlayBtn,#steamPlugPlayBtn,#epicPlugPlayBtn,#gogPlugPlayBtn,#xboxOpenCloudBtn,#steamOpenBtn,#epicOpenBtn,#gogOpenGalaxyBtn){
+ display:inline-flex;align-items:center;gap:8px;height:34px;min-height:34px;padding:0 14px;border-radius:9px!important;
+ font-size:12px;font-weight:650;white-space:nowrap;
+ background:linear-gradient(135deg,var(--brand-a),var(--brand-b))!important;color:var(--brand-ink)!important;
+ border:1px solid #ffffff1f!important;box-shadow:0 4px 12px #0000003d,inset 0 1px 0 #ffffff2e!important}
+:root:root :is(#xboxPlugPlayBtn,#steamPlugPlayBtn,#epicPlugPlayBtn,#gogPlugPlayBtn,#xboxOpenCloudBtn,#steamOpenBtn,#epicOpenBtn,#gogOpenGalaxyBtn)[hidden]{display:none!important}
+:root:root :is(#xboxPlugPlayBtn,#steamPlugPlayBtn,#epicPlugPlayBtn,#gogPlugPlayBtn,#xboxOpenCloudBtn,#steamOpenBtn,#epicOpenBtn,#gogOpenGalaxyBtn):hover{filter:brightness(1.08)}
+/* Compte connecté : pastille de compte sobre, la marque reste dans le logo */
+:root:root :is(#xboxPlugPlayBtn,#steamPlugPlayBtn,#epicPlugPlayBtn,#gogPlugPlayBtn).connected-state{
+ background:#ffffff12!important;color:#f4f6f8!important;border-color:#ffffff2a!important;box-shadow:none!important}
+:root:root :is(#xboxPlugPlayBtn,#steamPlugPlayBtn,#epicPlugPlayBtn,#gogPlugPlayBtn).connected-state .pf-glyph{color:var(--brand-soft)}
+:root:root :is(#xboxPlugPlayBtn,#steamPlugPlayBtn,#epicPlugPlayBtn,#gogPlugPlayBtn) .connection-dot{order:3;width:7px;height:7px;border-radius:50%;margin:0;background:#ffffff66;box-shadow:none}
+:root:root :is(#xboxPlugPlayBtn,#steamPlugPlayBtn,#epicPlugPlayBtn,#gogPlugPlayBtn).connected-state .connection-dot{background:#43d27b;box-shadow:0 0 0 3px #43d27b33}
+:root:root :is(#xboxPlugPlayBtn,#steamPlugPlayBtn,#epicPlugPlayBtn,#gogPlugPlayBtn):not(.connected-state) .connection-dot{display:none}
+/* Tant que le compte n'est pas connecté, la connexion est l'action principale ; l'ouverture passe en second */
+.toolbar:has(#xboxPlugPlayBtn:not(.connected-state):not([hidden])) #xboxOpenCloudBtn,
+.toolbar:has(#steamPlugPlayBtn:not(.connected-state):not([hidden])) #steamOpenBtn,
+.toolbar:has(#gogPlugPlayBtn:not(.connected-state):not([hidden])) #gogOpenGalaxyBtn{
+ background:#ffffff12!important;color:#f4f6f8!important;border-color:#ffffff2a!important;box-shadow:none!important}
+
+/* ---------- Mises à jour (Accueil) : bandeau du jeu net en tête de carte ---------- */
+:root:root .ucard{display:flex!important;flex-direction:column;min-height:0!important;padding:0!important;
+ background:#131b23!important;border:1px solid #ffffff14!important;border-radius:16px!important;overflow:hidden;
+ box-shadow:0 10px 24px #10203024;transition:transform .25s,box-shadow .25s;cursor:pointer}
+:root:root .ucard:hover{transform:translateY(-3px);box-shadow:0 18px 34px #10203038}
+:root:root .ucard::after,:root:root .ucard>.art::after,:root:root .ucard>.band-ambience{display:none!important}
+:root:root .ucard>.art{position:relative!important;inset:auto!important;width:100%!important;height:auto!important;aspect-ratio:460/215;
+ flex:none;z-index:0;background:linear-gradient(135deg,#223140,#16202a)!important;overflow:hidden}
+:root:root .ucard>.art>img{position:absolute;inset:0;width:100%!important;height:100%!important;object-fit:cover!important;object-position:center!important;
+ mask-image:none!important;-webkit-mask-image:none!important;filter:none!important;transition:transform .5s}
+:root:root .ucard>.art>img.art-loaded{opacity:1!important}
+:root:root .ucard:hover>.art>img{transform:scale(1.035)}
+:root:root .ucard>.art .tag.onimg{display:inline-flex!important;position:absolute;left:10px;top:10px;z-index:1;padding:4px 8px;border-radius:6px;
+ background:#0b1218d9!important;color:#f3d2b8!important;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;backdrop-filter:blur(8px)}
+:root:root .ucard>.body{position:relative;flex:1;min-height:0!important;padding:13px 15px 13px!important;display:flex;flex-direction:column;background:none!important}
+:root:root .ucard h4{margin:8px 0 12px!important;font-size:14px!important;line-height:1.35!important;max-width:none;min-height:2.7em;color:#f5f8fa!important}
+
+/* ---------- Actus : vignette du jeu nette + image de fond visible ---------- */
+:root:root .game-news-band{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto!important;align-items:center;gap:18px!important;
+ min-height:0!important;padding:12px 20px 12px 12px!important;background:#0f171e!important;border:1px solid #ffffff14!important;border-radius:16px!important;
+ overflow:hidden;isolation:isolate;transition:transform .25s,border-color .25s}
+:root:root .game-news-band:hover{border-color:#efb18c66!important;transform:translateY(-2px)}
+:root:root .game-news-band>img:is(.nb-bg,.nb-cap){display:block!important}
+:root:root .game-news-band>img.nb-bg{border-radius:0;box-shadow:none;flex-shrink:initial}
+:root:root .game-news-band>.nb-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 35%;z-index:-2;filter:none;mask-image:none}
+:root:root .game-news-band::after{content:'';position:absolute;inset:0;z-index:-1;
+ background:linear-gradient(90deg,#0c141bf5 0%,#0c141be6 34%,#0c141b9e 66%,#0c141b4d 100%)!important}
+:root:root .game-news-band>.nb-cap{width:176px;aspect-ratio:460/215;height:auto;border-radius:10px;object-fit:cover;
+ background:linear-gradient(135deg,#223140,#16202a);box-shadow:0 8px 18px #0008;outline:1px solid #ffffff22;outline-offset:-1px}
+:root:root .game-news-band>.nb-cap.art-unavailable{display:none}
+:root:root .game-news-band .game-journal-copy{max-width:none!important;min-width:0}
+:root:root .game-news-band .game-journal-arrow{margin-left:0;font-size:16px}
+:root:root .game-news-band.news-band-lead{min-height:0!important;padding:16px 24px 16px 16px!important}
+:root:root .game-news-band.news-band-lead>.nb-cap{width:300px;border-radius:12px}
+:root:root .game-news-band.news-band-lead h3{font-size:22px!important}
+:root:root .game-news-band.news-band-context>.nb-cap{width:150px}
+.hub-duo .game-news-band p{-webkit-line-clamp:1!important}
+@media(max-width:900px){:root:root .game-news-band>.nb-cap{width:132px}:root:root .game-news-band.news-band-lead>.nb-cap{width:200px}}
+
+/* ---------- Sorties : capsule nette, fond du jeu visible ---------- */
+:root:root .release-banner{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto!important;align-items:center;gap:16px!important;
+ min-height:0!important;padding:11px 18px 11px 11px!important;margin:0 0 10px!important;background:#0f171e!important;
+ border:1px solid #ffffff14!important;border-radius:16px!important;overflow:hidden;isolation:isolate}
+:root:root .release-banner .release-art{position:absolute!important;inset:0!important;left:0!important;right:0!important;width:100%!important;max-width:none!important;
+ height:100%!important;object-fit:cover!important;object-position:center 35%!important;z-index:-2;mask-image:none!important;-webkit-mask-image:none!important;filter:none!important}
+:root:root .release-banner .release-art.art-loaded{opacity:1!important}
+:root:root .release-banner::after{background:linear-gradient(90deg,#0c141bf2 0%,#0c141bd9 45%,#0c141b8c 100%)!important}
+:root:root .release-banner>.release-capsule{width:128px;aspect-ratio:460/215;height:auto;border-radius:9px;object-fit:cover;
+ background:linear-gradient(135deg,#223140,#16202a);box-shadow:0 6px 14px #0008;outline:1px solid #ffffff22;outline-offset:-1px}
+:root:root .release-banner>.release-capsule.art-unavailable{display:none}
+:root:root .release-copy h5{margin:8px 0 0!important;font-size:16px!important}
+.release-stores{display:flex!important;flex-wrap:wrap;gap:8px!important;margin:12px 0 0!important}
+
+/* Pastille de plateforme (offres, sorties) : logo + nom, couleur de la marque */
+:root:root :is(.offer-platform-brand,.release-platform){display:inline-flex;align-items:center;gap:5px;height:22px;min-height:0;padding:0 8px 0 6px;margin:0;
+ border-radius:6px;background:linear-gradient(135deg,var(--brand-a),var(--brand-b))!important;color:var(--brand-ink)!important;
+ font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;box-shadow:0 2px 8px #0005}
+:root:root :is(.offer-platform-brand,.release-platform) .pf-glyph{width:13px;height:13px}
+
+/* ---------- Offres : affiche du jeu en entier, texte dessous ---------- */
+:root:root .offer-card:not(.offer-hero){display:flex!important;flex-direction:column;min-height:0!important;
+ background:var(--offer-surface,#131b23)!important;border:1px solid #ffffff14!important;border-radius:16px!important;color:#f2f5f8!important;overflow:hidden}
+:root:root .offer-card:not(.offer-hero)::after{display:none!important}
+:root:root .offer-card:not(.offer-hero)>.offer-art{position:relative!important;inset:auto!important;width:100%!important;height:auto!important;aspect-ratio:460/215;
+ flex:none;object-fit:cover;z-index:0;filter:none!important;mask-image:none!important;background:linear-gradient(135deg,#223140,#16202a)}
+:root:root .offer-card:not(.offer-hero)>.offer-art.art-loaded{opacity:1!important}
+:root:root .offer-card:not(.offer-hero)>.offer-art.art-unavailable{visibility:visible!important;opacity:1!important;color:transparent}
+:root:root .offer-card:not(.offer-hero) .offer-badge{z-index:2;background:#e8673b!important;border-color:#ffffff40!important}
+:root:root .offer-card:not(.offer-hero) .offer-copy{position:static!important;flex:1;display:flex;flex-direction:column;padding:13px 15px 14px!important}
+:root:root .offer-card:not(.offer-hero) .offer-platform-brand{position:absolute;right:10px;top:10px;z-index:2}
+:root:root .offer-card:not(.offer-hero) .offer-copy h3{margin:0 0 12px!important;min-height:2.7em;font-size:14px!important;line-height:1.35!important;
+ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#f5f8fa}
+:root:root .offer-card:not(.offer-hero) .offer-bottom{margin-top:auto}
+:root:root .offer-card:not(.offer-hero) .offer-arrow{background:#ffffff1c!important;color:#fff!important}
+:root:root .offers-grid.platform-giveaways{grid-template-columns:repeat(auto-fill,minmax(260px,380px))!important}
+
+/* ---------- Pages plateformes : plus de bandeau vide, des sections titrées ---------- */
+.store-section-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:2px 0 14px}
+.store-section-head~.store-section-head{margin-top:30px}
+.store-section-title{margin:0;font-size:20px;font-weight:700;letter-spacing:-.02em;color:var(--ink,#1c2326)}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main{--offer-surface:var(--platform-surface)}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main :is(.store-section-title,.platform-library-title,.row-title){color:var(--ink)!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main .discover-note{color:var(--muted)!important}
+:root:root .xbox-availability{display:inline-flex;align-items:center;gap:8px;margin:0 0 6px;padding:7px 12px;border-radius:8px;background:#ffffff0d;
+ border:1px solid #ffffff1a;color:var(--muted,#aab6c2);font-size:11px}
+/* Un seul jeu offert : affiche à gauche, informations à droite, sur toute la largeur */
+:root:root .platform-giveaways .offer-card:only-child{grid-column:1/-1;display:grid!important;grid-template-columns:minmax(0,460px) minmax(0,1fr);height:auto!important;align-items:stretch}
+:root:root .platform-giveaways .offer-card:only-child>.offer-art{height:auto!important;aspect-ratio:460/215}
+:root:root .platform-giveaways .offer-card:only-child .offer-copy{justify-content:center;padding:22px 28px!important}
+:root:root .platform-giveaways .offer-card:only-child .offer-copy h3{font-size:22px!important;min-height:0;margin-bottom:16px!important}
+:root:root .platform-giveaways .offer-card:only-child .offer-bottom{margin-top:0;max-width:360px}
+:root:root .platform-giveaways .offer-card:only-child .offer-price strong{font-size:24px}
+/* Offres compactes : titre sur une ligne, prix et échéance sur la même ligne */
+:root:root .offer-card:not(.offer-hero) .offer-copy{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;column-gap:10px;row-gap:6px;padding:11px 14px 12px!important}
+:root:root .offer-card:not(.offer-hero) .offer-copy h3{grid-column:1/-1;margin:0!important;min-height:0;font-size:14px!important;-webkit-line-clamp:1}
+:root:root .offer-card:not(.offer-hero) .offer-bottom{margin:0}
+:root:root .offer-card:not(.offer-hero) .offer-price{gap:7px}
+:root:root .offer-card:not(.offer-hero) .offer-price strong{font-size:17px}
+:root:root .offer-card:not(.offer-hero) .offer-arrow{display:none!important}
+:root:root .offer-card:not(.offer-hero) .offer-deadline{margin:0!important;text-align:right;white-space:nowrap;font-size:10px}
+:root:root .offer-card:not(.offer-hero) .offer-platform{grid-column:1/-1;margin:0!important}
+:root:root .platform-giveaways .offer-card:only-child .offer-copy{grid-template-columns:auto;align-content:center;row-gap:10px;padding:22px 28px!important}
+:root:root .platform-giveaways .offer-card:only-child .offer-copy h3{font-size:22px!important;-webkit-line-clamp:2}
+:root:root .platform-giveaways .offer-card:only-child .offer-deadline{text-align:left}
+/* Cartes de mise à jour : même sobriété */
+:root:root .ucard>.body{padding:11px 14px 12px!important}
+:root:root .ucard h4{margin:6px 0 8px!important;min-height:0}
+/* Actus : d'abord le périmètre (Mes jeux / Tous les jeux), puis le type */
+.news-filter-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:22px 0 16px}
+.news-filter-bar .news-filters{margin:0}
+.news-filter-bar .news-scope{background:#1c2326;padding:3px}
+.news-filter-bar .news-scope button{color:#c9d1d6;height:30px;padding:0 14px;font-weight:600}
+.news-filter-bar .news-scope button.on{background:#dc5a2e;color:#fff;box-shadow:0 3px 10px #dc5a2e55}
+.news-filter-bar .news-kind::before{content:'';display:none}
+.news-filter-count{margin-left:7px;font-size:10px;font-weight:600;opacity:.6}
+
+/* ── Identité de section plateforme : héros + atmosphère (v5, 13/11) ── */
+.pf-hero{position:relative;isolation:isolate;overflow:hidden;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:24px;
+  min-height:248px;margin:4px 0 30px;padding:28px 30px 26px;border-radius:20px;background:var(--platform-surface,#1b2229);
+  border:1px solid #ffffff1c;box-shadow:0 24px 60px -28px #000c,inset 0 1px 0 #ffffff14}
+.pf-hero-bg{position:absolute;inset:0;z-index:-3;width:100%;height:100%;object-fit:cover;object-position:center 30%;transform:scale(1.04);
+  transition:opacity .5s ease,transform 8s ease}
+.pf-hero:hover .pf-hero-bg{transform:scale(1.08)}
+.pf-hero::before{content:"";position:absolute;inset:0;z-index:-2;
+  background:linear-gradient(90deg,var(--platform-bg,#11161b) 0%,color-mix(in srgb,var(--platform-bg,#11161b) 88%,transparent) 30%,color-mix(in srgb,var(--platform-bg,#11161b) 30%,transparent) 62%,transparent 85%),
+             linear-gradient(0deg,var(--platform-bg,#11161b) 0%,transparent 55%)}
+.pf-hero::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(520px 260px at 0% 100%,color-mix(in srgb,var(--brand-a) 34%,transparent),transparent 70%)}
+.pf-hero-mark{position:absolute;right:-46px;top:-60px;z-index:-1;width:340px;height:340px;color:var(--brand-soft,#fff);opacity:.09;pointer-events:none;
+  filter:drop-shadow(0 0 40px color-mix(in srgb,var(--brand-a) 60%,transparent))}
+.pf-hero-mark svg{width:100%;height:100%;fill:currentColor}
+.pf-hero-copy{display:flex;flex-direction:column;align-items:flex-start;gap:6px;max-width:560px}
+.pf-hero-chip{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px 0 8px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:#fff;background:#ffffff14;border:1px solid #ffffff26;backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4)}
+.pf-hero-chip .pf-glyph{width:14px;height:14px;color:var(--brand-soft)}
+.pf-hero-kicker{margin:10px 0 0;font-size:12px;font-weight:600;letter-spacing:.02em;color:#ffffffa6}
+.pf-hero-title{margin:0;font-size:34px;line-height:1.05;font-weight:800;letter-spacing:-.03em;color:#fff;text-shadow:0 2px 24px #0009;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pf-hero-meta{margin:0 0 12px;font-size:13px;color:#ffffffbf}
+.pf-hero .pf-action{height:38px;padding:0 18px;font-size:13px}
+.pf-play{font-size:10px}
+.pf-hero-stats{display:flex;gap:6px;margin:0;align-self:end}
+.pf-hero-stats>div{min-width:84px;padding:10px 14px 9px;border-radius:12px;background:#0000004d;border:1px solid #ffffff1f;
+  backdrop-filter:blur(16px) saturate(1.3);-webkit-backdrop-filter:blur(16px) saturate(1.3)}
+.pf-hero-stats dt{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#ffffff8c}
+.pf-hero-stats dd{margin:3px 0 0;font-size:19px;font-weight:750;letter-spacing:-.02em;color:#fff;font-variant-numeric:tabular-nums}
+.pf-hero-note{grid-column:1/-1;margin:2px 0 0;font-size:12px;color:#ffffffa6}
+/* Ambiances propres à chaque plateforme */
+.pf-hero.store-steam::after{background:radial-gradient(560px 280px at 0% 100%,#1a9fff40,transparent 70%),linear-gradient(115deg,transparent 55%,#66c0f40d 55.2%,transparent 62%)}
+.pf-hero.store-epic .pf-hero-bg{filter:saturate(.75) contrast(1.05)}
+.pf-hero.store-epic::after{background:radial-gradient(520px 260px at 0% 100%,#ffffff1a,transparent 70%)}
+.pf-hero.store-epic .pf-hero-mark{color:#fff;opacity:.07}
+.pf-hero.store-xbox::after{background:radial-gradient(560px 300px at 100% 100%,#107c1066,transparent 70%),radial-gradient(420px 220px at 0% 100%,#9bf00b26,transparent 70%)}
+.pf-hero.store-xbox .pf-hero-mark{color:#9bf00b;opacity:.1}
+.pf-hero.store-gog::after{background:radial-gradient(560px 280px at 0% 100%,#a868f04d,transparent 70%),radial-gradient(380px 200px at 90% 0%,#c69aef26,transparent 70%)}
+/* Titres de rangée : filet de marque */
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main :is(.store-section-title,.platform-library-title,.row-head h2){position:relative;padding-left:13px}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main :is(.store-section-title,.platform-library-title,.row-head h2)::before{
+  content:"";position:absolute;left:0;top:.18em;bottom:.18em;width:3px;border-radius:3px;background:var(--platform-accent)}
+/* Atmosphère de page : halo de marque fixe derrière le contenu */
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main{
+  background:radial-gradient(900px 420px at 88% -8%,color-mix(in srgb,var(--platform-glow) 85%,transparent),transparent 70%),
+             radial-gradient(700px 500px at -10% 110%,color-mix(in srgb,var(--platform-glow) 45%,transparent),transparent 70%),
+             var(--platform-bg)!important;background-attachment:fixed!important}
+@media (max-width:980px){.pf-hero{grid-template-columns:1fr}.pf-hero-stats{flex-wrap:wrap}}
+
+/* ── Barre latérale : logos de plateforme animés (remplacent les points) ── */
+.nav-logo{position:relative;flex:none;display:grid;place-items:center;width:22px;height:22px;margin:0 1px 0 -2px;border-radius:7px;overflow:hidden;
+  color:#fff;background:linear-gradient(145deg,var(--lg-a),var(--lg-b));box-shadow:0 1px 2px #0003,inset 0 1px 0 #ffffff38;
+  animation:navLogoIn .55s cubic-bezier(.2,1.4,.4,1) both;transition:transform .25s cubic-bezier(.2,1.4,.4,1),box-shadow .25s ease}
+.nav-logo svg{width:15px;height:15px;transition:transform .5s cubic-bezier(.2,1,.3,1)}
+.nav-logo::after{content:"";position:absolute;inset:-40% auto -40% -60%;width:40%;transform:rotate(20deg) translateX(-120%);
+  background:linear-gradient(90deg,transparent,#ffffff8c,transparent);pointer-events:none}
+.nav-logo-steam{--lg-a:#2a475e;--lg-b:#171a21;--lg-glow:#66c0f4}
+.nav-logo-epic{--lg-a:#3a3a40;--lg-b:#121214;--lg-glow:#ffffff}
+.nav-logo-xbox{--lg-a:#1fae1f;--lg-b:#0e6a0e;--lg-glow:#9bf00b}
+.nav-logo-gog{--lg-a:#a868f0;--lg-b:#5b2a8f;--lg-glow:#c69aef}
+.nav-logo-local{--lg-a:#8a949e;--lg-b:#5d666f;--lg-glow:#c9d1d8}
+.nav-button[data-view="steam"] .nav-logo{animation-delay:.05s}
+.nav-button[data-view="epic"] .nav-logo{animation-delay:.12s}
+.nav-button[data-view="xbox"] .nav-logo{animation-delay:.19s}
+.nav-button[data-view="gog"] .nav-logo{animation-delay:.26s}
+.nav-button[data-view="local"] .nav-logo{animation-delay:.33s}
+/* Survol : chaque logo a son geste */
+.nav-button:hover .nav-logo{transform:translateY(-1px) scale(1.08);box-shadow:0 4px 12px -2px color-mix(in srgb,var(--lg-glow) 55%,transparent),inset 0 1px 0 #ffffff40}
+.nav-button:hover .nav-logo::after{animation:navLogoShine .7s ease}
+.nav-button[data-view="steam"]:hover .nav-logo svg{transform:rotate(360deg)}
+.nav-button[data-view="xbox"]:hover .nav-logo svg{transform:rotate(-360deg) scale(1.05)}
+.nav-button[data-view="epic"]:hover .nav-logo svg{animation:navLogoLift .6s cubic-bezier(.2,1.4,.4,1)}
+.nav-button[data-view="gog"]:hover .nav-logo svg{animation:navLogoWiggle .6s ease}
+.nav-button[data-view="local"]:hover .nav-logo svg{animation:navLogoLift .6s cubic-bezier(.2,1.4,.4,1)}
+/* Actif : halo qui respire */
+.nav-button[aria-current="page"] .nav-logo{animation:navLogoIn .55s cubic-bezier(.2,1.4,.4,1) both,navLogoBreath 2.8s ease-in-out .6s infinite}
+@keyframes navLogoIn{0%{opacity:0;transform:scale(.4) rotate(-25deg)}100%{opacity:1;transform:none}}
+@keyframes navLogoShine{to{transform:rotate(20deg) translateX(420%)}}
+@keyframes navLogoLift{0%,100%{transform:none}40%{transform:translateY(-3px) scale(1.1)}70%{transform:translateY(1px)}}
+@keyframes navLogoWiggle{0%,100%{transform:none}25%{transform:rotate(-12deg)}50%{transform:rotate(9deg)}75%{transform:rotate(-4deg)}}
+@keyframes navLogoBreath{0%,100%{box-shadow:0 1px 2px #0003,0 0 0 0 color-mix(in srgb,var(--lg-glow) 0%,transparent)}50%{box-shadow:0 1px 2px #0003,0 0 0 4px color-mix(in srgb,var(--lg-glow) 22%,transparent)}}
+@media (prefers-reduced-motion:reduce){.nav-logo,.nav-logo svg,.nav-logo::after{animation:none!important;transition:none!important}}
+/* Jeu offert seul : pleine largeur, texte resserré */
+:root:root .offers-grid.platform-giveaways:has(>.offer-card:only-child){grid-template-columns:1fr!important}
+:root:root .platform-giveaways .offer-card:only-child .offer-copy{row-gap:4px!important;padding:24px 30px!important}
+:root:root .platform-giveaways .offer-card:only-child .offer-copy h3{font-size:26px!important;margin:0 0 6px!important}
+:root:root .platform-giveaways .offer-card:only-child .offer-copy :is(h3,.offer-bottom,.offer-deadline){grid-column:1/-1;justify-self:start}
+/* Jaquette introuvable : carte titrée aux couleurs de la plateforme, jamais une case vide */
+.game-art:has(>img.art-unavailable){background:radial-gradient(120% 80% at 0% 0%,color-mix(in srgb,var(--brand-a,#dc5a2e) 55%,transparent),transparent 60%),
+  linear-gradient(160deg,var(--brand-b,#3a3f45),#121418)!important}
+.game-art:has(>img.art-unavailable)::after{content:attr(data-title);position:absolute;inset:auto 12px 14px 12px;z-index:1;
+  font-size:15px;line-height:1.15;font-weight:750;letter-spacing:-.01em;color:#fff;text-shadow:0 1px 10px #0008;
+  display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.game-art.store-local{--brand-a:#8a949e;--brand-b:#4a525a}
+
+/* ── Cartes « Mises à jour » : corps sur deux lignes fixes, l'image garde la place (v6) ── */
+:root:root .ucard>.body{display:grid!important;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"meta ver" "title play";
+  align-items:center;column-gap:10px;row-gap:5px;padding:10px 12px 11px 13px!important;flex:none}
+:root:root .ucard>.body>.g{grid-area:meta;display:flex!important;align-items:center;gap:8px;min-width:0;margin:0!important;font-size:11px!important;color:#ffffff99!important}
+:root:root .ucard>.body>.foot{display:contents!important}
+:root:root .ucard>.body .ver{grid-area:ver;justify-self:end;margin:0!important;padding:2px 7px!important;font-size:10.5px!important}
+:root:root .ucard>.body>.foot>span:empty{display:none}
+:root:root .ucard h4{grid-area:title;margin:0!important;min-height:0!important;font-size:13.5px!important;line-height:1.3!important;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block!important;-webkit-line-clamp:unset!important}
+:root:root .ucard .mini-play{grid-area:play;width:28px!important;height:28px!important;min-width:28px;margin:0!important}
+:root:root .ucard .mini-play svg{width:12px;height:12px}
+.ucard-pf{display:inline-flex;align-items:center;gap:5px;font-weight:650;color:var(--brand-soft,#cfd8e0)}
+.ucard-pf .pf-glyph{width:13px;height:13px}
+.ucard-date{color:#ffffff73;white-space:nowrap}
+.ucard-date::before{content:"·";margin-right:8px;color:#ffffff40}
+
+/* ── Accueil : tableaux par plateforme, retour sur les jeux mis à jour, reprise (v6) ── */
+.platform-board{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:8px}
+.board-col{position:relative;overflow:hidden;display:flex;flex-direction:column;gap:2px;padding:12px 10px 10px;border-radius:16px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--brand-a) 9%,#fff) 0%,#fff 60%);border:1px solid color-mix(in srgb,var(--brand-a) 16%,#e3e7ea);
+  box-shadow:0 8px 22px -16px #10203040}
+.board-col::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--brand-a),var(--brand-b))}
+.board-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 4px 8px}
+.board-brand{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:750;letter-spacing:-.01em;color:#1c2326}
+.board-brand .pf-glyph-wrap{display:grid;place-items:center;width:22px;height:22px;border-radius:7px;color:#fff;background:linear-gradient(145deg,var(--brand-a),var(--brand-b))}
+.board-brand .pf-glyph{width:14px;height:14px}
+.store-epic .board-brand .pf-glyph-wrap{background:linear-gradient(145deg,#3a3a40,#121214)}
+.store-steam .board-brand .pf-glyph-wrap{background:linear-gradient(145deg,#2a475e,#171a21)}
+.board-cta{border:0;background:none;padding:4px 6px;border-radius:7px;font-size:11.5px;font-weight:650;color:color-mix(in srgb,var(--brand-b) 80%,#1c2326);cursor:pointer}
+.board-cta:hover{background:color-mix(in srgb,var(--brand-a) 12%,transparent)}
+.board-row{display:grid;grid-template-columns:76px minmax(0,1fr);align-items:center;gap:10px;width:100%;padding:6px;border:0;border-radius:10px;
+  background:none;text-align:left;cursor:pointer;color:#1c2326;transition:background .15s}
+.board-row:hover{background:color-mix(in srgb,var(--brand-a) 8%,#f4f6f8)}
+.board-thumb{position:relative;display:block;width:76px;aspect-ratio:460/215;border-radius:7px;overflow:hidden;background:#dfe4e8}
+.board-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.board-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.board-top{display:flex;align-items:center;gap:6px;min-width:0}
+.board-top b{font-size:12.5px;font-weight:650;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.board-copy small{font-size:11px;color:#6b7680;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.board-tag{flex:none;padding:1px 6px;border-radius:5px;font-size:9px;font-weight:750;letter-spacing:.05em;text-transform:uppercase;color:#56616b;background:#eef1f3}
+.board-tag.is-update{color:#b4461f;background:#fbe9e1}
+.board-tag.is-free{color:#11603a;background:#dff5e8}
+.board-empty{margin:4px 6px 6px;font-size:12px;color:#7a858f}
+.comeback-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;margin-bottom:6px}
+.comeback-card{position:relative;isolation:isolate;overflow:hidden;display:flex;align-items:flex-end;min-height:150px;padding:14px;border:0;border-radius:16px;
+  text-align:left;cursor:pointer;color:#fff;background:#141a20;box-shadow:0 12px 26px -16px #10203070;transition:transform .25s}
+.comeback-card:hover{transform:translateY(-3px)}
+.comeback-card>img{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;transition:transform .6s}
+.comeback-card:hover>img{transform:scale(1.05)}
+.comeback-card::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(0deg,#0b1016f2 8%,#0b101699 45%,#0b101626 100%)}
+.comeback-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+.comeback-away{align-self:flex-start;padding:2px 7px;border-radius:5px;font-size:9.5px;font-weight:750;letter-spacing:.05em;text-transform:uppercase;color:#ffd9c7;background:#dc5a2e59;backdrop-filter:blur(6px)}
+.comeback-copy b{font-size:16px;font-weight:750;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.comeback-copy small{font-size:11.5px;color:#ffffffb3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.comeback-brand{position:absolute;top:10px;right:10px;display:inline-flex;align-items:center;gap:5px;padding:3px 8px 3px 6px;border-radius:999px;
+  font-size:10px;font-weight:700;color:#fff;background:#0b1016a6;backdrop-filter:blur(8px)}
+.comeback-brand .pf-glyph{width:12px;height:12px;color:var(--brand-soft)}
+.resume-strip{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:6px}
+@media (max-width:1150px){.resume-strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.resume-tile{position:relative;overflow:hidden;display:block;aspect-ratio:460/215;border:0;padding:0;border-radius:12px;cursor:pointer;background:#1b232b;
+  box-shadow:0 8px 18px -12px #10203070;transition:transform .2s}
+.resume-tile:hover{transform:translateY(-2px)}
+.resume-tile>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.resume-cap{position:absolute;left:0;right:0;bottom:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:6px;padding:16px 8px 6px;
+  background:linear-gradient(0deg,#0b1016e6,transparent);color:#fff;text-align:left}
+.resume-cap .pf-glyph{width:12px;height:12px;color:var(--brand-soft)}
+.resume-cap b{font-size:11.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.resume-cap small{font-size:10px;color:#ffffffa6;white-space:nowrap}
+.store-local{--brand-a:#8a949e;--brand-b:#5d666f;--brand-soft:#c9d1d8}
+.board-tag.is-fresh{color:#5b3bb0;background:#ece6fb}
+.board-tag.is-deal{color:#b4461f;background:#fde8df}
+
+/* ── Plateformes : bandeau résumé + phrases qui défilent (v6) ── */
+.pf-summary{position:relative;overflow:hidden;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;margin:2px 0 16px;padding:16px 18px 12px;border-radius:18px;
+  background:linear-gradient(120deg,color-mix(in srgb,var(--brand-a) 16%,var(--platform-surface,#1d252d)) 0%,var(--platform-surface,#1d252d) 55%,color-mix(in srgb,var(--platform-bg,#11161b) 70%,transparent) 100%);
+  border:1px solid color-mix(in srgb,var(--brand-soft,#fff) 18%,transparent);box-shadow:inset 0 1px 0 #ffffff12}
+.pf-summary::after{content:"";position:absolute;right:-60px;top:-80px;width:260px;height:260px;border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle,color-mix(in srgb,var(--brand-a) 30%,transparent),transparent 70%)}
+.pf-summary-head{display:flex;align-items:center;gap:10px}
+.pf-summary-brand{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:750;letter-spacing:.04em;text-transform:uppercase;color:#fff}
+.pf-summary-brand .pf-glyph-wrap{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:linear-gradient(145deg,var(--brand-a),var(--brand-b))}
+.pf-summary-brand .pf-glyph{width:15px;height:15px;color:#fff}
+.pf-summary-label{font-size:12px;color:#ffffff8f}
+.pf-summary-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px}
+.pf-stat{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:12px;background:#0000002e;border:1px solid #ffffff14}
+.pf-stat b{font-size:22px;line-height:1.05;font-weight:800;letter-spacing:-.025em;color:#fff;font-variant-numeric:tabular-nums}
+.pf-stat span{font-size:11px;color:#ffffff9e}
+.pf-stat.is-accent{background:linear-gradient(140deg,color-mix(in srgb,var(--brand-a) 38%,transparent),#0000002e);border-color:color-mix(in srgb,var(--brand-soft) 35%,transparent)}
+.pf-summary-quip{margin:0;font-size:13.5px;font-weight:550;line-height:1.4;color:#fffffff0}
+.pf-summary-quip::before{content:"“";margin-right:4px;font-size:18px;font-weight:800;color:var(--brand-soft)}
+.pf-ticker{position:relative;display:flex;align-items:center;gap:10px;height:30px;margin:0 -18px -12px;padding:0 18px;border-top:1px solid #ffffff12;background:#0000002a}
+.pf-ticker-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--brand-soft);box-shadow:0 0 0 0 var(--brand-soft);animation:pfTickerPulse 2s ease-out infinite}
+.pf-ticker-track{position:relative;flex:1;height:100%;overflow:hidden}
+.pf-ticker-item{position:absolute;inset:0;display:flex;align-items:center;font-size:12px;color:#ffffffb8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  opacity:0;transform:translateY(10px);transition:opacity .45s ease,transform .45s cubic-bezier(.2,.8,.2,1)}
+.pf-ticker-item.is-on{opacity:1;transform:none}
+@keyframes pfTickerPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--brand-soft) 70%,transparent)}100%{box-shadow:0 0 0 8px transparent}}
+@media (prefers-reduced-motion:reduce){.pf-ticker-dot{animation:none}.pf-ticker-item{transition:none}}
+/* Epic : jeu de la semaine + jeu suivant côte à côte */
+:root:root .offers-grid.platform-giveaways:has(>.offer-card:nth-child(2)){grid-template-columns:repeat(auto-fit,minmax(300px,1fr))!important}
+.offer-badge.is-soon{background:#ffffff26!important;color:#fff!important;backdrop-filter:blur(8px)}
+
+/* ── Fonds de section : motif propre à chaque plateforme (inspiré, jamais copié) ── */
+/* Steam : trame diagonale fine, lumière froide qui tombe d'en haut */
+.app[data-view="steam"] .main{background:
+  radial-gradient(900px 420px at 85% -10%,#1a9fff38,transparent 70%),
+  radial-gradient(700px 520px at -10% 115%,#2a5ad62e,transparent 70%),
+  repeating-linear-gradient(135deg,#66c0f40a 0 1px,transparent 1px 22px),
+  linear-gradient(180deg,#1b2838 0%,#171d25 45%,#14191f 100%)!important;background-attachment:fixed!important}
+/* Epic : monochrome, colonnes verticales sobres, halo blanc */
+.app[data-view="epic"] .main{background:
+  radial-gradient(800px 380px at 80% -12%,#ffffff1c,transparent 70%),
+  repeating-linear-gradient(90deg,#ffffff07 0 1px,transparent 1px 96px),
+  linear-gradient(180deg,#18181c 0%,#101014 60%,#0c0c0f 100%)!important;background-attachment:fixed!important}
+/* Xbox : matrice de points verte et énergie qui monte du bas */
+.app[data-view="xbox"] .main{background:
+  radial-gradient(900px 460px at 50% 118%,#107c1040,transparent 70%),
+  radial-gradient(700px 360px at 92% -12%,#9bf00b1f,transparent 70%),
+  radial-gradient(circle at 1px 1px,#9bf00b14 1px,transparent 1.6px) 0 0/22px 22px,
+  linear-gradient(180deg,#0f1712 0%,#0b100d 100%)!important;background-attachment:fixed!important}
+/* GOG : treillis en losanges violet, ambiance collection */
+.app[data-view="gog"] .main{background:
+  radial-gradient(800px 420px at 12% -12%,#a868f033,transparent 70%),
+  radial-gradient(700px 480px at 100% 110%,#c69aef1f,transparent 70%),
+  repeating-linear-gradient(45deg,#c69aef0a 0 1px,transparent 1px 28px),
+  repeating-linear-gradient(-45deg,#c69aef0a 0 1px,transparent 1px 28px),
+  linear-gradient(180deg,#1d1724 0%,#19141f 55%,#151019 100%)!important;background-attachment:fixed!important}
+
+/* ── Fiche de jeu : case Succès (anneau, compteur, platine) ── */
+.ach-stat{display:inline-flex;align-items:center;gap:8px}
+.ach-ring{--p:0;position:relative;display:grid;place-items:center;width:34px;height:34px;border-radius:50%;flex:none;
+  background:conic-gradient(#f0b54a calc(var(--p)*1%),#ffffff1f 0);box-shadow:0 0 0 1px #ffffff14}
+.ach-ring::before{content:"";position:absolute;inset:4px;border-radius:50%;background:#14181d}
+.ach-ring span{position:relative;font-size:9px;font-weight:800;color:#f6dca6;font-variant-numeric:tabular-nums}
+.ach-count{font-size:inherit;font-weight:750}
+.ach-of{font-size:12px;font-weight:600;color:#ffffff8a}
+.ach-none{font-size:13px;font-weight:600;color:#ffffff73}
+.ach-platinum{position:relative;display:grid;place-items:center;width:36px;height:36px;border-radius:11px;flex:none;overflow:hidden;
+  background:linear-gradient(145deg,#f5f7fb 0%,#b9c4d6 35%,#eef2f8 55%,#8e9bb2 100%);
+  box-shadow:0 0 0 1px #ffffff66,0 6px 18px -4px #b9c8ff99,inset 0 1px 0 #fff;animation:achPlatGlow 3s ease-in-out infinite}
+.ach-platinum svg{width:20px;height:20px;fill:none;stroke:#3a4458;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ach-platinum i{position:absolute;inset:-50% auto -50% -70%;width:45%;transform:rotate(25deg);background:linear-gradient(90deg,transparent,#ffffffd9,transparent);animation:achPlatShine 3s ease-in-out infinite}
+.page-stat-ach.is-platinum .ach-count{background:linear-gradient(90deg,#e8eefb,#a9b8d8,#ffffff);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:.02em}
+@keyframes achPlatShine{0%,55%{transform:rotate(25deg) translateX(0)}85%,100%{transform:rotate(25deg) translateX(520%)}}
+@keyframes achPlatGlow{0%,100%{box-shadow:0 0 0 1px #ffffff66,0 6px 18px -4px #b9c8ff80,inset 0 1px 0 #fff}50%{box-shadow:0 0 0 1px #ffffffaa,0 8px 26px -2px #cdd8ffcc,inset 0 1px 0 #fff}}
+@media (prefers-reduced-motion:reduce){.ach-platinum,.ach-platinum i{animation:none}}
+
+/* ── Actus : une section par plateforme ── */
+.news-platforms{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.news-platform{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px 0 10px;border-radius:10px;border:1px solid #e1e5e8;background:#fff;
+  font-size:12.5px;font-weight:650;color:#3b444b;cursor:pointer;transition:background .15s,border-color .15s,transform .15s}
+.news-platform:hover{transform:translateY(-1px);border-color:color-mix(in srgb,var(--brand-a,#dc5a2e) 40%,#e1e5e8)}
+.news-platform .pf-glyph{width:15px;height:15px;color:var(--brand-b,#3b444b)}
+.news-platform small{font-size:10.5px;font-weight:700;color:#8a949c}
+.news-platform.on{color:#fff;border-color:transparent;background:linear-gradient(140deg,var(--brand-a,#e8693c),var(--brand-b,#c44d23));box-shadow:0 6px 16px -8px var(--brand-a,#dc5a2e)}
+.news-platform.on .pf-glyph,.news-platform.on small{color:#ffffffd0}
+.news-platform.store-epic.on{background:linear-gradient(140deg,#3a3a40,#121214)}
+.news-platform.store-steam.on{background:linear-gradient(140deg,#2a475e,#171a21)}
+.news-platform-head{position:relative;overflow:hidden;display:grid;gap:4px;margin:0 0 16px;padding:18px 20px;border-radius:18px;color:#fff;
+  background:linear-gradient(120deg,var(--brand-b),color-mix(in srgb,var(--brand-a) 70%,#0b1016));box-shadow:0 14px 30px -18px var(--brand-b)}
+.news-platform-head.store-epic{background:linear-gradient(120deg,#121214,#2c2c33)}
+.news-platform-head.store-steam{background:linear-gradient(120deg,#171a21,#1b2838 55%,#2a475e)}
+.news-platform-head::after{content:"";position:absolute;right:-40px;top:-70px;width:240px;height:240px;border-radius:50%;background:radial-gradient(circle,#ffffff2e,transparent 70%)}
+.news-platform-brand{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:750;letter-spacing:.06em;text-transform:uppercase;color:#ffffffd9}
+.news-platform-brand .pf-glyph{width:15px;height:15px}
+.news-platform-head h2{margin:2px 0 0;font-size:26px;font-weight:800;letter-spacing:-.025em}
+.news-platform-head p{margin:0;font-size:13px;color:#ffffffbf}
+.news-platform-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:6px 14px;margin-bottom:10px;padding:10px;border-radius:16px;background:#fff;border:1px solid #e3e7ea}
+
+/* ── Plateformes dynamiques : univers de chaque service connecté ── */
+.app[data-view^="svc:"] .main{--win:var(--platform-bg);--ink:#f4f6f8;--ink-2:#d8dee5;--muted:#aab6c2;--faint:#8c9aa8;--line:#ffffff19;--accent:var(--platform-accent);
+  color-scheme:dark;color:var(--ink);
+  background:radial-gradient(900px 440px at 85% -10%,color-mix(in srgb,var(--brand-a) 30%,transparent),transparent 70%),
+             radial-gradient(700px 520px at -10% 115%,color-mix(in srgb,var(--brand-b) 28%,transparent),transparent 70%),
+             radial-gradient(circle at 1px 1px,color-mix(in srgb,var(--brand-soft) 9%,transparent) 1px,transparent 1.6px) 0 0/24px 24px,
+             var(--platform-bg)!important;background-attachment:fixed!important}
+.app[data-view^="svc:"] .toolbar{background:linear-gradient(160deg,var(--platform-surface),var(--platform-bg))!important;border-bottom:1px solid #ffffff17!important}
+.app[data-view^="svc:"] .main :is(.row-head h2,.row-title,.view-title,h1){color:var(--ink)!important}
+.app[data-view^="svc:"] .main :is(.row-meta,.view-subtitle){color:var(--muted)!important}
+.app[data-view^="svc:"] .main :is(.search input,.button){background-color:var(--platform-surface)!important;color:var(--ink)!important;border-color:#ffffff22!important}
+.svc-summary .pf-summary-brand .pf-glyph-wrap{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:linear-gradient(145deg,var(--brand-a),var(--brand-b))}
+.svc-actions{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 22px}
+.svc-open{height:40px!important;padding:0 18px!important;font-size:13px!important}
+.svc-remove{height:40px;padding:0 14px;border-radius:10px;font-size:12.5px}
+.svc-games{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.svc-honest{max-width:620px;margin:6px 0 0;padding:14px 16px;border-radius:14px;font-size:13px;line-height:1.5;color:#ffffffc4;background:#ffffff0d;border:1px solid #ffffff17}
+.nav-logo-svc{--lg-glow:#fff}
+.service-platforms .nav-logo{animation-delay:.4s}
+.nav-button[data-view^="svc:"]:hover .nav-logo svg{transform:rotate(-12deg) scale(1.08)}
+/* Paramètres › Connexions : connectés / non connectés */
+.settings-group-count{margin-left:8px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;color:#6b7680;background:#eef1f3;vertical-align:2px}
+.settings-platform-icon{display:grid!important;place-items:center;color:#fff!important;background:linear-gradient(145deg,var(--lg-a,#5d666f),var(--lg-b,#3a4047))!important;font-size:0!important}
+.settings-platform-icon svg{width:20px;height:20px}
+.platform-icon-steam{--lg-a:#2a475e;--lg-b:#171a21}.platform-icon-epic{--lg-a:#3a3a40;--lg-b:#121214}
+.platform-icon-xbox{--lg-a:#1fae1f;--lg-b:#0e6a0e}.platform-icon-gog{--lg-a:#a868f0;--lg-b:#5b2a8f}
+.settings-platform:not(.is-on){opacity:.86}
+.settings-platform:not(.is-on) .settings-platform-icon{filter:saturate(.55)}
+.settings-platform-actions{display:flex;align-items:center;gap:6px;justify-self:end}
+/* Connexions : tuile logo (comme la barre latérale) et colonnes qui tiennent */
+.settings-platform{grid-template-columns:32px minmax(0,1fr) auto auto!important}
+.settings-platform>.session-state{white-space:nowrap;font-size:11px}
+.settings-platform-icon{width:32px!important;height:32px!important;margin:0!important;border-radius:9px!important;color:#fff!important;box-shadow:inset 0 0 0 1px #ffffff1f,0 3px 8px -3px color-mix(in srgb,var(--lg-b,#333) 70%,transparent)!important;background:linear-gradient(145deg,var(--lg-a,#5d666f),var(--lg-b,#3a4047))!important}
+.settings-platform-icon svg{width:18px;height:18px;fill:currentColor;color:#fff}
+.settings-platform-actions{min-width:96px;justify-content:flex-end}
+.settings-platform-actions .settings-inline-action{white-space:nowrap}
+@media(max-width:1050px){.settings-platform{grid-template-columns:32px minmax(0,1fr) auto!important}.settings-platform>.session-state{grid-column:2;margin-top:-8px}.settings-platform-actions{grid-column:3;grid-row:1/span 2}}
+.pf-hero.is-clickable{cursor:pointer}
+.pf-hero-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.pf-hero-sheet{height:36px;padding:0 14px;border-radius:10px;border:1px solid #ffffff2e;background:#ffffff14;color:#fff;font:600 12.5px/1 inherit;cursor:pointer;backdrop-filter:blur(8px)}
+.pf-hero-sheet:hover{background:#ffffff24}
+
+/* ── Badges Playmelt : médaillons octogonaux, 4 métaux, déblocage animé ── */
+.bdg-panel{position:relative;isolation:isolate;overflow:hidden;margin:26px 0 30px;padding:28px 28px 30px;border-radius:22px;color:#eef3f7;
+  background:radial-gradient(700px 300px at 92% -10%,#f0b93a1f,transparent 70%),radial-gradient(600px 360px at -5% 110%,#b48cff1a,transparent 70%),
+  radial-gradient(circle at 1px 1px,#ffffff0c 1px,transparent 1.5px) 0 0/22px 22px,linear-gradient(150deg,#16222b,#0d141a);border:1px solid #ffffff14;box-shadow:0 18px 40px -18px #0b141a99}
+.bdg-head{display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:center}
+.bdg-total{position:relative;display:grid;place-items:center;align-content:center;width:86px;height:86px;border-radius:50%;
+  background:conic-gradient(from -90deg,#ffe28a,#f0b93a calc(var(--p)*360deg),#ffffff14 0)}
+.bdg-total::before{content:"";position:absolute;inset:7px;border-radius:50%;background:#111b22}
+.bdg-total b,.bdg-total small{position:relative}.bdg-total b{font-size:26px;line-height:1;letter-spacing:-.03em}.bdg-total small{font-size:11px;color:#9fb0bf}
+.bdg-head-copy h2{margin:4px 0 6px;font-size:24px;letter-spacing:-.03em;color:#fff}
+.bdg-head-copy p{margin:0;max-width:620px;font-size:13px;line-height:1.5;color:#a9b8c5}
+.bdg-head-copy .discover-kicker{color:#ffcf6b}
+.bdg-showcase{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:24px 0 22px}
+.bdg-show{display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 12px 16px;border-radius:16px;text-align:center;background:linear-gradient(180deg,#ffffff0f,#ffffff04);border:1px solid #ffffff14}
+.bdg-show .bdg-medal{width:84px;height:84px;margin-bottom:4px}
+.bdg-show.is-first{background:radial-gradient(circle at 50% 30%,#ffd76824,transparent 65%),linear-gradient(180deg,#ffffff14,#ffffff05);border-color:#ffd7683d}
+.bdg-show.is-first .bdg-medal{width:100px;height:100px}
+.bdg-show strong{font-size:14px;color:#fff}.bdg-show small{font-size:11px;color:#9fb0bf}
+.bdg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px}
+.bdg-sub{display:flex;align-items:center;gap:8px;margin:26px 0 12px;font-size:15px;color:#fff}
+.bdg-sub span{padding:2px 8px;border-radius:999px;font-size:11px;color:#d9c8ff;background:#b48cff26}
+.bdg-card{position:relative;display:grid;grid-template-columns:62px minmax(0,1fr);gap:14px;align-items:center;padding:13px 15px;border-radius:16px;text-align:left;color:inherit;font:inherit;cursor:pointer;
+  background:#ffffff08;border:1px solid #ffffff12;transition:transform .25s ease,background .25s ease,border-color .25s ease;animation:bdg-in .5s ease both;animation-delay:calc(var(--i,0)*30ms)}
+.bdg-card:hover{transform:translateY(-2px);background:#ffffff0f;border-color:#ffffff22}
+.bdg-card:focus-visible{outline:2px solid #ffcf6b;outline-offset:2px}
+.bdg-card .bdg-medal{width:62px;height:62px}
+.bdg-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+.bdg-copy small{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#93a5b5}
+.bdg-copy strong{font-size:15px;line-height:1.2;color:#fff;letter-spacing:-.01em}
+.bdg-goal{font-size:11.5px;line-height:1.35;color:#a9b8c5}
+.bdg-bar{display:block;height:5px;margin-top:5px;border-radius:999px;background:#ffffff14;overflow:hidden}
+.bdg-bar i{display:block;height:100%;width:calc(var(--p,0)*100%);border-radius:inherit;background:linear-gradient(90deg,#ff9f5a,#ffd768)}
+.bdg-card.is-locked .bdg-medal{filter:grayscale(1) brightness(.85);opacity:.6}
+.bdg-card.is-locked strong{color:#c7d0d8}
+.bdg-card.is-secret.is-locked strong{letter-spacing:.2em}
+.bdg-new{position:absolute;top:9px;right:11px;padding:3px 8px;border-radius:999px;font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#fff;background:linear-gradient(135deg,#ff8a3d,#ff5f6d);box-shadow:0 4px 12px -3px #ff5f6d99}
+.bdg-card.is-new{border-color:#ffd76855;animation:bdg-in .5s ease both,bdg-glow 2.4s ease-in-out .6s 3}
+.bdg-card.is-new .bdg-medal{animation:bdg-reveal 1.1s cubic-bezier(.2,1.5,.4,1) both;animation-delay:calc(var(--i,0)*70ms + .15s)}
+.bdg-detail{grid-column:1/-1;display:none;gap:5px;margin-top:4px}
+.bdg-card.is-open .bdg-detail{display:grid}
+.bdg-step{display:grid;grid-template-columns:62px minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 10px;border-radius:9px;font-size:12px;background:#ffffff07;opacity:.5}
+.bdg-step.on{opacity:1;background:#ffffff0d}
+.bdg-step b{font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.bdg-step em{font-style:normal;font-size:11px;color:#93a5b5;white-space:nowrap}
+.bdg-step.tier-bronze b{color:#e9aa72}.bdg-step.tier-silver b{color:#dfe7ee}.bdg-step.tier-gold b{color:#ffd768}.bdg-step.tier-prism b{background:linear-gradient(90deg,#7ef3ff,#b48cff,#ff9ed6);-webkit-background-clip:text;background-clip:text;color:transparent}
+.bdg-hint{font-size:11px;color:#8597a7;padding:2px 2px 0}
+.bdg-hint:empty{display:none}
+/* Médaillon */
+.bdg-medal{position:relative;display:inline-grid;flex:none}
+.bdg-medal svg{width:100%;height:100%;overflow:visible;filter:drop-shadow(0 6px 9px #00000080)}
+.bdg-medal.tier-bronze{color:#ffd8b3}.bdg-medal.tier-silver{color:#ffffff}.bdg-medal.tier-gold{color:#fff0b8}.bdg-medal.tier-prism{color:#f1e7ff}
+.bdg-medal.tier-lock{color:#8792a0}.bdg-medal.tier-secret{color:#efe4ff}
+.bdg-medal.tier-gold svg{filter:drop-shadow(0 6px 9px #00000080) drop-shadow(0 0 12px #f0b93a40)}
+.bdg-medal.tier-prism svg,.bdg-medal.tier-secret svg{filter:drop-shadow(0 6px 9px #00000080) drop-shadow(0 0 16px #b48cff59)}
+.bdg-medal:not(.tier-lock)::after{content:"";position:absolute;inset:0;pointer-events:none;clip-path:polygon(50% 2%,84% 16%,98% 50%,84% 84%,50% 98%,16% 84%,2% 50%,16% 16%);
+  background:linear-gradient(115deg,transparent 38%,#ffffffa6 50%,transparent 62%) 160% 0/260% 100% no-repeat;opacity:0}
+.bdg-card:hover .bdg-medal::after,.bdg-show:hover .bdg-medal::after{animation:bdg-shine-once .9s ease both}
+.bdg-medal.tier-gold::after,.bdg-medal.tier-prism::after,.bdg-medal.tier-secret::after{animation:bdg-shine 6s ease-in-out infinite}
+.bdg-panel.is-arrival .bdg-card:not(.is-locked) .bdg-medal,.bdg-panel.is-arrival .bdg-show .bdg-medal{animation:bdg-reveal 1s cubic-bezier(.2,1.5,.4,1) both;animation-delay:calc(var(--i,0)*85ms + .2s)}
+/* Pop-up de déblocage */
+.bdg-pop{position:fixed;right:24px;bottom:24px;z-index:9999;display:grid;grid-template-columns:78px minmax(0,1fr) auto;gap:14px;align-items:center;width:min(400px,calc(100vw - 48px));padding:14px 14px 14px 16px;
+  border-radius:18px;color:#f2f6f9;cursor:pointer;overflow:hidden;isolation:isolate;background:linear-gradient(140deg,#1d2a35,#0e151b);border:1px solid #ffd76833;box-shadow:0 24px 54px -14px #000000b3;animation:bdg-pop-in .7s cubic-bezier(.2,1.3,.4,1) both}
+.bdg-pop.is-leaving{animation:bdg-pop-out .55s ease both}
+.bdg-pop .bdg-medal{width:78px;height:78px;animation:bdg-reveal 1.1s .15s cubic-bezier(.2,1.5,.4,1) both}
+.bdg-pop-rays{position:absolute;z-index:-1;left:-28px;top:50%;width:170px;height:170px;margin-top:-85px;border-radius:50%;background:repeating-conic-gradient(#ffd76826 0 7deg,transparent 7deg 20deg);
+  -webkit-mask:radial-gradient(circle,#000 25%,transparent 70%);mask:radial-gradient(circle,#000 25%,transparent 70%);animation:bdg-spin 10s linear infinite}
+.bdg-pop-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bdg-pop-copy small{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#ffcf6b}
+.bdg-pop-copy strong{font-size:17px;letter-spacing:-.02em;color:#fff}
+.bdg-pop-copy span{font-size:12px;color:#a9b8c5}
+.bdg-pop-close{align-self:start;width:26px;height:26px;border:0;border-radius:8px;background:#ffffff12;color:#c9d4dd;font-size:15px;line-height:1;cursor:pointer}
+@keyframes bdg-in{from{opacity:0;transform:translateY(10px)}}
+@keyframes bdg-reveal{0%{opacity:0;transform:scale(.25) rotate(-190deg);filter:brightness(2.6)}60%{opacity:1;transform:scale(1.14) rotate(7deg);filter:brightness(1.4)}100%{transform:none;filter:none}}
+@keyframes bdg-glow{0%,100%{box-shadow:0 0 0 0 #ffd76800}50%{box-shadow:0 0 0 5px #ffd76826}}
+@keyframes bdg-shine{0%,72%{background-position:160% 0;opacity:0}76%{opacity:1}100%{background-position:-60% 0;opacity:0}}
+@keyframes bdg-shine-once{0%{background-position:160% 0;opacity:1}100%{background-position:-60% 0;opacity:1}}
+@keyframes bdg-pop-in{from{opacity:0;transform:translateY(30px) scale(.92)}}
+@keyframes bdg-pop-out{to{opacity:0;transform:translateY(18px) scale(.96)}}
+@keyframes bdg-spin{to{transform:rotate(360deg)}}
+@media(max-width:900px){.bdg-showcase{gap:8px}.bdg-show .bdg-medal{width:66px;height:66px}.bdg-show.is-first .bdg-medal{width:78px;height:78px}.bdg-panel{padding:22px 18px}}
+@media(prefers-reduced-motion:reduce){.bdg-card,.bdg-card .bdg-medal,.bdg-medal::after,.bdg-pop,.bdg-pop .bdg-medal,.bdg-pop-rays,.bdg-panel.is-arrival .bdg-medal{animation:none!important}}
+.bdg-copy small .bdg-new{position:static;display:inline-block;margin-left:7px;padding:2px 6px;font-size:8.5px;vertical-align:1px;box-shadow:none}
+.bdg-spark{transform-box:fill-box;transform-origin:center;animation:bdg-twinkle 2.6s ease-in-out infinite}
+.bdg-spark.s2{animation-delay:1.3s}
+@keyframes bdg-twinkle{0%,100%{opacity:0;transform:scale(.3) rotate(0)}45%{opacity:1;transform:scale(1) rotate(45deg)}70%{opacity:.2}}
+@media(prefers-reduced-motion:reduce){.bdg-spark{animation:none;opacity:.8}}
+.bdg-grid{align-items:start}
+.bdg-step{grid-template-columns:58px minmax(0,1fr);row-gap:1px}
+.bdg-step em{grid-column:2;white-space:normal}
+.bdg-step>span{font-weight:600;color:#eef3f7}
+
+/* ── Repli d'image : jamais de case vide, la couleur de la plateforme et son logo à la place ── */
+.store-steam{--fb-a:#2a475e;--fb-b:#121820}.store-epic{--fb-a:#3b3b42;--fb-b:#121214}.store-xbox{--fb-a:#1c7f1c;--fb-b:#0b3d0b}
+.store-gog{--fb-a:#7a3fc4;--fb-b:#2e1450}.store-local{--fb-a:#55606b;--fb-b:#20262c}
+:is(.resume-tile,.board-thumb){position:relative;background:radial-gradient(120% 90% at 85% 0%,color-mix(in srgb,var(--fb-a,#4a5560) 85%,#fff 8%),transparent 70%),linear-gradient(150deg,var(--fb-a,#4a5560),var(--fb-b,#1d2329))}
+:is(.resume-tile,.board-thumb)>img.art-unavailable{opacity:0}
+.resume-tile:has(>img.art-unavailable)::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 1px 1px,#ffffff1a 1px,transparent 1.6px) 0 0/14px 14px;pointer-events:none}
+.board-col :is(.board-thumb){--fb-a:inherit}
+
+/* ── Fond d'ambiance des vues claires : couleur du dernier jeu, très floutée, en haut de page ── */
+.main{position:relative;isolation:isolate}
+.main-ambient{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden;opacity:0;transition:opacity .9s ease}
+.main-ambient.on{opacity:1}
+.main-ambient::before{content:"";position:absolute;left:-10%;right:-10%;top:-120px;height:640px;background:var(--ambient) center 30%/cover no-repeat;filter:blur(90px) saturate(1.6);opacity:.3;
+  -webkit-mask-image:linear-gradient(#000 25%,transparent 95%);mask-image:linear-gradient(#000 25%,transparent 95%)}
+.main-ambient::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 1px 1px,#0000000a 1px,transparent 1.5px) 0 0/22px 22px;-webkit-mask-image:linear-gradient(#000,transparent 70%);mask-image:linear-gradient(#000,transparent 70%)}
+.app:is([data-view=steam],[data-view=epic],[data-view=xbox],[data-view=gog],[data-view^="svc:"]) .main-ambient{display:none}
+/* Barre de titre translucide sur les vues claires : l'ambiance passe derrière, sans couture */
+.app:not(:is([data-view=steam],[data-view=epic],[data-view=xbox],[data-view=gog],[data-view^="svc:"])) .toolbar{background:linear-gradient(color-mix(in srgb,var(--win) 35%,transparent),color-mix(in srgb,var(--win) 10%,transparent))!important;border-bottom-color:color-mix(in srgb,var(--line) 60%,transparent)!important}
+.main-ambient::before{top:-60px;height:700px;opacity:.34}

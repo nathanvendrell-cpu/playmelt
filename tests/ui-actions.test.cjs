@@ -173,6 +173,66 @@ context.ui.gameSettings.save.handlers.click();
 assert.deepEqual(Array.from(sent.at(-1).payload.changedFields), ['graphics.quality','graphics.upscaler']);
 elements.gameSettingsDialog.close();
 sent.length = 0;
+// Exercise real settings controls: route capabilities, numeric requests and
+// explicit off are separate from the locked SM2 dynamic-resolution target.
+const performanceSnapshot = {
+  ...snapshot, revision:'performance-r1',
+  settings:{...snapshot.settings,performance:{fpsLimit:0,metalFXScale:1,outputWidth:1920,outputHeight:1080}},
+  capabilities:{launchArgs:false,backends:[{value:'auto',label:'Auto'},{value:'d3dmetal',label:'DirectX 12'}],display:false,graphics:false,
+    performance:{visible:true,fpsLimit:true,spatialUpscaling:false,renderer:'dxmt',reason:'Route directe qualifiée, effet non mesuré.',spatialReason:'Exécutable inconnu : résolution non qualifiée.'}}
+};
+api.openGameSettings(configGame,null);api.renderGameSettings(performanceSnapshot);
+assert.equal(context.ui.gameSettings.inputs.fpsLimit.disabled,false);
+assert.equal(context.ui.gameSettings.inputs.metalFXScale.disabled,true,'Unknown executable never exposes a working spatial control');
+context.ui.gameSettings.inputs.fpsLimit.value='45';context.ui.gameSettings.inputs.fpsLimit.handlers.change();
+assert.equal(context.ui.gameSettings.draft.performance.fpsLimit,45,'Select emits a number, not a numeric string');
+assert.equal(context.ui.gameSettings.draft.graphics.dynamicFPS,60,'FPS cap cannot mutate SM2 dynamic-resolution target');
+context.ui.gameSettings.save.handlers.click();
+assert.deepEqual(Array.from(sent.at(-1).payload.changedFields),['performance.fpsLimit']);
+api.renderGameSettings({...performanceSnapshot,status:'saved',revision:'performance-r2',settings:{...performanceSnapshot.settings,performance:{...performanceSnapshot.settings.performance,fpsLimit:45}}});
+assert.equal(context.ui.gameSettings.touched.size,0);
+elements.gameSettingsDialog.close();
+api.openGameSettings(configGame,null);
+const unavailablePerformance={...performanceSnapshot,revision:'performance-r3',launchBlockReason:'Route officielle indisponible.',
+  settings:{...performanceSnapshot.settings,performance:{fpsLimit:45,metalFXScale:1.5,outputWidth:1920,outputHeight:1080}},
+  capabilities:{...performanceSnapshot.capabilities,performance:{...performanceSnapshot.capabilities.performance,fpsLimit:false,reason:'Route officielle indisponible.'}}};
+api.renderGameSettings(unavailablePerformance);
+assert.equal(context.ui.gameSettings.inputs.fpsLimit.disabled,true);
+assert.equal(context.ui.gameSettings.performanceControls.clear.disabled,false,'Inactive saved requests remain repairable');
+context.ui.gameSettings.performanceControls.clear.handlers.click();
+assert.equal(context.ui.gameSettings.draft.performance.fpsLimit,0);
+assert.equal(context.ui.gameSettings.draft.performance.metalFXScale,1);
+context.ui.gameSettings.save.handlers.click();
+assert.deepEqual(Array.from(sent.at(-1).payload.changedFields),['performance.fpsLimit','performance.metalFXScale']);
+assert.equal(sent.at(-1).payload.settings.graphics.dynamicFPS,60);
+elements.gameSettingsDialog.close();
+api.openGameSettings(configGame,null);
+const spatialSnapshot={...performanceSnapshot,capabilities:{...performanceSnapshot.capabilities,
+  performance:{...performanceSnapshot.capabilities.performance,spatialUpscaling:true}}};
+api.renderGameSettings(spatialSnapshot);
+for(const [field,value] of [['metalFXScale','1.5'],['outputWidth','1919'],['outputHeight','1079']]){
+  const control=context.ui.gameSettings.inputs[field];control.value=value;control.handlers.change();
+}
+const spatialMetrics=api.settingsMetrics(context.ui.gameSettings.draft,context.ui.gameSettings.capabilities);
+assert.equal(spatialMetrics.renderWidth,1278);assert.equal(spatialMetrics.renderHeight,718);
+assert.equal(spatialMetrics.width,1917);assert.equal(spatialMetrics.height,1077,'Calculated output matches actual input×scale');
+assert.match(context.ui.gameSettings.performancePreview.text,/1917×1077/);
+assert.match(context.ui.gameSettings.performancePreview.text,/souhaitée : 1919×1079/);
+assert.match(context.ui.gameSettings.performancePreview.text,/ne mesure ni la résolution effective ni les FPS/);
+context.ui.gameSettings.inputs.backend.value='d3dmetal';context.ui.gameSettings.inputs.backend.handlers.change();
+assert.equal(context.ui.gameSettings.inputs.metalFXScale.disabled,true);
+assert.equal(context.ui.gameSettings.inputs.fpsLimit.disabled,false,'Documented FPS cap is distinct from DX11-only spatial');
+assert.match(context.ui.gameSettings.performanceControls.reason.text,/DirectX 12.*inapplicable/);
+assert.equal(context.ui.gameSettings.dirty,true,'UI request is not marked applied by a backend switch');
+elements.gameSettingsDialog.close();
+api.openGameSettings(configGame,null);
+api.renderGameSettings({...performanceSnapshot,capabilities:{...performanceSnapshot.capabilities,performance:{...performanceSnapshot.capabilities.performance,fpsLimit:false,reason:'Les jeux Mac natifs et cloud ne passent pas par ces réglages Wine.'}}});
+assert.equal(context.ui.gameSettings.inputs.fpsLimit.disabled,true);
+assert.equal(context.ui.gameSettings.inputs.metalFXScale.disabled,true);
+assert.equal(context.ui.gameSettings.save.disabled,true);
+assert.equal(context.ui.gameSettings.performanceControls.clear.disabled,true);
+elements.gameSettingsDialog.close();
+sent.length=0;
 openGame({
   id: "steam:427520",
   title: "Factorio",
@@ -232,12 +292,12 @@ assert.equal(
   "An unavailable Windows engine cannot start anything",
 );
 assert(
-  elements.dialogBody.children.some((n) => n.text === "Indisponible"),
-  "Unavailable route stays explicit",
+  elements.dialogBody.children.some((n) => n.text === "Installer"),
+  "The common Windows installation validates and prepares its missing engine",
 );
 assert(
-  !elements.dialogBody.children.some((n) => n.tag === "button"),
-  "No fake configuration button for a missing backend",
+  !elements.dialogBody.children.some((n) => n.text === "Préparer DirectX 11"),
+  "No per-game engine setup button",
 );
 context.state.windowsRuntime = {
   status: "missing",
@@ -261,7 +321,7 @@ assert.equal(
   "Opening the setup sheet must not download or configure anything",
 );
 const configure = elements.dialogBody.children.find(
-  (child) => child.text === "Préparer DirectX 11",
+  (child) => child.text === "Installer",
 );
 assert(
   configure && !configure.disabled,
@@ -269,7 +329,8 @@ assert(
 );
 configure.handlers.click();
 assert.equal(sent.length, 1);
-assert.equal(sent[0].action, "setupWindowsRuntime");
+assert.equal(sent[0].action, "installAndPlay");
+assert.equal(sent[0].payload.gameId, windowsGame.id);
 sent.length = 0;
 context.state.windowsRuntime = {
   status: "downloading",
@@ -328,11 +389,11 @@ context.state.windowsRuntime = {
 openGame(windowsGame);
 assert.equal(sent.length, 0, "A ready engine must not auto-install Steam");
 const steam = elements.dialogBody.children.find(
-  (child) => child.text === "Installer Steam pour DirectX 11",
+  (child) => child.text === "Installer",
 );
 assert(steam && !steam.disabled);
 steam.handlers.click();
-assert.equal(sent[0].action, "installSteamWindows");
+assert.equal(sent[0].action, "installAndPlay");
 sent.length = 0;
 context.state.windowsRuntime.steamBusy = true;
 openGame(windowsGame);
@@ -359,12 +420,12 @@ const nativeGame = {
 };
 openGame(nativeGame);
 const installPlay = elements.dialogBody.children.find(
-  (child) => child.text === "Installer et jouer",
+  (child) => child.text === "Installer",
 );
 assert(installPlay);
-assert.equal(sent.length, 0, "Installer et jouer remains an explicit choice");
+assert.equal(sent.length, 0, "Installation remains an explicit choice without automatic play");
 installPlay.handlers.click();
-assert.equal(sent[0].action, "installAndPlay");
+assert.equal(sent[0].action, "installGame");
 assert.equal(sent[0].payload.runtimeId, "steam-mac");
 assert.equal(
   elements.gameDialog.open,
@@ -384,10 +445,7 @@ context.state.installJob = {
 };
 openGame(nativeGame);
 assert.equal(sent.length, 0);
-assert.equal(
-  elements.dialogBody.children.find((child) => child.tag === "progress").value,
-  0.5,
-);
+assert.match(context.ui.dialogProgress.stages.innerHTML, /aria-valuenow="50"/, "The actual download has its own measured stage bar");
 const stop = elements.dialogBody.children.find(
   (child) => child.text === "Arrêter le suivi",
 );
@@ -415,6 +473,58 @@ assert(
 sent.length = 0;
 context.state.installJob = null;
 context.state.games = [windowsGame];
+const preparedGame={...windowsGame,installed:true,launchIsTest:true,canLaunch:false,requiresOfficialSteam:true,rendererNeedsSelection:false,steamCompletionRuntime:'playmelt-windows',launchBlockReason:'Composants Windows manquants'};
+context.state.games=[preparedGame];
+context.state.windowsRuntime={readyEngine:true,steamInstalled:false};
+context.state.installJob={id:'prepared-fixture',gameId:preparedGame.id,status:'files-prepared',cancellable:false,progress:1};
+openGame(preparedGame);
+assert(!elements.dialogBody.children.some(n=>n.text==='Jouer'||n.text==='Tester le lancement'),'Prepared files cannot offer play while prerequisites block');
+let prepareSteam=elements.dialogBody.children.find(n=>n.text==='Terminer l’installation');
+assert(prepareSteam,'Common installation resumes official client preparation');
+prepareSteam.handlers.click();
+assert.equal(sent.pop().action,'installAndPlay');
+context.state.windowsRuntime.steamInstalled=true;
+context.state.windowsRuntime.steamMessage='Connexion Windows à terminer';
+api.refreshVisibleDialog();
+assert(elements.dialogBody.children.some(n=>n.text==='Terminer l’installation'),'Client presence alone never replaces common preparation with a manual Open Steam');
+context.state.windowsRuntime.steamPreparation={gameId:preparedGame.id,waitingForLogin:true};
+api.refreshVisibleDialog();
+const stopSteam=elements.dialogBody.children.find(n=>n.text==='Arrêter la préparation Steam');
+assert(stopSteam,'Retained login intent is cancellable from its game sheet');
+stopSteam.handlers.click();const scopedStop=sent.pop();assert.equal(scopedStop.action,'cancelInstallAndPlay');assert.equal(scopedStop.payload.gameId,preparedGame.id);assert.equal(scopedStop.payload.preparationOnly,true);
+preparedGame.rendererNeedsSelection=true;
+preparedGame.declaredGraphicsAPI='DirectX 9.0c';
+api.refreshVisibleDialog();
+assert(!elements.dialogBody.children.some(n=>n.text==='Ouvrir Steam Windows'),'Engine preparation remains automatic rather than exposing a manual launcher');
+assert(!elements.dialogBody.children.some(n=>n.text==='Paramètres du jeu'),'The active automatic preparation is not replaced with manual engine selection');
+// A catalog ID becomes a path-bound installed ID after the real download.
+// Keep the open sheet actionable without reopening it or crossing accounts.
+const steamAccount='76561198000000001';
+const catalogGame={...windowsGame,id:'steam:1250790',appId:'1250790',platform:'windows',installed:false};
+const installedGame={...catalogGame,id:'steam:1250790:local:fixture',installed:true,launchIsTest:true,canLaunch:false,requiresOfficialSteam:true,rendererNeedsSelection:true};
+context.state.selectedAccountId=steamAccount;
+context.state.games=[catalogGame];context.state.installJob=null;context.state.windowsRuntime={readyEngine:true,steamInstalled:false};
+openGame(catalogGame);
+context.state.installJob={id:'replacement-fixture',gameId:catalogGame.id,appId:catalogGame.appId,accountId:steamAccount,status:'files-prepared',cancellable:false};
+context.state.games=[installedGame];api.refreshVisibleDialog();
+assert.equal(context.ui.dialogGameId,installedGame.id,'Prepared catalog entry follows its unique installed identity');
+const currentSettings=elements.dialogBody.children.find(n=>n.text==='Paramètres du jeu');assert(currentSettings);currentSettings.handlers.click();
+assert.equal(sent.pop().payload.gameId,installedGame.id,'Settings target the installed game rather than the removed catalog ID');
+elements.gameSettingsDialog.close();
+installedGame.rendererNeedsSelection=false;api.refreshVisibleDialog();
+assert(elements.dialogBody.children.some(n=>n.text==='Terminer l’installation'),'Saving the renderer updates the common installation action');
+context.state.installJob=null;
+context.state.windowsRuntime={readyEngine:true,steamBusy:true,cancellable:false,steamPreparation:{gameId:installedGame.id,busy:true}};
+openGame(installedGame);
+const installerStop=elements.dialogBody.children.find(n=>n.text==='Arrêter la préparation Steam');assert(installerStop,'SteamSetup remains cancellable in the runtime progress view');
+installerStop.handlers.click();const installerStopAction=sent.pop();assert.equal(installerStopAction.action,'cancelInstallAndPlay');assert.equal(installerStopAction.payload.gameId,installedGame.id);assert.equal(installerStopAction.payload.preparationOnly,true);
+context.state.windowsRuntime={readyEngine:true,steamInstalled:false};context.state.games=[catalogGame];openGame(catalogGame);
+context.state.games=[installedGame,{...installedGame,id:'steam:1250790:local:other'}];api.refreshVisibleDialog();
+assert.equal(context.ui.dialogGameId,catalogGame.id,'Multiple installed copies are never guessed');
+context.state.games=[catalogGame];openGame(catalogGame);context.state.selectedAccountId='76561198000000002';context.state.games=[installedGame];api.refreshVisibleDialog();
+assert.equal(context.ui.dialogGameId,catalogGame.id,'A changed account cannot inherit the catalog-to-install mapping');
+context.state.installJob=null;
+context.state.games=[windowsGame];
 context.state.windowsRuntime = {
   status: "downloading",
   bytesDownloaded: 25,
@@ -470,25 +580,23 @@ context.state.installJob = {
   cancellable: true,
 };
 openGame(nativeGame);
-const jobProgress = elements.dialogBody.children.find(
-  (n) => n.tag === "progress",
-);
+const jobProgress = context.ui.dialogProgress.stages;
 const jobCancel = elements.dialogBody.children.find(
   (n) => n.text === "Arrêter le suivi",
 );
 context.state.installJob.bytesDownloaded = 75;
 api.refreshVisibleDialog();
 assert.equal(
-  elements.dialogBody.children.find((n) => n.tag === "progress"),
+  context.ui.dialogProgress.stages,
   jobProgress,
-  "Game downloads reuse progress DOM",
+  "Game downloads reuse their stage list DOM",
 );
 assert.equal(
   elements.dialogBody.children.find((n) => n.text === "Arrêter le suivi"),
   jobCancel,
   "Game cancellation control stays stable",
 );
-assert.equal(jobProgress.value, 0.75);
+assert.match(jobProgress.innerHTML, /aria-valuenow="75"/);
 context.state.renderProtectionEnabled = true;
 context.state.installJob = null;
 openGame({
@@ -504,7 +612,7 @@ assert(
 );
 openGame(nativeGame);
 assert(
-  elements.dialogBody.children.find((n) => n.text === "Installer et jouer")
+  elements.dialogBody.children.find((n) => n.text === "Installer")
     .disabled,
   "Protection disables tracked installs",
 );
@@ -515,7 +623,7 @@ context.state.windowsRuntime = {
 };
 openGame(windowsGame);
 assert(
-  elements.dialogBody.children.find((n) => n.text === "Préparer DirectX 11")
+  elements.dialogBody.children.find((n) => n.text === "Installer")
     .disabled,
   "Protection disables DXMT configuration",
 );
@@ -527,16 +635,16 @@ context.state.windowsRuntime = {
 openGame(windowsGame);
 assert(
   elements.dialogBody.children.find(
-    (n) => n.text === "Installer Steam pour DirectX 11",
+    (n) => n.text === "Installer",
   ).disabled,
   "Protection disables Steam bootstrap",
 );
 context.state.windowsRuntime.steamInstalled = true;
 openGame(windowsGame);
 assert(
-  elements.dialogBody.children.find((n) => n.text === "Ouvrir Steam DirectX 11")
+  elements.dialogBody.children.find((n) => n.text === "Installer")
     .disabled,
-  "Protection disables Steam launches",
+  "Protection disables queued installation even when Steam is installed",
 );
 console.log(
   "UI actions passed: explicit actions only; stable progress/cancel DOM and truthful measurements",

@@ -42,8 +42,11 @@ import Foundation
         var invalidID = game; invalidID.appId = "$(invalid)"
         expect(ensureLaunchScript(for: invalidID) == nil, "invalid identifier never enters shell source")
         expect(ensureLaunchScript(for: game) == nil, "existing script cannot bypass absent executable")
+        expect(localLaunchBlockReason(for: game, steamAccountID: "")?.contains("introuvable") == true, "missing executable has a concrete diagnosis")
+        expect(game.json(runtimes: [])["canLaunch"] as? Bool == false, "a script alone cannot advertise a playable game")
         try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("Spider-Man2.exe"), withDestinationURL: legacy)
         expect(ensureLaunchScript(for: game) == nil, "symlink executable rejected")
-        print("Spider-Man launch selection: 16 PASS")
+        expect(localLaunchBlockReason(for: game, steamAccountID: "")?.contains("invalide") == true, "symlink rejected before launch")
+        print("Spider-Man launch selection: 19 PASS")
     }
 }

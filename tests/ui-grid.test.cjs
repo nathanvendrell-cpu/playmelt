@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-const start = html.indexOf("function createGameCard(game)");
+const start = html.indexOf("function resolveCardAction(game)");
 const end = html.indexOf("function fact(", start);
 assert(start > 0 && end > start);
 class Node {
@@ -84,9 +84,11 @@ const context = {
   filteredGames: () => filtered,
   gameCardCache: cache,
   renderSpotlight: () => {},
+  renderRows: () => {},
   updateJobIndicator: () => {},
   openGame: () => {},
   installJobFor: () => null,
+  gamePresentationJob: () => null,
   send: () => {
     throw Error("Rendering must not dispatch actions");
   },
@@ -96,6 +98,8 @@ const render = vm.runInNewContext(
     html.indexOf("function renderProtectionEnabled()"),
     html.indexOf("function createRenderProtectionControl()"),
   ) +
+    html.slice(html.indexOf("function isSteamWindowsGame(game)"), html.indexOf("function renderSteamWindowsInstallation")) +
+    html.slice(html.indexOf("function installationJobGame(job)"), html.indexOf("function steamCompletionSignature(game)")) +
     html.slice(start, end) +
     "; renderLibrary",
   context,
@@ -160,6 +164,8 @@ assert.equal(
 );
 assert.equal(cache.size, 2);
 games[1].requiredRenderer = "d3dmetal";
+games[1].platform = "windows";
+games[1].platforms = ["windows"];
 games[1].requiredGraphicsAPI = "DirectX12";
 games[1].canLaunch = true;
 filtered = [games[1]];
@@ -170,18 +176,20 @@ const configure = walk(elements.gameGrid.children[0]).find(
 );
 assert.equal(
   configure.textContent,
-  "Configurer",
-  "A DX12 card never advertises Play before renderer validation",
+  "Jouer",
+  "Native readiness controls the label; an optional DX12 component UI cannot replace Play",
 );
 let opened = null;
 context.openGame = (game) => {
   opened = game.id;
 };
+let launched = null;
+context.send = (action, payload) => { assert.equal(action, "launchGame"); launched = payload.gameId; };
 configure.handlers.click();
 assert.equal(
-  opened,
+  launched,
   games[1].id,
-  "DX12 quick action opens configuration instead of dispatching launch",
+  "A native-confirmed ready Windows game plays directly without another setup prompt",
 );
 delete games[1].requiredRenderer;
 context.state.renderProtectionEnabled = true;

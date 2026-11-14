@@ -1,0 +1,1598 @@
+{
+  "schemaVersion": 1,
+  "retrievedAt": "2026-11-13T05:31:57.797715+00:00",
+  "apps": {
+    "440": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "5938019123da1332cba42c30b6c577f2c3dcd91128b2740957f1ff04ffda424a",
+      "source": "https://store.steampowered.com/api/appdetails?appids=440&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:31:57.797911+00:00"
+    },
+    "480": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=480&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:01.057895+00:00"
+    },
+    "550": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "ba6ca606aa03ed264556d2d65b0057f4cc229f13edb698edd27ff109d20845a5",
+      "source": "https://store.steampowered.com/api/appdetails?appids=550&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:04.270971+00:00"
+    },
+    "730": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "86cb8470171d04784da591c515d47a9dacf3f01730a8e97ee9b21d400c41cd57",
+      "source": "https://store.steampowered.com/api/appdetails?appids=730&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:07.544411+00:00"
+    },
+    "8500": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "644df674c56dfac71388ce924e4ef1afae170bf27eaebb8460378618a55a9dea",
+      "source": "https://store.steampowered.com/api/appdetails?appids=8500&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:10.817866+00:00"
+    },
+    "9900": {
+      "graphicsAPI": "DirectX 11.0",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "4ce57c60ec349ddca01663d0901e30683400d1f75fd919c720f84dc886097200",
+      "source": "https://store.steampowered.com/api/appdetails?appids=9900&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:14.073103+00:00"
+    },
+    "11020": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "bc495bbc762dcb3064bf92d3da215ac8d12c2c117dee80faff5bebff8e13d879",
+      "source": "https://store.steampowered.com/api/appdetails?appids=11020&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:17.389364+00:00"
+    },
+    "24780": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "9aa7c57c32c5df2d7c533038350576f051d10fdef1f1a10a98a18d7c06171b09",
+      "source": "https://store.steampowered.com/api/appdetails?appids=24780&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:20.621102+00:00"
+    },
+    "47780": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "b6c1569c9b868b0adc3e94f2f0e9e0c25e9c0ce8150928720ca38ae91cffca32",
+      "source": "https://store.steampowered.com/api/appdetails?appids=47780&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:23.865715+00:00"
+    },
+    "72850": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "946df8c16502c48bc9f3a25a499e0e07acb6b027d479872276bb41e28100f0ae",
+      "source": "https://store.steampowered.com/api/appdetails?appids=72850&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:27.083263+00:00"
+    },
+    "105600": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "b3f9fe5e591d08ca894fc265d086a8f9b3273a18274b57ea2147eda2f62e1df4",
+      "source": "https://store.steampowered.com/api/appdetails?appids=105600&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:30.385650+00:00"
+    },
+    "200260": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "21f7900e718f8c2c74cc9fd9a839a1535e2e0e7d88fcb76e57dc8e9e3184f5ae",
+      "source": "https://store.steampowered.com/api/appdetails?appids=200260&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:33.736120+00:00"
+    },
+    "208650": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "d16c8bbd4048cc4ef3422e5d4bb90a5115b8a1444df223a3da12f765fb4c3a00",
+      "source": "https://store.steampowered.com/api/appdetails?appids=208650&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:36.969664+00:00"
+    },
+    "209080": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "92ebedfc4e45504ac333fb9592e80fa326bc0f8507f819c58bb06a8f760f4878",
+      "source": "https://store.steampowered.com/api/appdetails?appids=209080&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:40.203365+00:00"
+    },
+    "211500": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "524f0cfacd7690a8cdf58b71319622c2f93f0c17216f05fe6dc637ac3f9c88b8",
+      "source": "https://store.steampowered.com/api/appdetails?appids=211500&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:43.598211+00:00"
+    },
+    "211820": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "c5e4ec8967d3b8929bdb8fb8a030bd42e2f34a95f90d9d7021495dec5413bbc5",
+      "source": "https://store.steampowered.com/api/appdetails?appids=211820&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:46.852911+00:00"
+    },
+    "212070": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "28d588e46e1af95a953d569955bcbd92b616bb667a6427f864d499c62b7ca8f1",
+      "source": "https://store.steampowered.com/api/appdetails?appids=212070&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:50.094684+00:00"
+    },
+    "215080": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "76e336f9b459e97956c92a81bbe4484d435503ff31271af034fa057460ab68c1",
+      "source": "https://store.steampowered.com/api/appdetails?appids=215080&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:53.361271+00:00"
+    },
+    "224600": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "4269900ad0d41cce2ffa2b7919e072b093b46e70bb523b8c1c315e03d26ea148",
+      "source": "https://store.steampowered.com/api/appdetails?appids=224600&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:56.591470+00:00"
+    },
+    "225540": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "5c599414e7a2964150232b8240cfba94bc94a2fe11889303e02445d931b6127e",
+      "source": "https://store.steampowered.com/api/appdetails?appids=225540&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:32:59.867820+00:00"
+    },
+    "226320": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=226320&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:03.126867+00:00"
+    },
+    "230410": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "41f04c7738e8273479bf0c67d73288d02f31bb6198e8d3741e3cbb2391f5078b",
+      "source": "https://store.steampowered.com/api/appdetails?appids=230410&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:06.352721+00:00"
+    },
+    "232090": {
+      "graphicsAPI": "DirectX 10",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "4a45e35f2084ec729c0fccb7a7346161d335e109f4f3ddc1277919303e2c3dba",
+      "source": "https://store.steampowered.com/api/appdetails?appids=232090&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:09.597947+00:00"
+    },
+    "238960": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "4884e930f7350a35daffabed25c487fa5a8740cb16ec9e4f69d88b2376b9990d",
+      "source": "https://store.steampowered.com/api/appdetails?appids=238960&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:12.851563+00:00"
+    },
+    "241600": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "bf78a3283abe449efdba4e371e767d67527099f895c4a5bc06d55f07e7b1b986",
+      "source": "https://store.steampowered.com/api/appdetails?appids=241600&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:16.087264+00:00"
+    },
+    "242760": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "e1b3c36fa16fb37ebfcb1e4cfc714d9c0c72b9e6f7878eede20c1b0efc2a36d2",
+      "source": "https://store.steampowered.com/api/appdetails?appids=242760&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:19.326400+00:00"
+    },
+    "249050": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "8801dec0794f869c1cafee53989dcfa962af91883beeb1a014c37f6da94f1009",
+      "source": "https://store.steampowered.com/api/appdetails?appids=249050&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:22.553625+00:00"
+    },
+    "252490": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "098e3ef45c0c0b823c78b765d7d57a2fa53d206c052329989efece7c1b809e5c",
+      "source": "https://store.steampowered.com/api/appdetails?appids=252490&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:25.817584+00:00"
+    },
+    "252950": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "3bf394a6b24d9086a92d11341c66ad604edb9fba129e5604a55fcfc957575d75",
+      "source": "https://store.steampowered.com/api/appdetails?appids=252950&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:29.066131+00:00"
+    },
+    "255710": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "2dff21a7afd2e7f83ad4dd4bfece27471f6b389b0db8b77a3b6aeaf1984cb0a9",
+      "source": "https://store.steampowered.com/api/appdetails?appids=255710&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:32.309275+00:00"
+    },
+    "263540": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "a9bf6c76dfd28432b290e6d7b3f7c1193b93e6480039aaa0883c2b2c0cb1980e",
+      "source": "https://store.steampowered.com/api/appdetails?appids=263540&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:35.577435+00:00"
+    },
+    "264710": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "e14a541c8d7914d14b3ba0f0c5f966c28ba920e962833f47af5973d92837a860",
+      "source": "https://store.steampowered.com/api/appdetails?appids=264710&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:38.810053+00:00"
+    },
+    "273110": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "ce0f8386f14f292ec9c039fd82a49f4745f92a2c186188adc01faeab5225f153",
+      "source": "https://store.steampowered.com/api/appdetails?appids=273110&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:42.043423+00:00"
+    },
+    "274520": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "28a0a747bdc19cbaa4dd8d3c106fea0d98037cb75c2260182477892f40f480fb",
+      "source": "https://store.steampowered.com/api/appdetails?appids=274520&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:45.291215+00:00"
+    },
+    "282070": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "78d75d8cc7d6efde9d056936bbba448de554d884bb50cca787856e4b0d7172f7",
+      "source": "https://store.steampowered.com/api/appdetails?appids=282070&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:48.551799+00:00"
+    },
+    "287630": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "a295c62f8f053d0d38e058e37160f80972f96316e922e6ef1561e569abf8b0ab",
+      "source": "https://store.steampowered.com/api/appdetails?appids=287630&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:51.785108+00:00"
+    },
+    "292030": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "7ec774c975c86656f8abe7439248339e5845c5dcc217c6a3355e324cae382a40",
+      "source": "https://store.steampowered.com/api/appdetails?appids=292030&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:55.178422+00:00"
+    },
+    "298240": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "88ce2463ae430bbc1e91ee9ed096a6445e31622506c2c652d75b85ee38734c91",
+      "source": "https://store.steampowered.com/api/appdetails?appids=298240&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:33:58.417513+00:00"
+    },
+    "301520": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "387a95539e288a09d68ef09df733201d712269fa344e2d1c5e341956a3724ede",
+      "source": "https://store.steampowered.com/api/appdetails?appids=301520&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:01.651194+00:00"
+    },
+    "304050": {
+      "graphicsAPI": "DirectX 10",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "fcf2cd50ce9021197c7ee194d8a72de7f52bf422625e657e7fe49f67a7567910",
+      "source": "https://store.steampowered.com/api/appdetails?appids=304050&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:04.905166+00:00"
+    },
+    "304390": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "1487af963d2fc99f7920c5f3722ce8862a73982488ba0fb2e1e9c31e35de2689",
+      "source": "https://store.steampowered.com/api/appdetails?appids=304390&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:08.184070+00:00"
+    },
+    "310380": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=310380&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:11.434764+00:00"
+    },
+    "313120": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "e2093b9f1357c013fe5ce2f2e35469e4fb8110f1eabf1eaab78f958466687064",
+      "source": "https://store.steampowered.com/api/appdetails?appids=313120&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:14.685264+00:00"
+    },
+    "323190": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "39d594022f703273036cdaeb6d46a095c2e75d8dc584d2ea3a688d790bec7318",
+      "source": "https://store.steampowered.com/api/appdetails?appids=323190&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:17.911637+00:00"
+    },
+    "327030": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "ce6b677a2a7e1836635fb73889c061cec656d7569c8fe1bb9f21c91a6180cc55",
+      "source": "https://store.steampowered.com/api/appdetails?appids=327030&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:21.146961+00:00"
+    },
+    "342980": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "13c8ba2615ea5e7dec262eba80d711f2bad2e5aa292e55403f8d5622c551dabc",
+      "source": "https://store.steampowered.com/api/appdetails?appids=342980&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:24.435506+00:00"
+    },
+    "346110": {
+      "graphicsAPI": "DirectX 10",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "ab42f3078d42143ea60cd1936f6b08ba1b9e22ae0a0781153c759f7d38389a89",
+      "source": "https://store.steampowered.com/api/appdetails?appids=346110&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:27.676917+00:00"
+    },
+    "346900": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "191c41f639b3436682656fe02350ca541ff47b0833a48f83ca0fb599a547b07e",
+      "source": "https://store.steampowered.com/api/appdetails?appids=346900&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:30.926403+00:00"
+    },
+    "348670": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "7499187eeae0ef57cb6c5e63450c2d190319c3b0688f7e006c087eb6fe064c8d",
+      "source": "https://store.steampowered.com/api/appdetails?appids=348670&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:34.155049+00:00"
+    },
+    "356330": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=356330&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:37.381256+00:00"
+    },
+    "360170": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "c81c3f4ec5566ac5492ec2071d9d0bd5943fa0ab6248b19ef5d0f6d3d7ecf719",
+      "source": "https://store.steampowered.com/api/appdetails?appids=360170&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:40.610276+00:00"
+    },
+    "364470": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "1b8374ee3b486c619c6ae09148f3360f954549186e396fedec4ffacfa7af2714",
+      "source": "https://store.steampowered.com/api/appdetails?appids=364470&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:43.867094+00:00"
+    },
+    "365720": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "9bed8a43baaa83c79f68f5d52db7de293be594729a52b967741eed5063e4953f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=365720&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:47.125857+00:00"
+    },
+    "367540": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=367540&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:50.353173+00:00"
+    },
+    "374320": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "181c71d7d8ae0ea720608b39b69b61eccb0758091d8e9296b732df22a9e4ec09",
+      "source": "https://store.steampowered.com/api/appdetails?appids=374320&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:53.604153+00:00"
+    },
+    "376570": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "ed73a356ec60101171fd451719cc3fdaa78743474b8be19d9827d0ca3f78654f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=376570&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:34:56.856198+00:00"
+    },
+    "377160": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "737f8873da95033022e397b8034db6c597fd3fa02c9434221140a894ff13898e",
+      "source": "https://store.steampowered.com/api/appdetails?appids=377160&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:00.127216+00:00"
+    },
+    "381210": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "3a5b6e3fda771a85402f30aec81ca7a7f23b334c7d065b0c03fd27e0f7e2f0ca",
+      "source": "https://store.steampowered.com/api/appdetails?appids=381210&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:03.396803+00:00"
+    },
+    "383230": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "b8fb136a33b2229b5900690631cf5096613c3536c8b0e6c050187d81be34469f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=383230&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:06.666221+00:00"
+    },
+    "385770": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "5f154c4a19bf03feee0fbbf32d70538a7895b563da732f4cb71ae5a92e1ee0c2",
+      "source": "https://store.steampowered.com/api/appdetails?appids=385770&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:09.925590+00:00"
+    },
+    "385890": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "5593e5b36d3800611773cbc3bc87363c2cb768a326a0d136cadeeaff3eb97772",
+      "source": "https://store.steampowered.com/api/appdetails?appids=385890&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:13.160615+00:00"
+    },
+    "391460": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "4fbd54c6077af593382ba4a30887ec8f9257605138f302aa86beefd41b73b0aa",
+      "source": "https://store.steampowered.com/api/appdetails?appids=391460&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:16.390598+00:00"
+    },
+    "397900": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "c5b614531bab5cf7e1f30c3ab21fd949c3cd8bbc5ee0de88b47ae1aa1b202aee",
+      "source": "https://store.steampowered.com/api/appdetails?appids=397900&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:19.627320+00:00"
+    },
+    "402840": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "071196aa7863c32697699e8864e94bc52f8f58fb19df15fc1ea842314a04bec4",
+      "source": "https://store.steampowered.com/api/appdetails?appids=402840&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:22.892351+00:00"
+    },
+    "407530": {
+      "graphicsAPI": "DirectX 10",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "75ab72a321463f632cbc0cfda467c3eaa0d41d87912b1e18a905e96cfabb562b",
+      "source": "https://store.steampowered.com/api/appdetails?appids=407530&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:26.129200+00:00"
+    },
+    "409160": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "0140779a73ea81653e27b5144143e2a8c51f71a405885471f46f40c2628eed6a",
+      "source": "https://store.steampowered.com/api/appdetails?appids=409160&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:29.371035+00:00"
+    },
+    "411300": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "f2b6fe21a4c84ab172c22aeddae38c8601e24454c92505540b73f3b9ea695b50",
+      "source": "https://store.steampowered.com/api/appdetails?appids=411300&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:32.626119+00:00"
+    },
+    "412020": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "08fcab134926cf7e141dc71ef602e23feda10caf9095af6776ac375784b61f1f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=412020&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:35.856300+00:00"
+    },
+    "414530": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "dce46e61c9c30368966a2f1e78aca05b662c9b2ecbd0e49fc533e8001293fb55",
+      "source": "https://store.steampowered.com/api/appdetails?appids=414530&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:39.135974+00:00"
+    },
+    "427520": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "49d2182abb4124c88a0a8ba93fcbf715ddc082a280c6697ce89d99e917787fa1",
+      "source": "https://store.steampowered.com/api/appdetails?appids=427520&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:42.369179+00:00"
+    },
+    "438040": {
+      "graphicsAPI": "DirectX 10",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "e2de26759a573710d5bf72f7a90029edfcc2e07405b613af5dbfc599af6e6cbc",
+      "source": "https://store.steampowered.com/api/appdetails?appids=438040&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:45.612786+00:00"
+    },
+    "438100": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "de84fe0723519ff11b0bab037e7e46b82f0d7e896bf52bd76afce3ca9acb0a01",
+      "source": "https://store.steampowered.com/api/appdetails?appids=438100&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:48.864462+00:00"
+    },
+    "452780": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=452780&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:52.112576+00:00"
+    },
+    "464920": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "a45567c2ed9bd773ec8b0801c749c1ee8262d1df51875747f5ba2dc715880f31",
+      "source": "https://store.steampowered.com/api/appdetails?appids=464920&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:55.351309+00:00"
+    },
+    "474750": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "79f1112b8f574bf5df91203f799234cc1cd76632f462df9bb597e91fefbc6616",
+      "source": "https://store.steampowered.com/api/appdetails?appids=474750&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:35:58.584246+00:00"
+    },
+    "493340": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "befee807adb36ac0e76f64367fc0a77d421d80d64b68462f99bd80a8100865f6",
+      "source": "https://store.steampowered.com/api/appdetails?appids=493340&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:01.834630+00:00"
+    },
+    "526870": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "ad6b0dbcce50ef18a9280a65b3646f1d43098dd4468e31658b9c9808369d95df",
+      "source": "https://store.steampowered.com/api/appdetails?appids=526870&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:05.070625+00:00"
+    },
+    "530620": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "0683a5dce68572167348f35336f7cec6725afbd91cc3d6a4070b9849ceebaab8",
+      "source": "https://store.steampowered.com/api/appdetails?appids=530620&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:08.327091+00:00"
+    },
+    "533780": {
+      "graphicsAPI": "DirectX 10",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "24788fb43b70e54a3eaf5dc9f1818d42832065637b3b14d9c64366cfdb30f057",
+      "source": "https://store.steampowered.com/api/appdetails?appids=533780&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:11.551270+00:00"
+    },
+    "534380": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "800acae9ded6e4d0a1dc3454d7f6bb36e5b0d2558c55f6b3a753064484ef488b",
+      "source": "https://store.steampowered.com/api/appdetails?appids=534380&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:14.795138+00:00"
+    },
+    "536930": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "1bab0e8f64938bdf888c3e32b00a731c9a66980a274e2afec388a05c95ea4163",
+      "source": "https://store.steampowered.com/api/appdetails?appids=536930&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:18.034971+00:00"
+    },
+    "547680": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "6c75d7a13632924d803df705eb9b1ede6dfc36010f2d8ec061d70abb66d6c7a3",
+      "source": "https://store.steampowered.com/api/appdetails?appids=547680&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:21.277801+00:00"
+    },
+    "552500": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "2cc848f64d5810a889da134a601978e9d22925dafa2d60b81f85f91a31aa7203",
+      "source": "https://store.steampowered.com/api/appdetails?appids=552500&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:24.576078+00:00"
+    },
+    "553850": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "32950b67291d0bf4a992923eb2f04a612080130ac4a440043ed37c8d05d3dd79",
+      "source": "https://store.steampowered.com/api/appdetails?appids=553850&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:27.852018+00:00"
+    },
+    "564710": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "7185974635618a0bd2e6c3da929f15e4e17c38359a82b8e7d0a045b4ff6cdc72",
+      "source": "https://store.steampowered.com/api/appdetails?appids=564710&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:31.103521+00:00"
+    },
+    "588430": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "1339cef6e07ff6fcb7a3c6623a416b0aeb0d556ff3152ebd0baa7ea521bc21b6",
+      "source": "https://store.steampowered.com/api/appdetails?appids=588430&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:34.326125+00:00"
+    },
+    "608800": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "e6eb20b62f1f352799cdb5b971faf99540f9d9f1ca69b08a4deb7d864dd2dd88",
+      "source": "https://store.steampowered.com/api/appdetails?appids=608800&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:37.581304+00:00"
+    },
+    "610080": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "2f8b9dfe3f6278638b368856aca8581fcd505cd98c2dadcc7297eb5bc759cc35",
+      "source": "https://store.steampowered.com/api/appdetails?appids=610080&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:40.898122+00:00"
+    },
+    "611500": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "ecc1f1d797e9cebba497d7b43f756c410c0cf90cc93f1a36987c217ff77ea41d",
+      "source": "https://store.steampowered.com/api/appdetails?appids=611500&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:44.119601+00:00"
+    },
+    "644830": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "4e71692835796967ce614a4d9d402c98991454ec8362d333ba70036c240ec3a3",
+      "source": "https://store.steampowered.com/api/appdetails?appids=644830&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:47.344874+00:00"
+    },
+    "648350": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "c912008caade365c522a47003e49cf022e5cf0811442d9d207508493cfc127f7",
+      "source": "https://store.steampowered.com/api/appdetails?appids=648350&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:50.593417+00:00"
+    },
+    "648800": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "ba5013f8b94bfafd76bb7b93bd3b6a3313ff5acdd56cdbba6da2682daf6fc11b",
+      "source": "https://store.steampowered.com/api/appdetails?appids=648800&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:53.831698+00:00"
+    },
+    "700330": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "ae2b709c49c3d94f868f69ddb90fefdc6b4be181c5e1b647a9622b3a6b5838ad",
+      "source": "https://store.steampowered.com/api/appdetails?appids=700330&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:36:57.053731+00:00"
+    },
+    "700580": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=700580&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:00.310232+00:00"
+    },
+    "743090": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "3261072dea8c0eb39b978f7e50f15e49673ecde31b0e2ea310e3e43bb83ef71f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=743090&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:03.542454+00:00"
+    },
+    "760160": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "34f712c2660174039939e798b12c60bca7813db5003e693868de8a5be918e8eb",
+      "source": "https://store.steampowered.com/api/appdetails?appids=760160&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:06.792989+00:00"
+    },
+    "780310": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "8414346e7e8091f6d872cca15c3b3a16f453747994ba8576f080bd51a10f92ff",
+      "source": "https://store.steampowered.com/api/appdetails?appids=780310&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:10.018975+00:00"
+    },
+    "815370": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "925e67d69af96d5967e10581d137e6e007322c3366ef4799b4635cc861811b62",
+      "source": "https://store.steampowered.com/api/appdetails?appids=815370&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:13.272013+00:00"
+    },
+    "848450": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "36529175ccd74aa0127f5f87e61aab4859cb695752fbcc60fcb296ffafa3bd59",
+      "source": "https://store.steampowered.com/api/appdetails?appids=848450&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:16.516507+00:00"
+    },
+    "853230": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "50a3e3270215966efe65eeecfeee45f566f15cacfe383868d633e1c1133213cd",
+      "source": "https://store.steampowered.com/api/appdetails?appids=853230&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:19.777727+00:00"
+    },
+    "858060": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "8ea41aba25678ea7aebac9301ede307511878045b22fd06a90294ca68526041c",
+      "source": "https://store.steampowered.com/api/appdetails?appids=858060&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:23.000547+00:00"
+    },
+    "868270": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "d2d7d93492021e937ce01ec01062d96704a069380753329b98a7c029f2f7f05c",
+      "source": "https://store.steampowered.com/api/appdetails?appids=868270&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:26.244082+00:00"
+    },
+    "881940": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "6dc5d64f40b148ffb85ee21906c74017412a25a736c40e449d8e53c73ef0b377",
+      "source": "https://store.steampowered.com/api/appdetails?appids=881940&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:29.472261+00:00"
+    },
+    "883710": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "a9007fd337f14be0069a26720b30cf41074ed94686133f43c10e45efa2d0158e",
+      "source": "https://store.steampowered.com/api/appdetails?appids=883710&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:32.703740+00:00"
+    },
+    "892970": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "e7d5d3cfe00161ac71d4d0eb374bb3470afa1fb1ba4a318696f4f160ea871dbb",
+      "source": "https://store.steampowered.com/api/appdetails?appids=892970&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:35.943806+00:00"
+    },
+    "919260": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "09c4fb466911bf7134a90e767f3bf880d5dea97907a52d95b5d2fdc9a26945a6",
+      "source": "https://store.steampowered.com/api/appdetails?appids=919260&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:39.203481+00:00"
+    },
+    "933820": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "d2f9a06facb0c6b053cafb0bc34371b72c6521721cec40eb97b21f9be9bf840d",
+      "source": "https://store.steampowered.com/api/appdetails?appids=933820&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:42.459219+00:00"
+    },
+    "961440": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=961440&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:45.731548+00:00"
+    },
+    "977400": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "dd82a1d4aa5407d0771eeb89e4a74f9731aa8c0fa5c9d9401602ec1d930e8fc0",
+      "source": "https://store.steampowered.com/api/appdetails?appids=977400&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:48.966228+00:00"
+    },
+    "1019100": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1019100&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:52.243407+00:00"
+    },
+    "1053710": {
+      "graphicsAPI": "DirectX 10",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "cf94e855a0be0563aa72e615d3607f3c40d2641beceeb5de941fa0c08dc4b8e4",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1053710&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:55.476830+00:00"
+    },
+    "1056640": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "73d6994322133d5234a559db78263e46cb11171551c7f569574b5a45daf0a3fe",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1056640&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:37:58.774458+00:00"
+    },
+    "1062090": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "a3ea6f2b020f875ad0372cddedffa2278ee3cb7f83aa1a1a01fda5918aa37738",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1062090&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:02.043252+00:00"
+    },
+    "1085660": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "eb828dc283223ac511ee99ae59b662fbcb5d67134a04ca86a822d277f26afada",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1085660&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:05.286470+00:00"
+    },
+    "1110910": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "f669a7e149231e053ebe36d92e0249402586b72f700d3c973ec659cdb9ce72c3",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1110910&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:08.543168+00:00"
+    },
+    "1158980": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "e3376a22e9b7a0ed732070d1565ef6e657a78180fe3a44738deaca3045a36b67",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1158980&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:11.917937+00:00"
+    },
+    "1159690": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "e31b32c2285969884e06dbfabd24b2f23ae2ae76e663a42d998ea962428fbd01",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1159690&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:15.182879+00:00"
+    },
+    "1160750": {
+      "graphicsAPI": "DirectX 9.0c",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "101ae9f6eedf9e860f4b2d16cd5dfe4f153ca3adab0a31f3603d2bd37bcc4199",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1160750&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:18.427136+00:00"
+    },
+    "1172380": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "f96ef673583b598d8bd478c624aec6776c0dd311eb68fda63fe6c80b829a6237",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1172380&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:21.664115+00:00"
+    },
+    "1172470": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "93d5a164b482c25b98d552df431c7d34c9ee4b1122211d3d1a9f1726f926c2af",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1172470&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:24.913379+00:00"
+    },
+    "1201240": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "c0e6e3acd8ba9fef5daa49493ddefa63f1a1b584838295e99dc08b9071e98201",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1201240&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:28.173253+00:00"
+    },
+    "1203620": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "fdc8bdb97cc39619e5c3de199cd52b6ff93909df9a6def1f2f818858e252c6ba",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1203620&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:31.417428+00:00"
+    },
+    "1224230": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "c7f5332e41c75309667b1df6abb5384408879cebd806f4bf8794388819f94634",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1224230&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:34.703976+00:00"
+    },
+    "1250790": {
+      "graphicsAPI": "DirectX 11.3",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "bffb21e5402b423b3bf42b6a16dd0b69ede5b941dfa69237dc9708c378b3247a",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1250790&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:37.926367+00:00"
+    },
+    "1258080": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "ee431377cf143e2dd267bda3e810cfd5f18532f558487e247e03eb39a0413ad8",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1258080&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:41.156860+00:00"
+    },
+    "1260320": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "5424d32562f68fd66b0673f68a5c5d677532b5775cee3bba74b8dd741f82da71",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1260320&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:44.385300+00:00"
+    },
+    "1284410": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "5353ff639f4bd3a6c4861cd144a370ec9b0317683517c95bdb1e74fd6d934afb",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1284410&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:47.632888+00:00"
+    },
+    "1286830": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "966048e479366376aa1bb5d3133697d165a5e0c443097627634bc0f0d307ca16",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1286830&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:50.888803+00:00"
+    },
+    "1322840": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1322840&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:54.129748+00:00"
+    },
+    "1324130": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "bb8ee79161f831ba36f6d7ed2d99e788b48759ab730f7b65c5c9d682341554af",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1324130&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:38:57.368692+00:00"
+    },
+    "1332010": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "46542bc99ab21b67852be4c2a85a15a3d9e502070836e278924e4c8c69e873a5",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1332010&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:00.615780+00:00"
+    },
+    "1353300": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e269045837afa7014f8df3f6d6d5a61d4a37ed8c85c02a8d41b8b2c79529772a",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1353300&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:03.859973+00:00"
+    },
+    "1366540": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "286d6ada4f8a6439053a3386e16f6115c3709769bd4d2d52022ad84752bbd419",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1366540&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:07.093739+00:00"
+    },
+    "1368140": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "f45572e22c77dfebb2ff37edfb2bbd98840c9eeaabf0c5ae8586d0c4f6862a96",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1368140&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:10.354117+00:00"
+    },
+    "1449560": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "08fcab134926cf7e141dc71ef602e23feda10caf9095af6776ac375784b61f1f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1449560&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:13.628365+00:00"
+    },
+    "1449850": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "353ab8ce00628b938b59efdac946cbf72f5dfa0aee698ad2bad47036ef7021db",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1449850&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:16.903804+00:00"
+    },
+    "1450900": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "e40acd2587b2801a6813df9608f335d6f93c11b8e77779c56bada5738b2e42e9",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1450900&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:20.136932+00:00"
+    },
+    "1465470": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "c52fb6305bd8c604ce1925c8dbe4663869f3952731698fefcd1764b3a4b25f7f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1465470&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:23.374726+00:00"
+    },
+    "1599340": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "31034bb8078d2adaadfe821a852a7bb8e3a3e8358e18c04aa605af37de6e516d",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1599340&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:26.616434+00:00"
+    },
+    "1604030": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "3f0a664f1b063474fd60b25aa8bd6d72cdd419338acc9d7e7b926c1f1ce2520b",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1604030&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:29.867430+00:00"
+    },
+    "1631270": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "df210a73d18877199a66a3851b1a9be5b4b154eb372c71e6628491716791cca3",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1631270&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:33.118946+00:00"
+    },
+    "1732430": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "447c8d82c4230a4fad0461d38d0494341ad15917e60d193c5d201a11a56054e2",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1732430&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:36.361843+00:00"
+    },
+    "1783560": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "2b20f348bceab3fec75a7d352f87d2ac75927fc50023e2f6b8bce3aad86842e2",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1783560&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:39.610083+00:00"
+    },
+    "1812820": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "fa0b26d9299518a10156843bfb6a5b05c46bf39919b6abafba14d0af4ee93ab8",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1812820&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:42.843954+00:00"
+    },
+    "1815780": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "dc2efc4c4ce617d2015675faf3f381e77911419ce5f9a0859a548fecdfac24e2",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1815780&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:46.068885+00:00"
+    },
+    "1894430": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "7ee9109eb202338105bff08d958ac7b5b056f17f6673349d20bd73a642ca8682",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1894430&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:49.304224+00:00"
+    },
+    "1903340": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "a020c3e838648f2c27b5a151720be9c9e6c3e3a5a7a1f4d7291a046360949cbc",
+      "source": "https://store.steampowered.com/api/appdetails?appids=1903340&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:52.585636+00:00"
+    },
+    "2004680": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "5cc5a4a7cee017c23b6f7924cc2062d6cf079fc3137757441842b4ca7d632f69",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2004680&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:55.844175+00:00"
+    },
+    "2050650": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "7b5cbfb7635cd374308405f30b4cd9f6dca9845a61517d0c427519340afc950f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2050650&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:39:59.093828+00:00"
+    },
+    "2074920": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "5aadb7d0c7951418577937d0154797088a3ade6b1e3a6ae3b693fec7228945c0",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2074920&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:02.338196+00:00"
+    },
+    "2098160": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "753e63afbcb7b5dea570958063e0804a238e18dccc1816f5298a73a87dc95877",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2098160&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:05.572205+00:00"
+    },
+    "2139460": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "2dfd3f2d165f225a84b4bf9bab90b8379f3c8ce5e0fc9af6f5d6ad3bc3c813c5",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2139460&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:08.817972+00:00"
+    },
+    "2181940": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "d44ea3cd947066cf3ca7a29fab2af60284f50576b4c6fc1a5a7ea5ba122e35da",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2181940&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:12.083829+00:00"
+    },
+    "2213700": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "0fbeca5ea0bd8a796160d66ec2b5a7be750afb76784ab5bebb2187db72abda0f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2213700&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:15.407445+00:00"
+    },
+    "2231770": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "01d2e17bf17fff41e54dfd7bea8c0681033a47f02bd2abe9561f730bf3e4e1fc",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2231770&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:18.747655+00:00"
+    },
+    "2249460": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "de37673884acd0d4fcfaceecaea3b0e22506fc4dde04820c61ba1e3f034b78c2",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2249460&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:21.986232+00:00"
+    },
+    "2400160": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "a94f8b4437af11d2eaee3f61bd79dba7ce53793064b191515b9ae818d140092b",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2400160&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:25.225088+00:00"
+    },
+    "2415020": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "a94f8b4437af11d2eaee3f61bd79dba7ce53793064b191515b9ae818d140092b",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2415020&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:28.467436+00:00"
+    },
+    "2429640": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "e76da75ab272f543b17ef5bc006f309e8781db3a9131fb8860212a1b527ca8e6",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2429640&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:31.700134+00:00"
+    },
+    "2515020": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "18f11338c4a3c6a97a85a2d551d53e41c534de1048576fed99f459498ba5a347",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2515020&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:34.958496+00:00"
+    },
+    "2675890": {
+      "graphicsAPI": "DirectX 9",
+      "rendererCandidate": "auto",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "0f21a3da675e28bdc4fbbb785c735b063a71d77cfe4f2f5b1da06625a38e78b0",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2675890&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:38.194263+00:00"
+    },
+    "2676230": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2676230&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:41.514665+00:00"
+    },
+    "2738000": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "bbb40004282913fad78b30525043fdf70a16e5e350d34c54b9c29e954da6cd8a",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2738000&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:44.742721+00:00"
+    },
+    "2763740": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "7b18a1686ed972b64c4579ecbff7bc8f28b2f328f13976c5170953731e0769d8",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2763740&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:47.969294+00:00"
+    },
+    "2764460": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "896b41396d776064d11686d9b16b1473fb51bee76a75b362abbceb4297c83717",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2764460&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:51.228331+00:00"
+    },
+    "2767030": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "44b78e139f736c20cb9a2ac265df47cb5b144da3889b294a646181ff2aea9630",
+      "source": "https://store.steampowered.com/api/appdetails?appids=2767030&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:54.452794+00:00"
+    },
+    "3093690": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "2beb57c77f62481629f3b7c509013b8f28b725af43cd754552a8bc92a7c9cc2a",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3093690&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:40:57.701029+00:00"
+    },
+    "3164500": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "2519b533638da28dac6e5726390501bfbf64d553e7c2d44cbde80afa45da9c48",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3164500&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:00.979403+00:00"
+    },
+    "3205720": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "6e2be127a86b54151f1a58930adafcf6975b7dbaf9200a4f809065d0f3255f6d",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3205720&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:04.220646+00:00"
+    },
+    "3315230": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "adcaadb9ea8a955a030ddf12d6a4abb9dcb675cc243bdd8a757f7cafa4bbe0b4",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3315230&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:07.462346+00:00"
+    },
+    "3405340": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "9aa21671b3bb994a3805fde9196e72fc66da09708c38fe8082e58a8ac8df29f9",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3405340&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:10.731692+00:00"
+    },
+    "3437380": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "44223a59adb9f8f132bc9f6807dd92802bfcdd80935928c35c85dafbddf5b8a8",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3437380&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:13.992052+00:00"
+    },
+    "3490390": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "3094411fff26885039f075f95d2edf80be5341bfb1f89eaa2af21faf85e2cb34",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3490390&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:17.407958+00:00"
+    },
+    "3559900": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "fd77f76acb8590853ae8ec6aa821bf7fb120d087ad5697878bfd95de68a1c366",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3559900&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:20.692750+00:00"
+    },
+    "3596700": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "58197c6d33134e9548af0115371a4eeaa2e9af6162fdc913461071d455c9e0ee",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3596700&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:23.928013+00:00"
+    },
+    "3729810": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "8942b5df26486425c3ecd32a6abfa2687690dfe18b689c911057f3bf8e40aac0",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3729810&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:27.183239+00:00"
+    },
+    "3729960": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "82596dee4fe9b74adc3c99d7c5804ae15da252b59fc30f06dc262572236062fe",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3729960&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:30.444560+00:00"
+    },
+    "3808690": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "c0e0d22d658d6d57c2e44de27c59cb087d51ace3308befeb190048deac5c0c77",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3808690&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:33.694696+00:00"
+    },
+    "3832490": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "3c400bae57ca39176d1690b8fb6d016f8a8328558b7b31be32d1e12482980ff0",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3832490&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:36.943697+00:00"
+    },
+    "3858730": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "f45572e22c77dfebb2ff37edfb2bbd98840c9eeaabf0c5ae8586d0c4f6862a96",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3858730&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:40.185348+00:00"
+    },
+    "3916150": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "471df41462973e7217da525fc694963fe555c161df6c4da67e6af658726aea22",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3916150&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:43.420894+00:00"
+    },
+    "3974650": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "471df41462973e7217da525fc694963fe555c161df6c4da67e6af658726aea22",
+      "source": "https://store.steampowered.com/api/appdetails?appids=3974650&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:46.737573+00:00"
+    },
+    "4029380": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "749c07ef622a266c696c740cfb3456a457b4474cab30c3f6e0ec94c754d109fd",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4029380&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:49.967255+00:00"
+    },
+    "4105130": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "471df41462973e7217da525fc694963fe555c161df6c4da67e6af658726aea22",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4105130&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:53.214592+00:00"
+    },
+    "4300950": {
+      "graphicsAPI": "DirectX 10",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "a2efa7179b555481a0d3229c075d50196c907a42899d199462b373c186471fd9",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4300950&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:56.476534+00:00"
+    },
+    "4302620": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "95e5994f9020e5efef539e230e0e72d7c09e00b848c79b94b45ecedf62f4b964",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4302620&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:41:59.743805+00:00"
+    },
+    "4320630": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "471df41462973e7217da525fc694963fe555c161df6c4da67e6af658726aea22",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4320630&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:02.979805+00:00"
+    },
+    "4344100": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "40e52626062f8359f9531088de4cf1feb7278a5247906ccfb2b893ad81486715",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4344100&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:06.217061+00:00"
+    },
+    "4359380": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4359380&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:09.462859+00:00"
+    },
+    "4516230": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "cc1909f731b7810c67802eccf85010e90c88753512f6c15527f83d32f7c1e650",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4516230&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:12.687918+00:00"
+    },
+    "4554250": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "1bceef12521856ef9c3f65115de6fe3193cd66b2f46e4dd38158ec61fe7b754a",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4554250&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:15.954044+00:00"
+    },
+    "4613780": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "471df41462973e7217da525fc694963fe555c161df6c4da67e6af658726aea22",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4613780&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:19.206119+00:00"
+    },
+    "4671750": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "6dc5d64f40b148ffb85ee21906c74017412a25a736c40e449d8e53c73ef0b377",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4671750&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:22.578034+00:00"
+    },
+    "4692610": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "1bceef12521856ef9c3f65115de6fe3193cd66b2f46e4dd38158ec61fe7b754a",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4692610&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:25.818069+00:00"
+    },
+    "4711740": {
+      "graphicsAPI": "DirectX 12",
+      "rendererCandidate": "d3dmetal",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "5bfa04eef0d1d714d4f5af5e8e112af300d4ab936e69e9e8e8766dbb36b18b75",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4711740&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:29.060328+00:00"
+    },
+    "4731620": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "5c6248f4181117d23772664c71c4eddd01ab66e7a247b76c6f6009bade572dca",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4731620&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:32.316856+00:00"
+    },
+    "4832970": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "de2dd6aea94eeaa534bdbda0ae831820ec1cd5d70ee6a23e0f8c9d53fecdba2f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=4832970&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:35.570982+00:00"
+    },
+    "5006340": {
+      "graphicsAPI": "DirectX 11",
+      "rendererCandidate": "dxmt",
+      "evidence": "publisher-minimum-requirements",
+      "minimumSHA256": "de2dd6aea94eeaa534bdbda0ae831820ec1cd5d70ee6a23e0f8c9d53fecdba2f",
+      "source": "https://store.steampowered.com/api/appdetails?appids=5006340&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:38.821665+00:00"
+    },
+    "5066300": {
+      "graphicsAPI": "unknown",
+      "rendererCandidate": "auto",
+      "evidence": "no-explicit-api",
+      "minimumSHA256": "62ae35fb47b2eef92c23f192a31c1b33c3ca279f92143e1cb566170a61711d58",
+      "source": "https://store.steampowered.com/api/appdetails?appids=5066300&filters=basic,pc_requirements&l=english",
+      "retrievedAt": "2026-11-13T05:42:42.059300+00:00"
+    }
+  }
+}

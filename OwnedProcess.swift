@@ -1,6 +1,33 @@
 import Foundation
 import Darwin
 
+/// Read-only locations for the same Wine runtime. The optional game-category
+/// wrapper contains copies of the loader; discovering it must never create it.
+enum WineExecutableLocations {
+    static func processRoots(wine: URL) -> [URL] {
+        guard wine.isFileURL else { return [] }
+        let bin = wine.standardizedFileURL.resolvingSymlinksInPath().deletingLastPathComponent()
+        let root: URL?
+        if bin.lastPathComponent == "bin", bin.deletingLastPathComponent().lastPathComponent == "engine" {
+            root = bin.deletingLastPathComponent().deletingLastPathComponent()
+        } else if bin.lastPathComponent == "MacOS", bin.deletingLastPathComponent().lastPathComponent == "Contents",
+                  bin.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "PlaymeltGame.app" {
+            root = bin.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        } else { root = nil }
+        guard let root else { return [bin] }
+        return [root.appendingPathComponent("engine"), root.appendingPathComponent("PlaymeltGame.app/Contents/MacOS")]
+            .map { $0.standardizedFileURL.resolvingSymlinksInPath() }
+    }
+    static func loaderPaths(wine: URL) -> Set<String> {
+        guard wine.isFileURL else { return [] }
+        let canonical = wine.standardizedFileURL.resolvingSymlinksInPath()
+        let directories = processRoots(wine: wine).map { $0.lastPathComponent == "engine" ? $0.appendingPathComponent("bin") : $0 }
+        let names = ["wine", "wine64", "wine-preloader", "wine64-preloader"]
+        return Set(([canonical] + directories.flatMap { directory in names.map { directory.appendingPathComponent($0) } })
+            .map { $0.standardizedFileURL.resolvingSymlinksInPath().path })
+    }
+}
+
 struct OwnedProcessRequest {
     let executable: URL
     let arguments: [String]
@@ -19,6 +46,7 @@ struct OwnedProcessRequest {
     var allowsHandoff = false
     var onSpawn: ((pid_t) -> Void)? = nil
     var idlePollInterval: TimeInterval = 0.1
+    var terminationGracePeriod: TimeInterval = 0.25
 }
 struct OwnedProcessResult {
     let output: Data
@@ -62,6 +90,7 @@ final class OwnedProcessRunner: OwnedProcessRunning {
              onDetachedExit: @escaping (Int32) -> Void) throws -> OwnedProcessResult {
         guard request.timeout > 0, request.timeout.isFinite, request.outputLimit >= 0,
               request.idlePollInterval >= 0.005, request.idlePollInterval <= 0.25,
+              request.terminationGracePeriod >= 0.25, request.terminationGracePeriod <= 10,
               request.input.count <= 1024*1024, !request.allowsHandoff || request.input.isEmpty else { throw OwnedProcessError.supervision }
         if cancelled() { throw OwnedProcessError.cancelled }
         var outputFD:[Int32]=[-1,-1], inputFD:[Int32]=[-1,-1]
@@ -136,7 +165,7 @@ final class OwnedProcessRunner: OwnedProcessRunning {
         }
         func abort(_ reason:OwnedProcessError)throws->Never {
             _=kill(-pid,SIGTERM)
-            let grace=ProcessInfo.processInfo.systemUptime+0.25
+            let grace=ProcessInfo.processInfo.systemUptime+request.terminationGracePeriod
             while ProcessInfo.processInfo.systemUptime<grace{drain();Thread.sleep(forTimeInterval:0.01)}
             _=kill(-pid,SIGKILL)
             var waited:pid_t

@@ -100,6 +100,8 @@ final class D3DMetalRuntime {
     private let queue = DispatchQueue(label: "fr.playmelt.d3dmetal.prepare", qos: .utility)
     private let lock = NSLock()
     private var running = false, cancelled = false, closing = false
+    private var operationOwnerID:UUID?,readyCommitted=false
+    private var operationCompletion:DispatchGroup?
     private var status = "not-prepared", message = "Le préfixe DirectX 12 doit être préparé.", abiStatus = "unverified"
     private var callback: (([String:Any]) -> Void)?
     private var operationBase: PlaymeltRuntimeDescriptor?
@@ -149,11 +151,12 @@ final class D3DMetalRuntime {
                 "canLaunch": false, "abiStatus": abi, "loadTested": false, "gameTested": false]
     }
 
-    func start(base: PlaymeltRuntimeDescriptor, progress: @escaping ([String:Any]) -> Void,
+    func start(base: PlaymeltRuntimeDescriptor, ownerID:UUID?=nil,progress: @escaping ([String:Any]) -> Void,
                completion: @escaping (Result<PlaymeltRuntimeDescriptor,Error>) -> Void) {
         lock.lock()
         guard !running && !closing else { lock.unlock(); DispatchQueue.main.async { completion(.failure(RuntimeSetupError.failed("Une préparation est déjà en cours ou l’application se ferme."))) }; return }
-        running = true; cancelled = false; callback = progress; operationBase = base; previousDescriptor = nil
+        running = true; cancelled = false; operationOwnerID=ownerID;readyCommitted=false;callback = progress; operationBase = base; previousDescriptor = nil
+        let finished=DispatchGroup();finished.enter();operationCompletion=finished
         lock.unlock()
         queue.async {
             let result: Result<PlaymeltRuntimeDescriptor,Error>
@@ -163,10 +166,21 @@ final class D3DMetalRuntime {
                 self.update(self.isCancelled ? "cancelled" : error is D3DMetalPreparationError ? "blocked" : "failed", error.localizedDescription)
             }
             self.lock.lock(); self.running = false; self.previousDescriptor = nil; self.lock.unlock()
-            self.emit(); DispatchQueue.main.async { completion(result) }
+            self.emit(); DispatchQueue.main.async { defer{finished.leave()};completion(result) }
         }
     }
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    /// Cancel/wait only the operation belonging to this retained game intent.
+    /// A manual or replacement preparation is never adopted by this caller.
+    func cancel(ifOwnedBy ownerID:UUID,completion:@escaping()->Void) {
+        lock.lock()
+        let owns=running && operationOwnerID == ownerID
+        let finished=owns ? operationCompletion:nil
+        if owns && !readyCommitted{cancelled=true}
+        lock.unlock()
+        guard let finished else{DispatchQueue.main.async(execute:completion);return}
+        finished.notify(queue:.main,execute:completion)
+    }
     func shutdown(completion: @escaping () -> Void = {}) {
         lock.lock(); closing = true; cancelled = true; lock.unlock()
         queue.async { DispatchQueue.main.async { completion() } }
@@ -254,7 +268,12 @@ final class D3DMetalRuntime {
         let temporaryReceipt = root.appendingPathComponent(".ready-" + UUID().uuidString)
         defer { try? fm.removeItem(at:temporaryReceipt) } // only this new transaction file
         try JSONSerialization.data(withJSONObject:receipt,options:[.sortedKeys,.prettyPrinted]).write(to:temporaryReceipt,options:.withoutOverwriting)
-        try fm.moveItem(at:temporaryReceipt,to:readyURL)
+        // The ready receipt is the transaction boundary: cancellation accepted
+        // before it must not publish readiness. Completed receipts stay intact.
+        lock.lock()
+        guard !cancelled else{lock.unlock();throw RuntimeSetupError.cancelled}
+        do {try fm.moveItem(at:temporaryReceipt,to:readyURL);readyCommitted=true;lock.unlock()}
+        catch {lock.unlock();throw error}
         guard let ready = try descriptor(base:base) else { throw RuntimeSetupError.failed("Le reçu de préparation DirectX 12 est invalide.") }
         return ready
     }

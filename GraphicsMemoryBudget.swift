@@ -49,14 +49,21 @@ final class GraphicsMemoryBudget: @unchecked Sendable {
         let unifiedMemoryBasisPoints: UInt64
         let recommendedWorkingSetBasisPoints: UInt64
         let maximumTrackedAllocations: Int
-        init(maximumBudgetBytes: UInt64 = 16 * 1_073_741_824, unifiedMemoryBasisPoints: UInt64 = 5_000,
-             recommendedWorkingSetBasisPoints: UInt64 = 8_000, maximumTrackedAllocations: Int = 16_384) {
+        let enforceRecommendedWorkingSet: Bool
+        let reduceBudgetOnWarning: Bool
+        // Default: the full physical capacity, with no Playmelt percentage,
+        // fixed GiB ceiling or use of Apple's recommendation as a hard quota.
+        // This ledger never changes the memory available to an external game.
+        init(maximumBudgetBytes: UInt64 = .max, unifiedMemoryBasisPoints: UInt64 = 10_000,
+             recommendedWorkingSetBasisPoints: UInt64 = 10_000, maximumTrackedAllocations: Int = .max,
+             enforceRecommendedWorkingSet: Bool = false, reduceBudgetOnWarning: Bool = false) {
             self.maximumBudgetBytes = maximumBudgetBytes; self.unifiedMemoryBasisPoints = unifiedMemoryBasisPoints
             self.recommendedWorkingSetBasisPoints = recommendedWorkingSetBasisPoints; self.maximumTrackedAllocations = maximumTrackedAllocations
+            self.enforceRecommendedWorkingSet = enforceRecommendedWorkingSet; self.reduceBudgetOnWarning = reduceBudgetOnWarning
         }
         fileprivate var valid: Bool {
             unifiedMemoryBasisPoints <= 10_000 && recommendedWorkingSetBasisPoints <= 10_000 &&
-            maximumTrackedAllocations > 0 && maximumTrackedAllocations <= 65_536
+            maximumTrackedAllocations > 0
         }
     }
 
@@ -285,7 +292,8 @@ final class GraphicsMemoryBudget: @unchecked Sendable {
         var reasons: [String] = []
         if !policy.valid { reasons.append("invalid-policy") }
         if !inputs.hasUnifiedMemory { reasons.append("unified-memory-required") }
-        if inputs.totalUnifiedBytes == 0 || inputs.recommendedWorkingSetBytes == nil || inputs.recommendedWorkingSetBytes == 0 || inputs.observedOwnAllocatedBytes == nil {
+        if inputs.totalUnifiedBytes == 0 || inputs.observedOwnAllocatedBytes == nil ||
+            (policy.enforceRecommendedWorkingSet && (inputs.recommendedWorkingSetBytes == nil || inputs.recommendedWorkingSetBytes == 0)) {
             reasons.append("memory-observation-unavailable")
         }
         if inputs.renderProtectionEnabled { reasons.append("render-protection") }
@@ -294,14 +302,16 @@ final class GraphicsMemoryBudget: @unchecked Sendable {
         if closed { reasons.append("closed") }
         if deferred { reasons.append("usage-observation-deferred-during-creation") }
         let ceiling: UInt64
-        if policy.valid && inputs.hasUnifiedMemory && inputs.totalUnifiedBytes > 0, let recommended = inputs.recommendedWorkingSetBytes, recommended > 0 {
-            ceiling = min(policy.maximumBudgetBytes, fraction(inputs.totalUnifiedBytes, basisPoints: policy.unifiedMemoryBasisPoints),
-                          fraction(recommended, basisPoints: policy.recommendedWorkingSetBasisPoints))
+        if policy.valid && inputs.hasUnifiedMemory && inputs.totalUnifiedBytes > 0 {
+            let physical = min(policy.maximumBudgetBytes, fraction(inputs.totalUnifiedBytes, basisPoints: policy.unifiedMemoryBasisPoints))
+            if policy.enforceRecommendedWorkingSet {
+                ceiling = min(physical, fraction(inputs.recommendedWorkingSetBytes ?? 0, basisPoints: policy.recommendedWorkingSetBasisPoints))
+            } else { ceiling = physical }
         } else { ceiling = 0 }
         var budget: UInt64 = 0
         if reasons.isEmpty {
             budget = ceiling
-            if inputs.pressure == .warning { budget /= 2; reasons.append("memory-pressure-warning") }
+            if inputs.pressure == .warning && policy.reduceBudgetOnWarning { budget /= 2; reasons.append("memory-pressure-warning") }
         }
         let tracked = saturatedAdd(totals.resident, totals.reserved)
         let all = saturatedAdd(untracked, tracked.value)

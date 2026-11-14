@@ -26,6 +26,115 @@ struct HubGameRef: Equatable {
     }
 }
 
+/// Full announcements are fetched on demand; the home feed keeps its small summaries.
+enum HubArticle {
+    static func request(for item: [String: Any]) -> URL? {
+        guard let raw = item["url"] as? String, let url = HubFeedStore.allowedLink(raw),
+              url.host == "store.steampowered.com",
+              let appID = (item["appId"] as? NSNumber)?.intValue, appID > 0,
+              let date = (item["date"] as? NSNumber)?.doubleValue, date.isFinite, date > 0, date < 10_000_000_000,
+              url.path == "/news/app/\(appID)/view/\(url.lastPathComponent)",
+              !url.lastPathComponent.isEmpty, url.lastPathComponent.allSatisfy(\.isNumber) else { return nil }
+        var components = URLComponents(string: "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/")!
+        components.queryItems = [URLQueryItem(name: "appid", value: String(appID)),
+            .init(name: "count", value: "5"), .init(name: "maxlength", value: "0"),
+            .init(name: "enddate", value: String(Int(date) + 1)),
+            .init(name: "feeds", value: "steam_community_announcements")]
+        return components.url
+    }
+    static func contents(_ data: Data?, matching item: [String: Any]) -> String? {
+        guard let raw = item["url"] as? String, let gid = URL(string: raw)?.lastPathComponent,
+              let data, data.count <= 4_000_000,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let news = (root["appnews"] as? [String: Any])?["newsitems"] as? [[String: Any]],
+              let content = news.first(where: { $0["gid"] as? String == gid })?["contents"] as? String,
+              !content.isEmpty, content.count <= 250_000 else { return nil }
+        return content
+    }
+    static func escape(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
+    private static func link(_ raw: String) -> String? {
+        let value = raw.replacingOccurrences(of: "{STEAM_CLAN_IMAGE}", with: "https://clan.fastly.steamstatic.com/images/").replacingOccurrences(of:"&amp;", with:"&")
+        guard let url = URL(string:value), url.scheme == "https", url.host != nil, url.user == nil, url.password == nil, url.port == nil else { return nil }
+        return escape(url.absoluteString)
+    }
+    private static func formatted(_ raw: String) -> String {
+        var text = escape(raw)
+        for (pattern, replacement) in [
+            ("\\[/?(?:list|olist)\\]", "\n"), ("\\[\\*\\]", "\n• "),
+            ("\\[h[1-6]\\]", "\n<strong class=\"section-title\">"), ("\\[/h[1-6]\\]", "</strong>\n"),
+            ("\\[b\\]", "<strong>"), ("\\[/b\\]", "</strong>"),
+            ("\\[i\\]", "<em>"), ("\\[/i\\]", "</em>"),
+            ("\\[/?[a-zA-Z][^\\]]*\\]", "")
+        ] {
+            if let regex = try? NSRegularExpression(pattern:pattern, options:[.caseInsensitive,.dotMatchesLineSeparators]) {
+                text = regex.stringByReplacingMatches(in:text, range:NSRange(text.startIndex...,in:text), withTemplate:replacement)
+            }
+        }
+        return text
+    }
+    static func body(_ raw: String) -> String {
+        let pattern = #"\[img[^\]]*\](.*?)\[/img\]|\[url=([^\]]+)\](.*?)\[/url\]|https://[^\s<>\[\]]+"#
+        guard let regex = try? NSRegularExpression(pattern:pattern, options:[.caseInsensitive,.dotMatchesLineSeparators]) else { return formatted(raw) }
+        var output = "", cursor = raw.startIndex
+        for match in regex.matches(in:raw,range:NSRange(raw.startIndex...,in:raw)) {
+            guard let range = Range(match.range,in:raw) else { continue }
+            output += formatted(String(raw[cursor..<range.lowerBound]))
+            if let image = Range(match.range(at:1),in:raw) {
+                if let url = link(String(raw[image])) { output += "<figure><img loading=\"lazy\" referrerpolicy=\"no-referrer\" alt=\"Visuel de l’annonce\" src=\"\(url)\"></figure>" }
+            } else if let target = Range(match.range(at:2),in:raw), let label = Range(match.range(at:3),in:raw) {
+                let label = formatted(String(raw[label]))
+                if let url = link(String(raw[target])) { output += "<a href=\"\(url)\">\(label) ↗</a>" } else { output += label }
+            } else {
+                let value = String(raw[range])
+                output += link(value).map { "<a href=\"\($0)\">\(escape(value))</a>" } ?? escape(value)
+            }
+            cursor = range.upperBound
+        }
+        return (output + formatted(String(raw[cursor...]))).replacingOccurrences(of:"\\n[ \t]*\\n(?:[ \t]*\\n)+",with:"\n\n",options:.regularExpression)
+    }
+    static func page(item: [String: Any], contents: String) -> String {
+        let title = escape(item["title"] as? String ?? "Actualité"), game = escape(item["gameTitle"] as? String ?? "Steam")
+        let kind = item["kind"] as? String == "update" ? "Correctif" : "Actualité"
+        let rawTheme = item["theme"] as? [String:String] ?? [:]
+        func tone(_ key:String,_ fallback:String)->String { guard let v=rawTheme[key], v.range(of:"^#[0-9a-fA-F]{6}$",options:.regularExpression) != nil else {return fallback};return v }
+        let accent=tone("accent","#edab7e"), background=tone("background","#141a20"), surface=tone("surface","#222b34"), muted=tone("muted","#b8c4cf")
+        let appID = (item["appId"] as? NSNumber)?.intValue ?? 0
+        let base = "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appID)/"
+        let date = Date(timeIntervalSince1970:item["date"] as? Double ?? 0).formatted(.dateTime.day().month(.wide).year().locale(Locale(identifier:"fr_FR")))
+        let reading = max(1, contents.split(whereSeparator:{$0.isWhitespace}).count / 220)
+        let related = (item["related"] as? [[String:Any]] ?? []).compactMap { other -> String? in
+            guard let url = other["url"] as? String, let safe = link(url) else { return nil }
+            return "<a class=\"related-item\" href=\"\(safe)\"><span>\(other["kind"] as? String == "update" ? "Correctif" : "Actualité")</span><b>\(escape(other["title"] as? String ?? ""))</b><i>Lire l’annonce →</i></a>"
+        }.joined()
+        return """
+        <!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+        <title>\(title)</title><style>
+        :root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#eef1f4;color:#242d35;font:15px/1.75 -apple-system,BlinkMacSystemFont,sans-serif}a{color:#bb4f28;text-underline-offset:4px}a:hover{color:#e66c39}a:focus-visible{outline:3px solid #ec7a42;outline-offset:5px}
+        .hero{position:relative;min-height:440px;display:flex;align-items:end;background:#16212c;color:#fff;overflow:hidden}.hero>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 30%}.hero:after{content:'';position:absolute;inset:0;background:linear-gradient(0deg,#101c2cf5,transparent 120%),linear-gradient(90deg,#101b29b3,transparent)}
+        .hero-copy{position:relative;z-index:1;width:100%;max-width:1240px;margin:auto;padding:110px 48px 62px;display:flex;gap:30px;align-items:end}.cover{width:112px;border-radius:10px;box-shadow:0 18px 45px #0008;transform:perspective(650px) rotateY(9deg)}.hero-copy>div{max-width:850px}.eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#bfcbd6}.eyebrow b{background:#f17a43;color:white;padding:5px 9px;border-radius:5px;margin-right:10px;font-weight:600}h1{font-size:clamp(28px,4vw,52px);line-height:1.07;letter-spacing:-.04em;margin:18px 0 16px;text-wrap:balance}.hero-meta{font-size:12px;color:#c5d0db;display:flex;gap:20px}
+        .layout{max-width:1240px;margin:-24px auto 70px;padding:0 48px;display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:24px;position:relative;z-index:2}article{padding:40px 44px;border:1px solid #e0e6eb;border-radius:18px;background:#fff;box-shadow:0 12px 44px #1b283808}.body{white-space:pre-wrap;overflow-wrap:anywhere}.body strong{font-weight:700;color:#182c40}.body .section-title{display:block;font-size:24px;line-height:1.25;letter-spacing:-.025em;border-bottom:1px solid #e5eaf0;padding:8px 0 14px}.body figure{margin:22px -12px;white-space:normal}.body img{width:100%;height:auto;display:block;border-radius:12px}.body a{font-weight:550}.editor{display:flex;gap:12px;align-items:center;border-bottom:1px solid #edf0f3;margin-bottom:24px;padding-bottom:20px;font-size:12px;color:#80909b}.editor b{display:block;color:#34485b}.editor .seal{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;background:#f5ede5;color:#bc6d40;font-size:18px}
+        aside{padding-top:42px}.game-card{overflow:hidden;border-radius:15px;background:#152235;color:white;box-shadow:0 12px 28px #12223618}.game-card img{display:block;width:100%}.game-card div{padding:18px}.game-card b{display:block;font-size:17px;line-height:1.25}.game-card a{display:block;margin-top:16px;color:#ffb58d;font-size:12px;text-decoration:none}.related{margin-top:28px}.related h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#778591}.related-item{display:block;text-decoration:none;color:#233548;border-top:1px solid #dbe2e8;padding:18px 0}.related-item span{font-size:10px;color:#b8623c;text-transform:uppercase;letter-spacing:.09em}.related-item b{display:block;font-size:14px;line-height:1.4;margin:6px 0}.related-item i{font-size:11px;font-style:normal;color:#7e8c99}footer{border-top:1px solid #e1e5eb;margin-top:36px;padding-top:20px;color:#8996a0;font-size:11px}
+        @media(max-width:850px){.layout{grid-template-columns:1fr;padding:0 24px}.hero-copy{padding:80px 24px 50px}.cover{width:80px}aside{padding-top:0;display:grid;grid-template-columns:1fr 1fr;gap:24px}.related{margin-top:0}article{padding:28px}.hero{min-height:350px}}
+        :root{color-scheme:dark;--accent:\(accent);--game-bg:\(background);--game-surface:\(surface);--game-muted:\(muted)}
+        body{background:radial-gradient(ellipse at 85% 8%,color-mix(in srgb,var(--accent) 14%,transparent),transparent 48%),var(--game-bg);color:#e6e8eb}
+        body:before{content:'';position:fixed;inset:0;background:linear-gradient(180deg,transparent,var(--game-bg) 72%);pointer-events:none;z-index:-1}
+        a,.game-card a{color:var(--accent)}a:hover{color:white}.hero{background:var(--game-bg)}.hero:after{background:linear-gradient(0deg,var(--game-bg),transparent 100%),linear-gradient(90deg,#0009,transparent)}
+        .eyebrow b{background:var(--accent);color:#181b1f}.eyebrow,.hero-meta{color:#d7dadd}.layout{gap:34px;margin-top:-8px}article{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 5%,var(--game-surface)),var(--game-surface));border:1px solid color-mix(in srgb,var(--accent) 15%,transparent);box-shadow:0 24px 70px #0003;color:#e6e8eb}
+        .body{font-size:16px;line-height:1.9}.body strong,.editor b{color:#f7f7f8}.body .section-title{color:var(--accent);border-color:#ffffff18}.editor{color:var(--game-muted);border-color:#ffffff16}.editor .seal{background:color-mix(in srgb,var(--accent) 13%,transparent);color:var(--accent)}
+        .game-card{background:var(--game-surface);border:1px solid #ffffff12;box-shadow:0 20px 50px #0003}.related h2,.related-item i,footer{color:var(--game-muted)}.related-item{color:#e3e6e9;border-color:#ffffff18}.related-item span{color:var(--accent)}.related-item:hover{color:white}.related-item:hover b{text-decoration:underline;text-decoration-color:var(--accent)}footer{border-color:#ffffff16}
+        .hero{min-height:360px}.hero-copy{padding-top:80px;padding-bottom:48px;gap:24px}h1{font-size:clamp(28px,3.7vw,46px);line-height:1.12;letter-spacing:-.035em}.layout{max-width:1160px;grid-template-columns:minmax(0,1fr) 230px;gap:28px}article{padding:30px 36px}.body{font-size:16px;line-height:1.75;max-width:68ch;letter-spacing:.002em}.body .section-title{font-size:22px;margin-top:8px;padding-bottom:12px}.editor{margin-bottom:20px;padding-bottom:18px}.hero-meta{flex-wrap:wrap;gap:8px 20px}.related-item{padding:15px 0}.body figure{margin:18px 0}.cover{width:96px}@media(max-width:850px){.layout{grid-template-columns:1fr}.hero{min-height:300px}.hero-copy{padding:64px 24px 38px}.body{font-size:15px}article{padding:24px}.cover{width:72px}}
+        </style><header class="hero"><img src="\(base)library_hero.jpg" alt=""><div class="hero-copy"><img class="cover" src="\(base)library_600x900.jpg" alt="\(game)"><div><div class="eyebrow"><b>\(kind)</b>\(game)</div><h1>\(title)</h1><div class="hero-meta"><span>\(date)</span><span>\(reading) min de lecture</span><span>Annonce officielle</span></div></div></div></header>
+        <main class="layout"><article><div class="editor"><span class="seal">✓</span><div><b>\(game)</b>Publication de l’éditeur · Steam</div></div><div class="body">\(body(contents))</div><footer>Texte et visuels de l’éditeur · consultés dans Playmelt</footer></article><aside><section class="game-card"><img src="\(base)header.jpg" alt=""><div><b>\(game)</b><a href="https://store.steampowered.com/app/\(appID)/">Découvrir le jeu →</a></div></section><section class="related"><h2>Autour du jeu</h2>\(related)</section></aside></main></html>
+        """
+    }
+
+}
+
 protocol HubTransport {
     func get(_ url: URL, completion: @escaping (Data?) -> Void)
 }
@@ -105,6 +214,7 @@ final class HubFeedStore {
     func shouldRefresh(force: Bool) -> Bool {
         if running { return false }
         if let lastAttempt, now().timeIntervalSince(lastAttempt) < (force ? 60 : Self.minInterval) { return false }
+        if feed["offerSources"] == nil { return true }
         guard !force, let fetchedAt else { return true }
         return now().timeIntervalSince(fetchedAt) > Self.staleAfter
     }
@@ -175,6 +285,7 @@ final class HubFeedStore {
     private func collect(_ games: [(HubGameRef, Int)], completion: @escaping ([String: Any]) -> Void) {
         let group = DispatchGroup(); let lock = NSLock()
         var items: [[String: Any]] = [], art: [String: Any] = [:], free: [[String: Any]] = [], releases: [[String: Any]] = []
+        var offers: [[String:Any]] = [], offerSources: [String:String] = [:]
         for (game, appID) in games {
             art[game.gameID] = Self.artwork(appID: appID)
             var c = URLComponents(string: "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/")!
@@ -190,17 +301,24 @@ final class HubFeedStore {
         group.enter()
         transport.get(URL(string: "https://store-site-backend-static-ipv4.ak.epicgames.com/freeGamesPromotions?locale=fr&country=FR&allowCountries=FR")!) { [now] data in
             let parsed = Self.parseEpicFree(data, now: now())
-            lock.lock(); free = parsed; lock.unlock(); group.leave()
+            lock.lock(); free = parsed; offerSources["epic"] = data == nil ? "unavailable" : "free-only"; lock.unlock(); group.leave()
         }
         group.enter()
         transport.get(URL(string: "https://store.steampowered.com/api/featuredcategories?cc=fr&l=french")!) { data in
             let parsed = Self.parseReleases(data)
-            lock.lock(); releases = parsed; lock.unlock(); group.leave()
+            lock.lock(); releases = parsed; offers += OffersCatalog.steam(data); offerSources["steam"] = data == nil ? "unavailable" : "ready"; lock.unlock(); group.leave()
+        }
+        for (store, url, parser) in [("gog", OffersCatalog.gogURL, OffersCatalog.gog), ("xbox", OffersCatalog.xboxURL, OffersCatalog.xbox)] {
+            group.enter()
+            transport.get(url) { data in
+                let parsed = parser(data)
+                lock.lock(); offers += parsed; offerSources[store] = data == nil || parsed.isEmpty ? "unavailable" : "ready"; lock.unlock(); group.leave()
+            }
         }
         group.notify(queue: queue) { [now] in
             items.sort { ($0["date"] as? Double ?? 0) > ($1["date"] as? Double ?? 0) }
             completion(["fetchedAt": now().timeIntervalSince1970, "items": Array(items.prefix(80)), "art": art,
-                        "freeGames": free, "releases": releases])
+                        "freeGames": free, "releases": releases, "offers": offers.filter { ($0["end"] as? Double ?? 0) == 0 || ($0["end"] as? Double ?? 0) > now().timeIntervalSince1970 }, "offerSources": offerSources])
         }
     }
 
@@ -276,6 +394,7 @@ final class HubFeedStore {
     static func allowedLink(_ raw: String) -> URL? {
         guard let url = URL(string: raw), url.scheme == "https", url.user == nil, url.password == nil, url.port == nil,
               let host = url.host?.lowercased() else { return nil }
-        return ["store.steampowered.com", "store.epicgames.com"].contains(host) ? url : nil
+        if host == "7agency.fr", url.path.hasPrefix("/Playmelt/") {return url}
+        return ["store.steampowered.com", "store.epicgames.com", "www.gog.com", "www.xbox.com", "luna.amazon.fr", "www.ea.com", "www.ubisoft.com", "eu.shop.battle.net", "itch.io", "www.humblebundle.com", "play.geforcenow.com"].contains(host) ? url : nil
     }
 }

@@ -1,0 +1,29 @@
+/* Platform identities live inside their sections; Playmelt keeps its navigation and layout. */
+.app[data-view="steam"] .main{--platform-bg:#171d25;--platform-surface:#243447;--platform-raised:#30465d;--platform-accent:#66c0f4;--platform-accent-ink:#0a2235;--platform-glow:#285574;--platform-font:"Motiva Sans",Arial,sans-serif}
+.app[data-view="xbox"] .main{--platform-bg:#0b100d;--platform-surface:#18241c;--platform-raised:#24382a;--platform-accent:#9bf00b;--platform-accent-ink:#112300;--platform-glow:#143c22;--platform-font:"Segoe UI Variable","Segoe UI",-apple-system,sans-serif}
+.app[data-view="gog"] .main{--platform-bg:#19141f;--platform-surface:#2a2133;--platform-raised:#3b2e49;--platform-accent:#c69aef;--platform-accent-ink:#271537;--platform-glow:#513162;--platform-font:Lato,"Helvetica Neue",Arial,sans-serif}
+.app[data-view="epic"] .main{--platform-bg:#101014;--platform-surface:#202024;--platform-raised:#303035;--platform-accent:#f2f2f4;--platform-accent-ink:#151519;--platform-glow:#30303b;--platform-font:Inter,"Helvetica Neue",Arial,sans-serif}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main{
+ --win:var(--platform-bg);--ink:#f4f6f8;--ink-2:#d8dee5;--muted:#aab6c2;--faint:#8c9aa8;--line:#ffffff19;--accent:var(--platform-accent);
+ color-scheme:dark;color:var(--ink);font-family:var(--platform-font);background:radial-gradient(ellipse at 70% -20%,var(--platform-glow),transparent 65%),var(--platform-bg)!important;
+}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .toolbar{background:linear-gradient(160deg,var(--platform-surface),var(--platform-bg))!important;border-bottom:1px solid #ffffff17!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main :is(.search input,.filter-select,.segmented,.layout-toggle,.button,.plug-play-btn){background-color:var(--platform-surface)!important;color:var(--ink)!important;border-color:#ffffff22!important;box-shadow:none!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main :is(.button.primary,.plug-play-btn.connected-state,.segmented button[aria-pressed="true"],.segmented button.active){background:var(--platform-accent)!important;color:var(--platform-accent-ink)!important;border-color:transparent!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main :is(.segmented button,.layout-toggle button,.text-button){color:var(--muted)!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main :is(.segmented button:hover,.layout-toggle button:hover,.button:hover){background-color:var(--platform-raised)!important;color:var(--ink)!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main :is(.game-title,.game-copy,.game-row,.row-head h2,.store-showcase h2){color:var(--ink)!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main :is(.game-subtitle,.row-head small,.view-subtitle){color:var(--muted)!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main .store-showcase{background:linear-gradient(105deg,var(--platform-surface),var(--platform-bg));border-color:#ffffff20}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main .store-showcase-link{background:var(--platform-accent);color:var(--platform-accent-ink);border-color:transparent}
+.app[data-view="steam"] .main .game-art{border-radius:3px!important}
+.app[data-view="epic"] .main .game-art{border-radius:8px!important}
+.app[data-view="xbox"] .toolbar h1{font-weight:650!important;letter-spacing:-.035em!important}
+.app[data-view="gog"] .toolbar h1{letter-spacing:-.025em!important}
+.xbox-input-badge{position:absolute;left:10px;bottom:48px;z-index:3;display:inline-flex;align-items:center;gap:6px;max-width:calc(100% - 20px);padding:6px 9px;border:1px solid #ffffff36;border-radius:6px;background:#0c1915f2;color:#f2fff5;font-size:10px;font-weight:650;pointer-events:none;box-shadow:0 2px 8px #0004}
+.xbox-input-badge svg{width:19px;height:19px;flex:none}.xbox-input-badge>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main .subnav-pills{background:var(--platform-surface)!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main .subnav-pill{color:var(--muted)!important;background:transparent!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main :is(.subnav-pill.active,.button.plug-play.connected-state){color:var(--platform-accent-ink)!important;background:var(--platform-accent)!important}
+.app:is([data-view="steam"],[data-view="xbox"],[data-view="gog"],[data-view="epic"]) .main .subnav-pill.active span{color:inherit!important;opacity:1!important}
+.continue-card .xbox-input-badge{top:10px;bottom:auto;font-size:10px}
