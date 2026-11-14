@@ -100,6 +100,8 @@ private final class OperationRunner: OwnedProcessRunning {
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeWine.path)
         let bashEnvironment = root.appendingPathComponent("untrusted-bash-env")
         try Data("printf bad >'\(environmentRan.path)'\n".utf8).write(to: bashEnvironment)
+        let qualityStub = runtime.appendingPathComponent("game_display_quality.py")
+        try Data("print('1 1 0 0')\n".utf8).write(to: qualityStub)
         let oldAuth = "EPIC_PARAMS=()\nLEGENDARY_BIN='old'\nprintf old >'\(legacyRan.path)'"
         let template = """
         #!/bin/bash
@@ -109,6 +111,8 @@ private final class OperationRunner: OwnedProcessRunning {
         RUNTIME_DIR='\(runtime.path)'
         export WINEDLLOVERRIDES="d3d12=n,b;winemenubuilder.exe=d"
         cd "$GAME_DIR"
+        QUALITY_COORDINATES=$(/usr/bin/env -u PYTHONHOME -u PYTHONPATH -u PYTHONUSERBASE PYTHONNOUSERSITE=1 '/usr/bin/python3' -B '\(qualityStub.path)' --prepare 'fixture-app')
+        read -r PLAYMELT_GAME_WIDTH PLAYMELT_GAME_HEIGHT PLAYMELT_GAME_X PLAYMELT_GAME_Y <<< "$QUALITY_COORDINATES"
         \(oldAuth)
         mkdir -p "$RUNTIME_DIR/logs"
         exec "$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine" 'old.exe' '-dx12' "${EPIC_PARAMS[@]}" "$@" 2>&1 | /usr/bin/tail -c 1048576 >"$RUNTIME_DIR/logs/game-factory.log"

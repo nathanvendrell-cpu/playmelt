@@ -100,7 +100,7 @@ final class EpicLaunchAuthorization: CustomStringConvertible, CustomDebugStringC
             if line.hasPrefix("export ") || allowedAssignments.contains(where: { line.hasPrefix($0) }) {
                 guard !unsafeShellControl(line), !["BASH_", "PS4", "EPIC_PARAMS", "${!"].contains(where: { line.contains($0) }) else { throw EpicConnectorError.invalidResponse }; continue
             }
-            if line.hasPrefix("QUALITY_COORDINATES=$('"), line.contains("/game_display_quality.py' --prepare '"), line.hasSuffix("')"), ![";", "`", "EPIC_PARAMS", "<", ">", "|", "&"].contains(where: { line.contains($0) }), line.components(separatedBy: "$(").count == 2 { continue }
+            if line.hasPrefix("QUALITY_COORDINATES=$("), line.contains("/game_display_quality.py' --prepare '"), line.hasSuffix("')"), ![";", "`", "EPIC_PARAMS", "<", ">", "|", "&"].contains(where: { line.contains($0) }), line.components(separatedBy: "$(").count == 2 { continue }
             if line == "read -r PLAYMELT_GAME_WIDTH PLAYMELT_GAME_HEIGHT PLAYMELT_GAME_X PLAYMELT_GAME_Y <<< \"$QUALITY_COORDINATES\"" { continue }
             if line.hasPrefix("exec \"$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/engine/bin/wine\" ") || line.hasPrefix("exec \"$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/PlaymeltGame.app/Contents/MacOS/wine\" "), line.contains("\"${EPIC_PARAMS[@]}\" \"$@\""), line.hasSuffix(" 2>&1 | /usr/bin/tail -c 1048576 >\"$RUNTIME_DIR/logs/game-" + appName + ".log\"") { continue }
             throw EpicConnectorError.invalidResponse // Refuse unknown echo/trap/eval/redirection paths.

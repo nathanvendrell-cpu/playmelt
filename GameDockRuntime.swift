@@ -142,7 +142,7 @@ enum GameDockRuntime {
             try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: bundle.path)
         }
         let current = ["wine", "wineserver"].allSatisfy { binaryMatches(contents.appendingPathComponent("MacOS/" + $0), binaries.appendingPathComponent($0)) }
-            && ["lib", "share"].allSatisfy { (try? fm.destinationOfSymbolicLink(atPath: contents.appendingPathComponent($0).path)) == "../../engine/" + $0 }
+            && ["lib", "share"].allSatisfy { (try? fm.destinationOfSymbolicLink(atPath: contents.appendingPathComponent($0).path)) == "../../../engine/" + $0 }
             && ((try? String(contentsOf: plistURL, encoding: .utf8)) ?? "") == wantedPlist
         if current, fm.fileExists(atPath: contents.appendingPathComponent("MacOS/wine").path) { return bundle }
 
@@ -155,7 +155,7 @@ enum GameDockRuntime {
                 try fm.copyItem(at: binaries.appendingPathComponent(name), to: staged.appendingPathComponent("MacOS/" + name))
             }
             for name in ["lib", "share"] {
-                try fm.createSymbolicLink(atPath: staged.appendingPathComponent(name).path, withDestinationPath: "../../engine/" + name)
+                try fm.createSymbolicLink(atPath: staged.appendingPathComponent(name).path, withDestinationPath: "../../../engine/" + name)
             }
             try Data(wantedPlist.utf8).write(to: plistURL, options: .atomic)
             if fm.fileExists(atPath: iconURL.path) {
