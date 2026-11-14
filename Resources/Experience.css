@@ -357,3 +357,9 @@
 .big-picture .library-wall-card:hover,.big-picture .library-wall-card:focus-visible{transform:translateY(-8px) scale(1.03);outline:3px solid #dc5a2e;outline-offset:4px}
 .big-picture .big-section .news-stack,.big-picture .big-section .editorial-lead,.big-picture .big-section .offer-hero{transform:none}
 .big-picture .big-section .profile-hero{background:radial-gradient(ellipse at 18% 50%,#dc5a2e33,transparent 60%),linear-gradient(135deg,#1c2326,#0f1315)}
+.profile-storage{border:1px solid #ffffff15;background:#172632;border-radius:14px;padding:16px 20px;margin:20px 0 6px;display:flex;flex-direction:column;gap:10px}
+.profile-storage .discover-kicker{color:#b9c9d5}
+.profile-storage progress{width:100%;height:6px;accent-color:#dc7145;border-radius:999px}
+.profile-storage-line{font-size:11.5px;color:#c4d0d9}
+.profile-storage.low progress{accent-color:#e5484d}
+.profile-storage-warning{font-size:10.5px;color:#f2b8b5}

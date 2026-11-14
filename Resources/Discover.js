@@ -89,6 +89,17 @@
       const identity=btn('',editPlayer,'player-identity');identity.setAttribute('aria-label','Changer mon avatar');identity.append(playerAvatar(player),el('small','','Modifier'));
       const copy=el('div','profile-copy');copy.append(el('span','discover-kicker',`NIVEAU ${p.level} · ${p.name}`),el('h2','',player.name||'Ton pseudo'),el('p','profile-points',`${Number(p.points).toLocaleString('fr-FR')} points`));const progress=el('progress');progress.max=1;progress.value=p.next?Math.min(1,(p.points-p.floor)/(p.next-p.floor)):1;progress.setAttribute('aria-label','Progression du profil');copy.append(progress,el('p','',p.next?`${(p.next-p.points).toLocaleString('fr-FR')} points avant le niveau ${p.level+1}`:'Tous les niveaux de profil atteints.'),btn('Personnaliser mon profil',editPlayer,'player-edit'));hero.append(identity,copy);pane.append(hero);
       const ladder=el('div','profile-levels');for(const level of p.levels||[]){const item=el('div','profile-level'+(level.level<=p.level?' reached':'')+(level.level===p.level?' current':''));item.append(el('span','',String(level.level).padStart(2,'0')),el('b','',level.name),el('small','',`${level.points.toLocaleString('fr-FR')} pts`));ladder.append(item);}pane.append(ladder);root.PlaymeltBadges?.render(pane,state);
+      const storage=player.storage||{};
+      if(storage.ready&&storage.total>0){
+        const fmtOctets=b=>b>=1e9?`${(b/1e9).toLocaleString('fr-FR',{maximumFractionDigits:0})} Go`:`${Math.round(b/1e6).toLocaleString('fr-FR')} Mo`;
+        const libre=Math.max(0,storage.free),part=Math.min(1,Math.max(0,(storage.usedPercent||0)));
+        const card=el('section','profile-storage'+(libre/storage.total<0.1?' low':''));
+        card.append(el('span','discover-kicker',`STOCKAGE · ${storage.volume||'Disque'}`));
+        const bar=el('progress');bar.max=1;bar.value=part;bar.setAttribute('aria-label','Espace disque utilisé');card.append(bar);
+        card.append(el('p','profile-storage-line',`${fmtOctets(storage.total)} au total · ${fmtOctets(libre)} libres — ${Math.round((libre/storage.total)*100)} %`));
+        if(libre/storage.total<0.1)card.append(el('p','profile-storage-warning','Espace insuffisant pour de nouvelles installations.'));
+        pane.append(card);
+      }
       const heading=el('div','discover-heading-row');heading.append(el('h2','discover-heading','Ton parcours, jeu par jeu'),el('span','',`${p.entries.length} jeux`));pane.append(heading);
       const search=el('input','profile-search');search.type='search';search.placeholder='Retrouver un jeu dans mon parcours';search.setAttribute('aria-label','Rechercher dans mon profil');search.value=profileQuery;pane.append(search);
       const rows=el('div','profile-game-list'),more=btn('Afficher 24 jeux de plus',()=>{profileLimit+=24;draw();},'discover-more');pane.append(rows,more);

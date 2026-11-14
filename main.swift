@@ -1423,13 +1423,33 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         state["setupSuggested"] = model.games.isEmpty && !UserDefaults.standard.bool(forKey:"playmeltSetupCompleted")
         state["localImport"] = localGameImport.state
         state["vmInstallPreference"] = UserDefaults.standard.bool(forKey:"vmInstallPreference")
-        state["player"] = playerProfile.snapshot()
+        var playerState = playerProfile.snapshot()
+        playerState["storage"] = storageSnapshot()
+        state["player"] = playerState
         state["account"] = accountService.snapshot()
         state["issueReports"] = issueReports.all()
         state["benchmarks"] = benchmarks.snapshot()
         state["launchDiagnostics"] = launchDiagnostics
         notify("onNativeState", state)
         UpdaterController.shared.resumeWhenIdle()
+    }
+    /// Espace du volume qui accueille les jeux installés par Playmelt.
+    /// Une seule mesure statfs : légère, appelable à chaque état.
+    private func storageSnapshot() -> [String: Any] {
+        let games = model.home.appendingPathComponent("Library/Application Support/Playmelt/Games", isDirectory: true)
+        var exists: ObjCBool = false
+        let root: URL = FileManager.default.fileExists(atPath: games.path, isDirectory: &exists) && exists.boolValue
+            ? games
+            : model.home.appendingPathComponent("Library/Application Support/Playmelt", isDirectory: true)
+        let values = try? root.standardizedFileURL.resourceValues(forKeys: [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey])
+        guard let total = values?.volumeTotalCapacity, total > 0,
+              let free = values?.volumeAvailableCapacityForImportantUsage, free >= 0 else { return ["ready": false] }
+        let used = max(0, Int(total) - Int(free))
+        return ["ready": true,
+                "volume": values?.volumeName ?? "Macintosh HD",
+                "total": total, "free": free, "used": used,
+                "freePercent": Double(free) / Double(total),
+                "usedPercent": Double(used) / Double(total)]
     }
     private func transmitIssue(_ report:[String:Any]) {
         sendState()
@@ -1816,7 +1836,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                     }
                     do {
                         if game.platform=="windows" {
-                            guard let environment,localLaunchBlockReason(for:game,steamAccountID:self.model.selectedAccountID)==nil,let script=ensureLaunchScript(for:game,requestedBackend:backend) else {throw EpicConnectorError.invalidResponse}
+                            guard let environment,localLaunchBlockReason(for:game,steamAccountID:self.model.selectedAccountID)==nil,let script=ensureLaunchScript(for:game,requestedBackend:backend,iconData:self.gameArtworkData(game)) else {throw EpicConnectorError.invalidResponse}
                             let win=directory.appendingPathComponent("Windows"),target=FileManager.default.fileExists(atPath:win.path) ? win:directory
                             let files=try FileManager.default.subpathsOfDirectory(atPath:target.path)
                             guard let chosen=resolvedGameExecutable(appID:game.appId,folder:directory,files:files) else {throw EpicConnectorError.invalidResponse}
@@ -2416,6 +2436,27 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             runWindowsClient(runtime, arguments: args + extra, onFailure: onFailure) { ok, error in finish(ok, ok ? message : error) }
         } else { finish(false, "Client Steam indisponible.") }
     }
+    /// Octets d'icône locaux pour un jeu : cache Steam (librarycache des deux
+    /// clients), sinon fichiers d'artwork locaux (imports, Epic/GOG téléchargés).
+    func gameArtworkData(_ game: Game) -> Data? {
+        let roots = [model.home.appendingPathComponent("Library/Application Support/Steam/appcache/librarycache")]
+            + model.runtimes.map { $0.steamRoot.appendingPathComponent("appcache/librarycache") }
+        let info = model.metadata[game.appId]
+        for root in roots {
+            for file in SteamArtworkHandler.candidateFiles(root: root, appID: game.appId, info: info, portrait: false) {
+                guard let data = try? Data(contentsOf: file), data.count > 64, data.count <= 8_000_000 else { continue }
+                return data
+            }
+        }
+        for raw in [game.customImageURL, game.customPortraitURL] where !raw.isEmpty {
+            let url = raw.hasPrefix("file://") ? URL(fileURLWithPath: String(raw.dropFirst(7))) : URL(fileURLWithPath: raw)
+            guard url.path.hasPrefix("/"), !(raw.lowercased().hasPrefix("http://") || raw.lowercased().hasPrefix("https://")),
+                  FileManager.default.fileExists(atPath: url.path),
+                  let data = try? Data(contentsOf: url), data.count > 64, data.count <= 8_000_000 else { continue }
+            return data
+        }
+        return nil
+    }
     func runWindowsClient(_ runtime: Runtime, arguments: [String], onFailure: @escaping (String) -> Void,
                           completion: @escaping (Bool, String) -> Void) {
         guard runtime.executionAllowed else { completion(false, WindowsExecutionPolicy.message); return }
@@ -2429,7 +2470,22 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             let target=try GameDisplayMetadata.launchTarget(GameDisplayMetadata.screens())
             guard let library=Bundle.main.url(forResource:"libPlaymeltDisplayGuard",withExtension:"dylib") else {throw RuntimeSetupError.failed("Protection des écrans absente.")}
             let safeEnvironment=try GameDisplayMetadata.guardedEnvironment(descriptor.environment,target:target,library:library)
-            steamClientLifecycle.request(prefix: descriptor.prefixURL, wine: descriptor.wineURL,
+            // Identité Dock : quand la demande vise un jeu précis, le client démarre
+            // sous le bundle de CE jeu (logo + nom dans le Dock, mode Jeu inclus).
+            var wine=descriptor.wineURL
+            if let uri=arguments.first(where:{$0.hasPrefix("steam://")}) {
+                let parts=uri.dropFirst("steam://".count).split(separator:"/").map(String.init)
+                if parts.count>=2,["install","rungameid"].contains(parts[0]),LibraryModel.validAppID(parts[1]) {
+                    let appID=parts[1]
+                    let game=model.games.first(where:{$0.appId==appID})
+                    let title=game?.title ?? "Jeu \(appID)"
+                    let bundle=GameDockRuntime.ensure(appID:appID,title:title,
+                        runtimeRoot:model.home.appendingPathComponent("Library/Application Support/Playmelt/Runtime",isDirectory:true),
+                        iconData:game.map { gameArtworkData($0) } ?? nil)
+                    if let bundle { wine=bundle.appendingPathComponent("Contents/MacOS/wine") }
+                }
+            }
+            steamClientLifecycle.request(prefix: descriptor.prefixURL, wine: wine,
                 steam: descriptor.steamRoot.appendingPathComponent("steam.exe"), arguments: arguments,
                 environment: safeEnvironment, directory: descriptor.prefixURL) { [weak self] outcome in
                 guard let self, !self.closing else { return }
@@ -2525,7 +2581,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             return
         }
         if !installing, game.platform == "windows", game.installed, game.complete,
-           let script = ensureLaunchScript(for: game, requestedBackend: requestedBackend) {
+           let script = ensureLaunchScript(for: game, requestedBackend: requestedBackend, iconData: gameArtworkData(game)) {
             let key = "launch-script:\(game.appId.isEmpty ? game.id : game.appId)"
             guard let token = requestGate.acquire(key) else { result(false, "Demande déjà envoyée."); return }
             do {

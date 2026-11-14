@@ -238,6 +238,12 @@ final class SteamClientLifecycle {
                       directory == nil || directory!.standardizedFileURL.resolvingSymlinksInPath().path == context.key,
                       Self.validArguments(arguments) else { throw SteamClientLifecycleError.invalidRequest }
                 let session = self.sessions[context.key] ?? Session(context)
+                if session.context.wine != context.wine, session.context.steam == context.steam {
+                    // Identité Dock par jeu : quand AUCUN client n'est lancé ni en attente,
+                    // la session peut passer au wine du bundle du jeu demandé.
+                    if session.current == nil, session.pending.isEmpty { self.sessions[context.key] = Session(context) }
+                    else { throw SteamClientLifecycleError.busy }
+                }
                 guard session.context.wine == context.wine, session.context.steam == context.steam else { throw SteamClientLifecycleError.invalidRequest }
                 self.sessions[context.key] = session
                 if session.current?.reported == true, session.uncertainStartup {

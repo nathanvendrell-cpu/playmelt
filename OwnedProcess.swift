@@ -11,7 +11,9 @@ enum WineExecutableLocations {
         if bin.lastPathComponent == "bin", bin.deletingLastPathComponent().lastPathComponent == "engine" {
             root = bin.deletingLastPathComponent().deletingLastPathComponent()
         } else if bin.lastPathComponent == "MacOS", bin.deletingLastPathComponent().lastPathComponent == "Contents",
-                  bin.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "PlaymeltGame.app" {
+                  bin.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent.hasSuffix(".app") {
+            // Bundle jeu (GameDock) ou bundle générique : racine = le dossier du moteur
+            // qui contient engine/ et les bundles.
             root = bin.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         } else { root = nil }
         guard let root else { return [bin] }

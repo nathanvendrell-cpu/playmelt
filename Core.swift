@@ -736,6 +736,7 @@ enum GameModeRuntime {
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>10.0</string>
     <key>CFBundleVersion</key><string>10.0</string>
+    <key>CFBundleIconFile</key><string>playmelt</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
     <key>LSSupportsGameMode</key><true/>
     <key>GCSupportsGameMode</key><true/>
@@ -772,6 +773,13 @@ enum GameModeRuntime {
             for name in binaries { try fm.copyItem(at: engine.appendingPathComponent("bin/" + name), to: staged.appendingPathComponent("MacOS/" + name)) }
             for name in ["lib", "share"] { try fm.createSymbolicLink(atPath: staged.appendingPathComponent(name).path, withDestinationPath: "../../engine/" + name) }
             try Data(infoPlist.utf8).write(to: staged.appendingPathComponent("Info.plist"), options: .atomic)
+            // Marque Playmelt en icône : jamais d'icône générique grise pour les
+            // lancements sans identité de jeu (client Steam, préparations…).
+            if let mark = Bundle.main.url(forResource: "PlaymeltMarkOrange", withExtension: "png", subdirectory: nil),
+               let data = try? Data(contentsOf: mark), let icns = GameDockRuntime.icnsData(from: data) {
+                try fm.createDirectory(at: staged.appendingPathComponent("Resources", isDirectory: true), withIntermediateDirectories: true)
+                try icns.write(to: staged.appendingPathComponent("Resources/playmelt.icns"), options: .atomic)
+            }
             guard binaries.allSatisfy({ same(engine.appendingPathComponent("bin/" + $0), staged.appendingPathComponent("MacOS/" + $0)) }) else { throw CocoaError(.fileWriteUnknown) }
             if fm.fileExists(atPath: bundle.path) || (try? fm.destinationOfSymbolicLink(atPath: bundle.path)) != nil { try fm.removeItem(at: bundle) }
             try fm.moveItem(at: staging, to: bundle)
@@ -999,7 +1007,7 @@ private func contentIsOwnedLaunchScript(_ url: URL) -> Bool {
     return content.hasPrefix("#!/bin/bash") && content.contains("# Lanceur direct Playmelt") && content.contains("# Playmelt launcher v3")
 }
 
-func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> URL? {
+func ensureLaunchScript(for game: Game, requestedBackend: String = "auto", iconData: Data? = nil) -> URL? {
     let fm = FileManager.default
     guard LibraryModel.validAppID(game.appId) || game.store == "epic" || game.installSource == "local" || !game.appId.isEmpty else { return nil }
     let requiredBackend = SteamGameLaunchProfile.requiredRenderer(appID: game.appId)
@@ -1018,9 +1026,14 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto") -> UR
     if steamLaunch?.requiresOfficialSteam == true {return nil}
     guard let chosen = resolvedGameExecutable(appID: game.appId, folder: folder, files: files, steamLaunch: steamLaunch) else { return nil }
     let effectiveRenderer = resolvedLocalGameRenderer(appID: game.appId, files: files, manifestRenderer: steamLaunch?.renderer, requestedBackend: requestedBackend, executable: chosen)
-    // Mode Jeu macOS : Wine part du bundle « jeu » quand il a pu être préparé, sinon du moteur.
-    let gameModeWine = GameModeRuntime.ensure(runtimeRoot: fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/Runtime", isDirectory: true))
-    let wineLauncher = gameModeWine ? GameModeRuntime.scriptWine : GameModeRuntime.engineScriptWine
+    // Mode Jeu macOS + identité Dock : Wine part du bundle du jeu (icône + nom du jeu dans le Dock),
+    // à défaut du bundle « jeu » générique, sinon du moteur.
+    let runtimeRoot = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/Runtime", isDirectory: true)
+    let gameModeWine = GameModeRuntime.ensure(runtimeRoot: runtimeRoot)
+    let gameDockBundle = GameDockRuntime.ensure(appID: game.appId, title: game.title, runtimeRoot: runtimeRoot, iconData: iconData)
+    let wineLauncher = gameDockBundle != nil
+        ? GameDockRuntime.scriptWine(appID: game.appId, title: game.title, runtimeRoot: runtimeRoot)
+        : (gameModeWine ? GameModeRuntime.scriptWine : GameModeRuntime.engineScriptWine)
 
     if game.appId != "2651280", let existing = findLaunchScript(in: game.path) {
         guard contentIsOwnedLaunchScript(existing) else { return nil }
