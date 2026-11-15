@@ -55,6 +55,13 @@ class Tests(unittest.TestCase):
         self.assertEqual(original,{'WINEMSYNC':'1','WINEESYNC':'0','other':'x','MTL_HUD_ENABLED':'leaked'})
         for invalid in ('','yes','2',True):
             with self.assertRaises(RuntimeError):p.game_environment(original,'/wine',invalid)
+    def test_benchmark_marker_reaches_only_the_game_and_changes_nothing_else(self):
+        marker='0F3C9A1E-6B2D-4C8E-9F10-A1B2C3D4E5F6';original={'WINEMSYNC':'1','WINEESYNC':'0','D3DM_MTL4':'0','PLAYMELT_BENCHMARK_SESSION':'leaked'}
+        plain=p.game_environment(original,'/wine',None);self.assertNotIn('PLAYMELT_BENCHMARK_SESSION',plain)
+        marked=p.game_environment(original,'/wine',None,benchmark=marker);self.assertEqual(marked.pop('PLAYMELT_BENCHMARK_SESSION'),marker)
+        self.assertEqual(marked,plain,"the marker is the only difference");self.assertEqual(original['PLAYMELT_BENCHMARK_SESSION'],'leaked')
+        for invalid in ('','x','0f3c9a1e-6b2d-4c8e-9f10-a1b2c3d4e5f6',marker+'\nX=1','../'+marker,7):
+            with self.assertRaises(RuntimeError):p.game_environment(original,'/wine',None,benchmark=invalid)
     def test_invalid_hud_is_rejected_before_any_wine_preparation(self):
         with mock.patch.object(sys,'argv',['runner','--run']),mock.patch.dict(os.environ,{'PLAYMELT_METAL_HUD':'invalid'}),mock.patch.object(p,'create_profile') as create:
             with self.assertRaises(RuntimeError):p.main()
@@ -114,6 +121,33 @@ class Tests(unittest.TestCase):
             stack.enter_context(mock.patch.object(p.base,'bounded_shutdown',side_effect=stop));stack.enter_context(mock.patch.object(p,'crash_snapshot',return_value={}));stack.enter_context(mock.patch.object(p,'new_crash',return_value='none'))
             stack.enter_context(mock.patch.object(p.experiment,'main',side_effect=lambda **kw:(calls.append(('game',kw)),0)[1]))
             self.assertEqual(p.main(),0);self.assertEqual(calls,['saves','settings',('game',{'sync_mode':'msync','expected_identity':(None,None)})])
+    def test_run_passes_benchmark_marker_to_the_game_process_only(self):
+        with tempfile.TemporaryDirectory() as tmp,contextlib.ExitStack() as stack:
+            root=Path(tmp).resolve();profile=root/'profile';profile.mkdir();resources=root/'resources';resources.mkdir();game=root/'game';game.mkdir();exe=game/'Spider-Man2.exe';exe.write_bytes(b'MZ')
+            for name in ('m3-private-plan','spiderman-retina-default.exe'):(resources/name).write_bytes(b'fixture')
+            checksum=p.digest(resources/'m3-private-plan');(resources/'spiderman-runtime-hashes.json').write_text(json.dumps(dict.fromkeys(('cas','probe','retina','settings','plan'),checksum)))
+            for name,value in [('PROFILE',profile),('PREFIX',profile/'prefix'),('RESOURCES',resources),('RETINA',resources/'spiderman-retina-default.exe'),('GAME_DIR',game),('GAME',exe)]:stack.enter_context(mock.patch.object(p,name,value))
+            marker='0F3C9A1E-6B2D-4C8E-9F10-A1B2C3D4E5F6';stack.enter_context(mock.patch.dict(os.environ,{'PLAYMELT_BENCHMARK_SESSION':marker}));stack.enter_context(mock.patch.object(sys,'argv',['runner','--run-msync-test']));stack.enter_context(mock.patch.object(sys,'platform','darwin'))
+            stack.enter_context(mock.patch.object(p.subprocess,'run',return_value=mock.Mock(stdout=b'{"wine":"/wine","server":"/server","environment":{"WINEMSYNC":"0","WINEESYNC":"0"}}')))
+            fd=os.open(profile/'lock',os.O_CREAT|os.O_RDWR,0o600);stack.enter_context(mock.patch.object(p,'create_profile',return_value=fd));calls=[]
+            stack.enter_context(mock.patch.object(p,'read_preferences',return_value=None));stack.enter_context(mock.patch.object(p,'apply_preferences'))
+            stack.enter_context(mock.patch.object(p,'seed_saves',side_effect=lambda:calls.append('saves')))
+            stack.enter_context(mock.patch.object(p,'seed_settings',side_effect=lambda *a:calls.append('settings')))
+            stack.enter_context(mock.patch.object(p.reuse,'require_idle_prefix'));stack.enter_context(mock.patch.object(p.tx,'private_environment',return_value={}))
+            stack.enter_context(mock.patch.object(p.base,'Inspector'));stack.enter_context(mock.patch.object(p.base,'reap_child'))
+            stack.enter_context(mock.patch.object(p.base,'run_command',return_value=(mock.Mock(poll=lambda:0),False,False)))
+            def stop(server,env,directory,state):state['shutdown'].update({'-k':{'exit':0},'-w':{'exit':0}})
+            stack.enter_context(mock.patch.object(p.base,'bounded_shutdown',side_effect=stop));stack.enter_context(mock.patch.object(p,'crash_snapshot',return_value={}));stack.enter_context(mock.patch.object(p,'new_crash',return_value='none'))
+            seen=[];stack.enter_context(mock.patch.object(p,'wait_game',side_effect=lambda run,argv,env,*a:(seen.append((argv,env)),0)[1]))
+            def game(**kw):
+                p.base.run_command(['/wine',str(exe)],{'WINEMSYNC':'1'},game,None,None,None,None,None)
+                p.base.run_command(['/server','-k'],{'WINEMSYNC':'1'},game,None,None,None,None,None);return 0
+            stack.enter_context(mock.patch.object(p.experiment,'main',side_effect=game))
+            self.assertEqual(p.main(),0);self.assertEqual(len(seen),1);self.assertEqual(seen[0][1]['PLAYMELT_BENCHMARK_SESSION'],marker);self.assertEqual(seen[0][0],['/wine',str(exe)])
+    def test_invalid_benchmark_marker_is_rejected_before_any_wine_preparation(self):
+        with mock.patch.object(sys,'argv',['runner','--run']),mock.patch.dict(os.environ,{'PLAYMELT_BENCHMARK_SESSION':'bad marker'}),mock.patch.object(p,'create_profile') as create:
+            with self.assertRaises(RuntimeError):p.main()
+            create.assert_not_called()
     def test_bootstrap_only_new_owned_prefix_and_reuse_idempotently(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp).resolve();d3d=root/'D3DMetal';d3d.mkdir(mode=0o700)

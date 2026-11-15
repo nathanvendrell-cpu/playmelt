@@ -548,9 +548,20 @@ def wait_game(original,argv,env,directory,log,timeout,inspector,marker,seen,extr
     finally:sel.close()
 
 
-def game_environment(env,wine,hud,backend='auto'):
+BENCHMARK_SESSION=re.compile(r'[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}')
+def benchmark_session(value):
+    # Playmelt's own UUID only: the marker lets session_benchmark.py find this
+    # exact game process. It changes no Wine, D3DMetal or game setting.
+    if value is None:return None
+    if not isinstance(value,str) or BENCHMARK_SESSION.fullmatch(value) is None:raise RuntimeError('invalid PLAYMELT_BENCHMARK_SESSION')
+    return value
+
+def game_environment(env,wine,hud,backend='auto',benchmark=None):
     if hud not in (None,'0','1'):raise RuntimeError('invalid PLAYMELT_METAL_HUD; expected 0 or 1')
+    benchmark=benchmark_session(benchmark)
     selected=dict(env);selected['PLAYMELT_WINE_EXECUTABLE']=wine
+    selected.pop('PLAYMELT_BENCHMARK_SESSION',None)
+    if benchmark is not None:selected['PLAYMELT_BENCHMARK_SESSION']=benchmark
     for key in ('MTL_HUD_ENABLED','MTL_HUD_LOG_ENABLED'):selected.pop(key,None)
     if hud=='1':selected.update(MTL_HUD_ENABLED='1',MTL_HUD_LOG_ENABLED='1')
     selected['D3DM_MTL4']='1'
@@ -581,6 +592,7 @@ def main():
     if mode is None:return 64
     hud=os.environ.get('PLAYMELT_METAL_HUD')
     if hud not in (None,'0','1'):raise RuntimeError('invalid PLAYMELT_METAL_HUD; expected 0 or 1')
+    benchmark=benchmark_session(os.environ.get('PLAYMELT_BENCHMARK_SESSION'))
     if sys.platform!='darwin':raise RuntimeError('macOS required')
     if GAME_DIR.resolve()!=GAME_DIR or not base.valid_executable(GAME):raise RuntimeError('game executable missing or invalid')
     manifest=json.loads((RESOURCES/'spiderman-runtime-hashes.json').read_text())
@@ -618,7 +630,7 @@ def main():
         def run_adapter(argv,env,directory,log,timeout,inspector,marker,seen):
             if argv==[plan['wine'],str(GAME)]:
                 pref_backend=preferences[0]['settings'].get('backend','auto') if preferences else 'auto'
-                env=game_environment(env,plan['wine'],hud,backend=pref_backend)
+                env=game_environment(env,plan['wine'],hud,backend=pref_backend,benchmark=benchmark)
                 return wait_game(old_run,argv,env,directory,log,timeout,inspector,marker,seen,preferences[1] if preferences else ())
             return old_run(argv,env,directory,log,timeout,inspector,marker,seen)
         def shutdown_adapter(server,env,directory,state):
