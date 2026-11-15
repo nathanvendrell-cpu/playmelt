@@ -642,7 +642,7 @@ enum SteamGameLaunchProfile {
     }
     // The open beta has a distinct Steam app ID; it must retain the same DX12
     // requirement as the retail game instead of falling through to DX11.
-    private static let directX12Games: Set<String> = ["1783560", "2584270", "4711740", "2651280", "1903340"]
+    private static let directX12Games: Set<String> = ["1783560", "2584270", "4711740", "2651280", "1903340", "1449560"] // 1449560 : Metro Exodus Enhanced Edition, DX12 + ray tracing obligatoire
     static func requiredRenderer(appID: String) -> String {
         let lower = appID.lowercased()
         if directX12Games.contains(appID) || lower.contains("rebirth") || lower.contains("catnip") || lower.contains("spiderman") { return "d3dmetal" }

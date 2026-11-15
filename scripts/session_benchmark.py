@@ -136,6 +136,11 @@ def main():
             current = select()
             if current and identity_key(candidate) != identity_key(current):
                 # A launcher stub handed over to the game process: confirm the new one is stable.
+                # Names only (no PID or full path) so the next empty capture can be explained.
+                report['handOver'] = {'samePid': candidate['pid'] == current['pid'],
+                                      'from': Path(candidate.get('path', '')).name,
+                                      'to': Path(current.get('path', '')).name,
+                                      'kind': inspector.kinds.get(current['pid'])}
                 candidate = current
                 time.sleep(10)
                 current = select()
@@ -146,11 +151,15 @@ def main():
                 capture.mkdir(mode=0o700)
                 receipt = run_capture(candidate['pid'], candidate['path'], 30, capture,
                                       inspector=inspector, listener_new_session=False)
+                hand_over = report.get('handOver')
                 if receipt['status'] == 'captured':
                     report = analyze((capture/'raw.ndjson').read_bytes(), candidate['pid'])
                     report['status'] = 'measured'
                 else:
                     report['reason'] = receipt['reason']
+                    report['transport'] = receipt.get('transport')
+                if hand_over:
+                    report['handOver'] = hand_over
     except KeyboardInterrupt:
         report['reason'] = 'cancelled'
     except (OSError, ValueError, RuntimeError) as error:
