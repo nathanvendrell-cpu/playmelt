@@ -44,7 +44,8 @@ final class Benchmarks {
         queue.async { [weak self] in
             guard let self else {return}
             var request=OwnedProcessRequest(executable:python.pythonURL,arguments:["-B",script.path,"--session",session,"--executable",target.appendingPathComponent(relative).path,"--output",directory.path],environment:python.environment(merging:ProcessInfo.processInfo.environment))
-            request.timeout=180;request.outputLimit=4096;request.terminationGracePeriod=7
+            // Whole session (bounded to 4 h by the script) + macOS Metal record collection.
+            request.timeout=4*3600+900;request.outputLimit=4096;request.terminationGracePeriod=7
             _ = try? OwnedProcessRunner().run(request,cancelled:{token.isCancelled})
             DispatchQueue.main.async { self.active=nil;self.activeDirectory=nil;self.onChange?();self.group.leave() }
         }

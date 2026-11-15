@@ -4,7 +4,10 @@ import struct
 import sys
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from session_benchmark import arguments, target_argument, target_match, choose
+import json
+import subprocess
+import tempfile
+from session_benchmark import arguments, target_argument, target_match, choose, summarize, collect, overview_of
 
 class LauncherHandOverTests(unittest.TestCase):
     stub=Path('/games/FF7/ff7rebirth.exe')
@@ -41,4 +44,55 @@ class Tests(unittest.TestCase):
         self.assertIsNone(choose([{**row,'uid':os.geteuid()+1}]))
         self.assertIsNone(choose([{**row,'status':5}]))
         self.assertIsNone(choose([{**row,'path':'/usr/bin/python3'}]))
+def interval(start, frames, gpu=20.0, worst=25.0, active=1.0):
+    return {'Start MCT Seconds': start, 'Time Active (sec)': active,
+            'Presented Frame Stats': {'Frame Count': frames, 'On-GPU Walltime Stats': {'Average (ms)': gpu}},
+            'Frame-On-Glass Interval Stats': {'Max (ms)': worst}}
+
+def layer(rows, configs):
+    return {'Stats Timeline': rows, 'Configuration Timeline': [
+        {'Start MCT Seconds': a, 'End MCT Seconds': b, 'Width (pixels)': w, 'Height (pixels)': h} for a, b, w, h in configs]}
+
+class CollectSummaryTests(unittest.TestCase):
+    def test_session_groups_minutes_and_spikes(self):
+        rows = [interval(100+i, 120, gpu=5, worst=9) for i in range(20)] + \
+               [interval(120+i, 35, gpu=28, worst=(175 if i == 3 else 30)) for i in range(70)]
+        game = {'PID': 7, 'Process': 'wine', 'Layers': [layer(rows, [(100, 120, 1728, 1084), (120, 190, 2560, 1600)])]}
+        other = {'PID': 99, 'Process': 'Safari', 'Layers': [layer([interval(100, 500)], [(100, 101, 800, 600)])]}
+        r = summarize([game, other], {7})
+        self.assertEqual(r['status'], 'measured')
+        self.assertEqual([(g['width'], g['presentedFPS']) for g in r['groups']], [(1728, 120.0), (2560, 35.0)])
+        self.assertEqual(r['groups'][1]['gpuMs'], 28.0)
+        self.assertEqual(r['groups'][1]['spikeSeconds'], 1)
+        self.assertEqual(r['groups'][1]['worstFrameMs'], 175.0)
+        self.assertEqual(r['session']['frames'], 20*120+70*35)
+        self.assertEqual([m['minute'] for m in r['minutes']], [0, 1])
+    def test_foreign_processes_and_empty_layers_are_never_measured(self):
+        other = {'PID': 99, 'Layers': [layer([interval(1, 60)], [(0, 9, 800, 600)])]}
+        idle = {'PID': 7, 'Layers': [layer([interval(1, 0)], [(0, 9, 800, 600)])]}
+        self.assertEqual(summarize([other, idle], {7})['reason'], 'no_frames_for_session')
+    def test_largest_layer_of_the_session_is_the_game(self):
+        small = layer([interval(1, 5)], [(0, 99, 640, 480)])
+        big = layer([interval(1+i, 60) for i in range(30)], [(0, 99, 1920, 1080)])
+        r = summarize({'PID': 7, 'Layers': [small, big]}, {7})
+        self.assertEqual(r['groups'][0]['width'], 1920)
+    def test_collect_and_overview_commands_are_bounded_and_scoped(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)/'capture'
+            def run(argv, **kw):
+                calls.append(argv)
+                self.assertTrue(kw['check']); self.assertLessEqual(kw['timeout'], 600)
+                if argv[1] == 'collect':
+                    return subprocess.CompletedProcess(argv, 0, json.dumps({'traces': [str(out/'t.atrc')]}).encode())
+                return subprocess.CompletedProcess(argv, 0, b'[]')
+            trace = collect(1000.4, 1600.2, out, run=run)
+            self.assertEqual(calls[0][:6], ['/usr/bin/metalperftrace', 'collect', '--start', '@1000', '--end', '@1601'])
+            self.assertEqual(overview_of(trace, {12, 3}, run=run), [])
+            self.assertEqual(calls[1][calls[1].index('--predicate')+1], 'pid IN {3,12}')
+            def foreign(argv, **kw):
+                return subprocess.CompletedProcess(argv, 0, json.dumps({'traces': ['/tmp/elsewhere.atrc']}).encode())
+            with self.assertRaises(RuntimeError):
+                collect(1, 2, Path(tmp)/'second', run=foreign)
+
 if __name__=='__main__':unittest.main()

@@ -2886,6 +2886,13 @@
       .view-subtitle { gap: 10px !important; }
       .view-subtitle .meta-sep::before { margin-right: 0 !important; }
       .toolbar { flex-shrink: 0; }
+    
+      /* Game in front: Playmelt idles (see gameSessionChanged). */
+      html.game-active *, html.game-active *::before, html.game-active *::after {
+        animation-play-state: paused !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+      }
     </style>
     <link rel="stylesheet" href="Experience.css" />
     <link rel="stylesheet" href="PlatformThemes.css" />
@@ -7590,8 +7597,19 @@
               result.ok === false,
             );
         };
+        // While a game runs, Playmelt stays behind it: its looping animations and
+        // backdrop blurs would keep spending GPU time the game needs. Keyed by title
+        // because start and exit notifications do not always share the same id.
+        const activeGameSessions = new Set();
+        function gameSessionChanged(payload, root = document.documentElement) {
+          const key = String(payload.title);
+          if (payload.state === "ended" || payload.state === "failed") activeGameSessions.delete(key);
+          else if (["preparing", "running", "stalled"].includes(payload.state)) activeGameSessions.add(key);
+          root.classList.toggle("game-active", activeGameSessions.size > 0);
+        }
         window.onLaunchProgress = (payload) => {
           if (!payload || !payload.title) return;
+          gameSessionChanged(payload);
           const elapsed = Math.max(0, Number(payload.elapsed) || 0);
           const clock =
             Math.floor(elapsed / 60) + ":" + String(elapsed % 60).padStart(2, "0");
