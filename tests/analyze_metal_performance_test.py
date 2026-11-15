@@ -50,6 +50,19 @@ class Tests(unittest.TestCase):
         with self.assertRaises(ValueError): m.analyze(stream(sample(config=False)), 123)
         with self.assertRaises(ValueError): m.analyze(b'{"PID":123', 123)
 
+    def test_leading_unconfigured_warmup_is_excluded_not_fatal(self):
+        result = m.analyze(stream(sample(0,1,frames=104,config=False), sample(1,2,frames=60,config=False),
+                                  sample(2,3,frames=120), sample(3,4,frames=120)), 123)
+        group = result['groups'][0]
+        self.assertEqual(group['presentedFrames'], 240)
+        self.assertEqual(group['windows'], 2)
+        self.assertEqual(result['skippedWarmupUnknownConfigWindows'], 2)
+        self.assertEqual(result['skippedWarmupUnknownConfigFrames'], 164)
+
+    def test_configuration_lost_after_warmup_is_rejected(self):
+        with self.assertRaises(ValueError):
+            m.analyze(stream(sample(0,1,frames=60,config=False), sample(1,2), sample(2,3,config=False)), 123)
+
     def test_weighted_values_reject_inconsistent_total(self):
         obj = sample()
         obj['Layers'][0]['Performance Stats']['Presented Frame Stats']['On-GPU Walltime Stats']['Total (ms)'] = 1

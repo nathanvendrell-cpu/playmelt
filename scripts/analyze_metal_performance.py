@@ -48,6 +48,8 @@ def analyze(data, pid):
     groups = {}
     skipped_empty_unknown = 0
     skipped_empty_known = 0
+    warmup_windows = 0
+    warmup_frames = 0
     objects = 0
     process_name = None
     while True:
@@ -89,6 +91,13 @@ def analyze(data, pid):
                 if config is None: skipped_empty_unknown += 1
                 else: skipped_empty_known += 1
                 continue
+            if config is None and not groups:
+                # Start-up warm-up: the compositor reports presented frames
+                # before the layer configuration. Only intervals preceding the
+                # first configured window are excluded; a configuration that
+                # disappears later still invalidates the capture.
+                warmup_windows += 1; warmup_frames += count
+                continue
             if type(config) is not dict or not isinstance(config.get('Name'), str) or not config['Name']:
                 raise ValueError('active interval has unknown configuration')
             width = number(config.get('Width (pixels)'), 'width', integer=True)
@@ -116,7 +125,9 @@ def analyze(data, pid):
     if not output: raise ValueError('no active windows with known configuration')
     return {'status': 'analyzed', 'sourceSHA256': hashlib.sha256(data).hexdigest(),
             'pid': pid, 'objects': objects, 'skippedZeroFramesUnknownConfig': skipped_empty_unknown,
-            'skippedZeroFramesKnownConfig': skipped_empty_known, 'groups': output,
+            'skippedZeroFramesKnownConfig': skipped_empty_known,
+            'skippedWarmupUnknownConfigWindows': warmup_windows,
+            'skippedWarmupUnknownConfigFrames': warmup_frames, 'groups': output,
             'limitations': ['Per-window aggregate, not per-frame P95.',
                             'GPU walltime is command-buffer timing, not GPU utilization.',
                             'Presented frame count does not establish generated-frame count.',

@@ -7,6 +7,7 @@ import argparse
 import ctypes
 import json
 import os
+import posixpath
 from pathlib import Path
 import signal
 import struct
@@ -30,22 +31,40 @@ def arguments(data):
     return [os.fsdecode(x) for x in tail.split(b'\0')[:count]]
 
 
-def target_argument(argv, executable):
+def _normal_argument(value):
+    normal = value.replace('\\', '/').casefold()
+    if normal.startswith('z:/'):
+        normal = normal[2:]
+    return normal
+
+
+def target_match(argv, executable):
+    """'exact' for the launched executable, 'child' for an absolute .exe inside
+    its directory tree (Unreal stubs start <Project>/Binaries/Win64/*-Shipping.exe),
+    otherwise None. Basename matching stays refused: it is ambiguous."""
     expected = str(executable).replace('\\', '/').casefold()
+    root = posixpath.dirname(expected).rstrip('/') + '/'
+    child = False
     for value in argv:
-        normal = value.replace('\\', '/').casefold()
-        if normal.startswith('z:/'):
-            normal = normal[2:]
-        # Accept absolute Unix/Wine-Z paths only; basename matching is ambiguous.
+        normal = _normal_argument(value)
         if normal == expected:
-            return True
-    return False
+            return 'exact'
+        if normal.startswith('/') and normal.endswith('.exe') and root != '/':
+            resolved = posixpath.normpath(normal)
+            if resolved == normal and resolved.startswith(root):
+                child = True
+    return 'child' if child else None
+
+
+def target_argument(argv, executable):
+    return target_match(argv, executable) == 'exact'
 
 
 class SessionInspector(Inspector):
     def __init__(self, executable):
         super().__init__()
         self.executable = executable
+        self.kinds = {}
 
     def marker(self, pid, marker, buffer=None):
         buf = buffer if buffer is not None else ctypes.create_string_buffer(1024*1024)
@@ -54,13 +73,28 @@ class SessionInspector(Inspector):
         if self.lib.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) != 0:
             return None
         data = ctypes.string_at(buf, size.value)
-        return ('PLAYMELT_BENCHMARK_SESSION='+marker).encode() in data.split(b'\0') and target_argument(arguments(data), self.executable)
+        if ('PLAYMELT_BENCHMARK_SESSION='+marker).encode() not in data.split(b'\0'):
+            return False
+        kind = target_match(arguments(data), self.executable)
+        if kind is None:
+            return False
+        self.kinds[pid] = kind
+        return True
 
 
-def choose(items):
-    candidates = [x for x in items if x.get('uid') == os.geteuid() and x.get('status') != 5
-                  and 'wine' in Path(x.get('path', '')).name.lower()]
-    return candidates[0] if len(candidates) == 1 else None
+def candidates_of(items):
+    return [x for x in items if x.get('uid') == os.geteuid() and x.get('status') != 5
+            and 'wine' in Path(x.get('path', '')).name.lower()]
+
+
+def choose(items, kinds=None):
+    candidates = candidates_of(items)
+    if len(candidates) == 1:
+        return candidates[0]
+    # A launcher stub and the game it started both carry the session marker:
+    # the single process running a child executable of the game is the renderer.
+    children = [x for x in candidates if (kinds or {}).get(x.get('pid')) == 'child']
+    return children[0] if len(children) == 1 else None
 
 
 def main():
@@ -79,18 +113,32 @@ def main():
         raise KeyboardInterrupt()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, interrupt)
+    def select():
+        inspector.kinds = {}
+        found = inspector.snapshot(args.session)[0]
+        chosen = choose(found, inspector.kinds)
+        if not chosen and len(candidates_of(found)) > 1:
+            report['reason'] = 'target_ambiguous'
+        return chosen
     try:
-        deadline = time.monotonic()+120
+        # Total stays below the 180 s owner timeout in Benchmarks.swift:
+        # 110 discovery + 15 settle + 10 hand-over + 30 capture.
+        deadline = time.monotonic()+110
         candidate = None
         while time.monotonic() < deadline:
-            candidate = choose(inspector.snapshot(args.session)[0])
+            candidate = select()
             if candidate:
                 break
             time.sleep(1)
         if candidate:
             # Let the loading screen settle; this remains a session sample, not a certified scene.
             time.sleep(15)
-            current = choose(inspector.snapshot(args.session)[0])
+            current = select()
+            if current and identity_key(candidate) != identity_key(current):
+                # A launcher stub handed over to the game process: confirm the new one is stable.
+                candidate = current
+                time.sleep(10)
+                current = select()
             if not current or identity_key(candidate) != identity_key(current):
                 report['reason'] = 'target_changed'
             else:
