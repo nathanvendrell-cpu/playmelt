@@ -26,22 +26,51 @@ final class SteamArtworkHandler: NSObject, WKURLSchemeHandler {
         }
     }
     static func appID(_ url: URL) -> String? {
-        guard url.scheme == "metalmaxart", url.host == "steam", url.query == nil, url.fragment == nil,
+        guard url.scheme == "metalmaxart", (url.host == "steam" || url.host == "gog"), url.query == nil, url.fragment == nil,
               url.user == nil, url.password == nil, url.port == nil,
               url.pathComponents.count == 2 || (url.pathComponents.count == 3 && url.lastPathComponent == "portrait") else { return nil }
         let id = url.pathComponents[1]
-        return LibraryModel.validAppID(id) ? id : nil
+        if url.host == "steam" { return LibraryModel.validAppID(id) ? id : nil }
+        if url.host == "gog" { return GOGConnector.validID(id) ? id : nil }
+        return nil
+    }
+    static func gogCandidateFiles(appID: String, portrait: Bool) -> [URL] {
+        let base = URL(fileURLWithPath: "/Users/Shared/GOG.com/Galaxy/WebCache")
+        guard let users = try? FileManager.default.contentsOfDirectory(at: base, includingPropertiesForKeys: nil) else { return [] }
+        var result: [URL] = []
+        for user in users {
+            let gameDir = user.appendingPathComponent("gog/\(appID)")
+            guard let items = try? FileManager.default.contentsOfDirectory(at: gameDir, includingPropertiesForKeys: nil) else { continue }
+            for item in items where ["webp", "jpg", "jpeg", "png"].contains(item.pathExtension.lowercased()) {
+                let name = item.lastPathComponent.lowercased()
+                if portrait {
+                    if name.contains("vertical_cover") || name.contains("cover") || name.contains("square_icon") {
+                        result.append(item)
+                    }
+                } else {
+                    if name.contains("bg_top_padding") || name.contains("horizontal") || name.contains("background") {
+                        result.append(item)
+                    }
+                }
+            }
+        }
+        return result
     }
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
-        guard let url = urlSchemeTask.request.url, let id = Self.appID(url), let model = handler?.model,
-              model.games.contains(where: { $0.store == "steam" && $0.appId == id }) else {
+        guard let url = urlSchemeTask.request.url, let host = url.host, let id = Self.appID(url), let model = handler?.model,
+              model.games.contains(where: { $0.store == host && $0.appId == id }) else {
             urlSchemeTask.didFailWithError(URLError(.badURL)); return
         }
         let key = ObjectIdentifier(urlSchemeTask as AnyObject), token = UUID()
         tasks[key] = token
-        let files = model.runtimes.flatMap { runtime -> [URL] in
-            let root = runtime.steamRoot.appendingPathComponent("appcache/librarycache").resolvingSymlinksInPath()
-            return Self.candidateFiles(root: root, appID: id, info: model.metadata[id], portrait: url.lastPathComponent == "portrait")
+        let files: [URL]
+        if host == "gog" {
+            files = Self.gogCandidateFiles(appID: id, portrait: url.lastPathComponent == "portrait")
+        } else {
+            files = model.runtimes.flatMap { runtime -> [URL] in
+                let root = runtime.steamRoot.appendingPathComponent("appcache/librarycache").resolvingSymlinksInPath()
+                return Self.candidateFiles(root: root, appID: id, info: model.metadata[id], portrait: url.lastPathComponent == "portrait")
+            }
         }
         ioQueue.async { [weak self] in
             guard let self else { return }
@@ -441,6 +470,9 @@ final class XboxCloudWindowController: NSObject, WKNavigationDelegate, WKUIDeleg
     var authorizeLaunch:((@escaping(Bool,String)->Void)->Void)?
     var requiresController:((URL)->Bool)?
     var onRecentGames:(([String],XboxRecentGames.Evidence)->Void)?
+    var onStreamCompleted:((Int64,String?)->Void)?
+    private var streamStartTime:Date?
+    private var currentStreamId:String?
     var isVisible:Bool {panel?.superview != nil}
     static let shared = XboxCloudWindowController()
     private var panel: NSView?
@@ -521,6 +553,13 @@ final class XboxCloudWindowController: NSObject, WKNavigationDelegate, WKUIDeleg
         wv.load(URLRequest(url: url)); localView.window?.makeFirstResponder(wv)
     }
     @objc func closePanel() {
+        if let start = streamStartTime {
+            let elapsed = Int64(Date().timeIntervalSince(start))
+            if elapsed > 5 {
+                onStreamCompleted?(elapsed, currentStreamId)
+            }
+            streamStartTime = nil; currentStreamId = nil
+        }
         // Destroy the player to release video/audio and controllers; cookies remain in WebKit.
         webView?.stopLoading(); webView?.navigationDelegate = nil; webView?.uiDelegate = nil
         webView?.configuration.userContentController.removeScriptMessageHandler(forName:"playmeltXboxPlayback")
@@ -558,6 +597,10 @@ final class XboxCloudWindowController: NSObject, WKNavigationDelegate, WKUIDeleg
               let raw=body["evidence"] as? String,let evidence=XboxRecentGames.Evidence(rawValue:raw),
               let ids=body["ids"] as? [String],ids.count<=20,
               ids.allSatisfy(XboxRecentGames.validID) else{return}
+        if evidence == .videoPlayback {
+            if streamStartTime == nil { streamStartTime = Date() }
+            if let first = ids.first { currentStreamId = first }
+        }
         onRecentGames?(ids,evidence)
     }
 
@@ -738,6 +781,123 @@ final class AchievementToastWindowController {
     }
 }
 
+enum UnifiedBrowserSessionManager {
+    static let unifiedStoreIdentifier = UUID(uuidString: "8BCDA5D0-5533-4672-A758-B265EF735D87")!
+    static let steamStoreIdentifier = UUID(uuidString: "A62964C7-E373-4D82-B3C4-D890A23E2280")!
+    static let sharedStore = WKWebsiteDataStore(forIdentifier: unifiedStoreIdentifier)
+
+    static func synchronizeAllSessions(completion: (() -> Void)? = nil) {
+        let steamStore = WKWebsiteDataStore(forIdentifier: steamStoreIdentifier)
+        let unified = sharedStore
+        let def = WKWebsiteDataStore.default()
+
+        steamStore.httpCookieStore.getAllCookies { steamCookies in
+            for cookie in steamCookies {
+                unified.httpCookieStore.setCookie(cookie)
+                def.httpCookieStore.setCookie(cookie)
+                let name = cookie.name
+                if ["steamLoginSecure", "browserid", "sessionid", "steamCountry", "timezoneOffset"].contains(name) {
+                    var props = cookie.properties ?? [:]
+                    props[.domain] = ".steampowered.com"
+                    props[.originURL] = URL(string: "https://store.steampowered.com/")
+                    if let cloned = HTTPCookie(properties: props) {
+                        unified.httpCookieStore.setCookie(cloned)
+                        def.httpCookieStore.setCookie(cloned)
+                    }
+                    var propsStore = cookie.properties ?? [:]
+                    propsStore[.domain] = "store.steampowered.com"
+                    propsStore[.originURL] = URL(string: "https://store.steampowered.com/")
+                    if let clonedStore = HTTPCookie(properties: propsStore) {
+                        unified.httpCookieStore.setCookie(clonedStore)
+                        def.httpCookieStore.setCookie(clonedStore)
+                    }
+                }
+            }
+            unified.httpCookieStore.getAllCookies { unifiedCookies in
+                for cookie in unifiedCookies {
+                    def.httpCookieStore.setCookie(cookie)
+                }
+                def.httpCookieStore.getAllCookies { defCookies in
+                    for cookie in defCookies {
+                        unified.httpCookieStore.setCookie(cookie)
+                    }
+                    completion?()
+                }
+            }
+        }
+    }
+}
+
+enum AmazonGamesPlatform {
+    static func appExecutable(runtime: RuntimeSetup) -> URL? {
+        let prefix = runtime.descriptor().prefixURL
+        let username = NSUserName()
+        let app = prefix.appendingPathComponent("drive_c/users/\(username)/AppData/Local/Amazon Games/App/Amazon Games.exe")
+        if FileManager.default.fileExists(atPath: app.path) { return app }
+        let fallback = prefix.appendingPathComponent("drive_c/Program Files (x86)/Amazon Games/Amazon Games.exe")
+        if FileManager.default.fileExists(atPath: fallback.path) { return fallback }
+        return nil
+    }
+    static func installerExecutable() -> URL? {
+        let downloads = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads/AmazonGamesSetup.exe")
+        if FileManager.default.fileExists(atPath: downloads.path) { return downloads }
+        return nil
+    }
+    static func availability(runtime: RuntimeSetup) -> [String: Any] {
+        let app = appExecutable(runtime: runtime)
+        let installed = app != nil
+        let installer = installerExecutable()
+        return [
+            "installed": installed,
+            "executablePath": app?.path ?? "",
+            "installerAvailable": installer != nil,
+            "installerPath": installer?.path ?? "",
+            "status": installed ? "ready" : (installer != nil ? "installer-available" : "unavailable"),
+            "message": installed ? "Amazon Games PC est installé dans l'environnement Windows." : (installer != nil ? "Installateur Amazon Games détecté dans Téléchargements." : "Amazon Games non installé. Luna disponible en cloud.")
+        ]
+    }
+    static func launch(runtime: RuntimeSetup, completion: @escaping (Bool, String) -> Void) {
+        let desc = runtime.descriptor()
+        guard let app = appExecutable(runtime: runtime), desc.readyEngine else {
+            completion(false, "Amazon Games n'est pas encore installé ou le moteur Windows n'est pas prêt.")
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = desc.wineURL
+            p.arguments = [app.path]
+            p.currentDirectoryURL = desc.prefixURL
+            p.environment = desc.environment
+            do {
+                try p.run()
+                DispatchQueue.main.async { completion(true, "Lancement d'Amazon Games…") }
+            } catch {
+                DispatchQueue.main.async { completion(false, "Échec du lancement : \(error.localizedDescription)") }
+            }
+        }
+    }
+    static func install(runtime: RuntimeSetup, completion: @escaping (Bool, String) -> Void) {
+        let desc = runtime.descriptor()
+        guard let installer = installerExecutable(), desc.readyEngine else {
+            completion(false, "Installateur AmazonGamesSetup.exe introuvable dans Téléchargements ou moteur Windows non prêt.")
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = desc.wineURL
+            p.arguments = [installer.path]
+            p.currentDirectoryURL = desc.prefixURL
+            p.environment = desc.environment
+            do {
+                try p.run()
+                DispatchQueue.main.async { completion(true, "Installation d'Amazon Games lancée.") }
+            } catch {
+                DispatchQueue.main.async { completion(false, "Échec du lancement de l'installateur : \(error.localizedDescription)") }
+            }
+        }
+    }
+}
+
 final class ScriptHandler: NSObject, WKScriptMessageHandler {
     weak var webView: WKWebView?
     let model = LibraryModel()
@@ -843,6 +1003,11 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             guard let self,!self.closing else{done(false,"Playmelt indisponible.");return}
             self.accountService.authorize(done)
         }
+        hubBrowser.onGeForceSessionCompleted = { [weak self] seconds in
+            GeForceUsageStore.shared.recordSession(seconds: seconds)
+            guard let self, !self.closing else { return }
+            self.notify("onGeForceUsage", GeForceUsageStore.shared.currentUsage())
+        }
         accountService.onChange = { [weak self] in self?.sendState() }
         accountService.onGoogleSignInEnded = { [weak self] in self?.accountWebAuthentication.cancel() }
         XboxCloudWindowController.shared.requiresController = { [weak self] url in self?.model.xboxConnector.requiresController(for:url) ?? false }
@@ -851,6 +1016,11 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             let known=Set(self.model.games.filter{$0.store=="xbox"}.map(\.appId))
             self.model.xboxConnector.recentGames.record(ids.filter{known.contains($0)},evidence:evidence)
             for index in self.model.games.indices where self.model.games[index].store=="xbox" {self.model.games[index].lastPlayed=self.model.xboxConnector.recentGames.lastPlayed(self.model.games[index].appId)}
+            self.sendState()
+        }
+        XboxCloudWindowController.shared.onStreamCompleted = { [weak self] seconds, gameId in
+            guard let self, !self.closing else { return }
+            self.model.xboxConnector.recordCloudStream(seconds: seconds, gameId: gameId)
             self.sendState()
         }
         if accountService.config.serviceReady {accountService.refresh()}
@@ -875,7 +1045,6 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         model.xboxConnector.onUpdate = { [weak self] in
             DispatchQueue.main.async {
                 self?.sendState()
-                self?.refresh()
             }
         }
         XboxCloudWindowController.shared.onSessionMayHaveChanged = { [weak self] in
@@ -917,7 +1086,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
               webView?.url?.standardizedFileURL == resourceURL.standardizedFileURL,
               let dict = message.body as? [String: Any], let action = dict["action"] as? String else { return }
         print("Playmelt action: \(action)"); fflush(stdout)
-        let duringScan: Set<String> = ["getGameMedia", "playGameVideo", "submitGameIssue", "retryGameIssue", "refreshGameIssues", "connectPlaymelt", "signInPlaymelt", "signInPlaymeltGoogle", "cancelPlaymeltGoogle", "refreshPlaymelt", "disconnectPlaymelt", "openPlaymeltAccount", "savePlayerProfile", "choosePlayerPhoto", "chooseGameAvatar", "getGameTheme", "completeSetup", "setVMInstallPreference", "setAutomaticBenchmarks", "stopBenchmark", "setBigPicture", "refreshHub", "openHubLink", "openXbox", "refresh", "setRenderProtection", "selectAccount", "cancelWindowsRuntime", "cancelD3DMetalRuntime", "cancelInstallAndPlay", "getGameSettings", "saveGameSettings", "checkServices"]
+        let duringScan: Set<String> = ["getGameMedia", "playGameVideo", "submitGameIssue", "retryGameIssue", "refreshGameIssues", "connectPlaymelt", "signInPlaymelt", "signInPlaymeltGoogle", "cancelPlaymeltGoogle", "refreshPlaymelt", "disconnectPlaymelt", "openPlaymeltAccount", "savePlayerProfile", "choosePlayerPhoto", "chooseGameAvatar", "getGameTheme", "completeSetup", "setVMInstallPreference", "setAutomaticBenchmarks", "stopBenchmark", "setBigPicture", "refreshHub", "openHubLink", "openXbox", "openAmazon", "launchAmazonGames", "installAmazonGames", "refresh", "setRenderProtection", "selectAccount", "cancelWindowsRuntime", "cancelD3DMetalRuntime", "cancelInstallAndPlay", "getGameSettings", "saveGameSettings", "checkServices"]
         guard !loading || duringScan.contains(action) else { result(false, "Lecture locale en cours. Réessayez dans un instant."); return }
         guard !RenderProtection.blocks(action, enabled: renderProtectionEnabled) else { result(false, "Rendus en cours : cette action est suspendue."); return }
         guard !WindowsExecutionPolicy.legacyActions.contains(action) else { result(false, WindowsExecutionPolicy.message); return }
@@ -1053,6 +1222,16 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             ConnectedServices.geforceCatalog { [weak self] games in
                 guard let self, !self.closing, !games.isEmpty else { return }
                 self.notify("onGeforceCatalog", ["games": games])
+            }
+            self.notify("onGeForceUsage", GeForceUsageStore.shared.currentUsage())
+        case "setGeForceTier":
+            guard let tier = dict["tier"] as? String, !tier.isEmpty else { return }
+            GeForceUsageStore.shared.setTier(tier)
+            self.notify("onGeForceUsage", GeForceUsageStore.shared.currentUsage())
+        case "recordGeForceUsage":
+            if let seconds = (dict["seconds"] as? NSNumber)?.int64Value {
+                GeForceUsageStore.shared.recordSession(seconds: seconds, title: dict["title"] as? String)
+                self.notify("onGeForceUsage", GeForceUsageStore.shared.currentUsage())
             }
         case "openHubLink":
             guard let raw = dict["url"] as? String, raw.count <= 512, let url = HubFeedStore.allowedLink(raw) else { result(false, "Lien non autorisé."); return }
@@ -1213,6 +1392,30 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         case "openGOG":
             model.gogConnector.openGalaxy { [weak self] ok, msg in
                 DispatchQueue.main.async { self?.result(ok, msg) }
+            }
+        case "openAmazon", "launchAmazonGames":
+            let avail = AmazonGamesPlatform.availability(runtime: runtimeSetup)
+            if avail["installed"] as? Bool == true {
+                AmazonGamesPlatform.launch(runtime: runtimeSetup) { [weak self] ok, msg in
+                    self?.result(ok, msg)
+                }
+            } else if avail["installerAvailable"] as? Bool == true {
+                AmazonGamesPlatform.install(runtime: runtimeSetup) { [weak self] ok, msg in
+                    self?.result(ok, msg)
+                    self?.sendState()
+                }
+            } else {
+                if let url = URL(string: "https://luna.amazon.fr/"), let webView {
+                    hubBrowser.open(url, over: webView)
+                    result(true, "Ouverture d'Amazon Luna…")
+                } else {
+                    result(false, "Amazon Games n'est pas installé.")
+                }
+            }
+        case "installAmazonGames":
+            AmazonGamesPlatform.install(runtime: runtimeSetup) { [weak self] ok, msg in
+                self?.result(ok, msg)
+                self?.sendState()
             }
         case "launchGame", "installGame", "openGameFolder", "uninstallGame":
             guard let id = dict["gameId"] as? String, let game = model.games.first(where: { $0.id == id }) else { result(false, "Jeu non reconnu. Actualisez la bibliothèque."); return }
@@ -1411,7 +1614,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                 guard let id = games[index]["id"] as? String, let game = models[id], game.store == "gog" else { continue }
                 let nativeReady = model.gogConnector.nativeLaunchURL(gameID: id) != nil
                 games[index]["canLaunch"] = nativeReady
-                games[index]["canInstall"] = false
+                games[index]["canInstall"] = !nativeReady
                 games[index]["canInstallAndPlay"] = false
                 games[index]["canRemoveFiles"] = model.gogConnector.verifiedInstallationDirectory(gameID: id) != nil
                 if nativeReady { games[index]["launchBlockReason"] = "" }
@@ -1422,6 +1625,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         state["renderProtectionEnabled"] = renderProtectionEnabled
         if let gameSettingsPayload { state["gameSettings"] = gameSettingsPayload }
         state["plans"] = PlaymeltPlan.catalog()
+        state["amazon"] = AmazonGamesPlatform.availability(runtime: runtimeSetup)
         state["setupSuggested"] = model.games.isEmpty && !UserDefaults.standard.bool(forKey:"playmeltSetupCompleted")
         state["localImport"] = localGameImport.state
         state["vmInstallPreference"] = UserDefaults.standard.bool(forKey:"vmInstallPreference")
@@ -1574,7 +1778,9 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
     func startLaunchWatch(gameID: String, title: String, startedAt: Date) {
         launchWatchTimers[gameID]?.invalidate()
         var announcedWindow = false
-        let timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] timer in
+        // Notification immédiate pour informer l'utilisateur sans délai
+        self.notify("onLaunchProgress", ["gameId": gameID, "title": title, "state": "preparing", "elapsed": 0])
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             guard let self, !self.closing else { timer.invalidate(); return }
             let elapsed = max(0, Int(Date().timeIntervalSince(startedAt)))
             if !announcedWindow, self.gameWindowVisible() {
@@ -1881,6 +2087,10 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                     let started=Date()
                     let exited:(Int32)->Void = { [weak self,authorization] code in
                         authorization.close();guard let self,!self.closing else{return}
+                        if self.stopLaunchWatch(game.appId) {
+                            let state = code == 0 ? "ended" : "failed"
+                            self.notify("onLaunchProgress", ["gameId": game.appId, "title": game.title, "state": state, "elapsed": Int(Date().timeIntervalSince(started)), "code": code])
+                        }
                         self.requestGate.finish(key,token:gate)
                         let seconds=Int64(Date().timeIntervalSince(started));if seconds>2 {PlaytimeStore.shared.addSession(key:game.appId,seconds:seconds)}
                         if code != 0 {self.result(false,"Le jeu Epic s’est arrêté. Aucun paramètre d’authentification n’est ajouté au diagnostic.")}
@@ -1899,6 +2109,7 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                                 _=try self.clientLauncher.launch(executable:parameters.executable,arguments:parameters.arguments+arguments,environment:ProcessInfo.processInfo.environment,directory:parameters.directory,onExit:exited)
                             }
                         }
+                        self.startLaunchWatch(gameID: game.appId, title: game.title, startedAt: started)
                         self.result(true,"Ouverture de \(game.title)…")
                     } catch {authorization.close();self.requestGate.finish(key,token:gate);self.result(false,"Le lanceur Epic n’est pas reconnu ou ne peut pas être ouvert. Aucun ancien profil Legendary n’est utilisé en secours.")}
                 }
@@ -2573,6 +2784,10 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
             return
         }
         if game.store == "gog", !(game.platform == "windows" && game.installSource == "local") {
+            if installing || model.gogConnector.nativeLaunchURL(gameID: game.id) == nil {
+                installGOGGame(game)
+                return
+            }
             launchGOGGame(game)
             return
         }
@@ -2672,7 +2887,8 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
                                               environment: launchEnvironment,
                                               directory: script.deletingLastPathComponent()) { [weak self] code in
                     if self?.stopLaunchWatch(gameKey) == true {
-                        self?.notify("onLaunchProgress", ["gameId": gameKey, "title": game.title, "state": "ended", "elapsed": Int(Date().timeIntervalSince(launchStartTime))])
+                        let state = code == 0 ? "ended" : "failed"
+                        self?.notify("onLaunchProgress", ["gameId": gameKey, "title": game.title, "state": state, "elapsed": Int(Date().timeIntervalSince(launchStartTime)), "code": code])
                     }
                     self?.requestGate.finish(key, token: token)
                     monitorTimer?.invalidate()
@@ -2735,13 +2951,31 @@ final class ScriptHandler: NSObject, WKScriptMessageHandler {
         guard let runtime = validatedSteamRuntime(game, installing: installing, requestedRuntime: requestedRuntime) else { return }
         dispatchSteam(game, runtime: runtime, installing: installing, onFailure: { [weak self] message in self?.result(false, message) }) { [weak self] ok, message in self?.result(ok, message) }
     }
+    func installGOGGame(_ game: Game) {
+        guard !closing, !renderProtectionEnabled, !CommandLine.arguments.contains("--audit-read-only") else {
+            result(false, "Opération suspendue par le mode de protection."); return
+        }
+        let cleanID = game.id.hasPrefix("gog:") ? String(game.id.dropFirst(4)) : game.id
+        guard GOGConnector.validID(cleanID) else {
+            result(false, "Identifiant GOG invalide."); return
+        }
+        model.gogConnector.launch(gameID: game.id) { [weak self] ok, msg in
+            DispatchQueue.main.async {
+                guard let self, !self.closing else { return }
+                if ok {
+                    self.sendToast("Ouverture de \(game.title) dans GOG Galaxy pour lancer l'installation…")
+                    self.result(true, "Ouverture dans GOG Galaxy…")
+                } else {
+                    self.result(false, msg)
+                }
+            }
+        }
+    }
     private func launchGOGGame(_ game: Game) {
         guard !closing, !renderProtectionEnabled, !CommandLine.arguments.contains("--audit-read-only") else { return }
         guard let app = model.gogConnector.nativeLaunchURL(gameID: game.id),
               FileManager.default.fileExists(atPath: app.path) else {
-            notifyInstallJob()
-            let observed = installationJobs.first { $0["store"] as? String == "gog" && $0["gameId"] as? String == game.id }
-            result(false, observed?["message"] as? String ?? "Aucune installation GOG prête n’a été vérifiée pour ce jeu. Actualisez la bibliothèque.")
+            installGOGGame(game)
             return
         }
         let key = "gog-native:" + game.appId
@@ -2851,20 +3085,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let config = WKWebViewConfiguration(); config.userContentController = content; config.websiteDataStore = WKWebsiteDataStore(forIdentifier: UUID(uuidString: "7D3A6B70-D366-4C67-9FE3-0A6FC95DF1AB")!)
         let artwork = SteamArtworkHandler(); artwork.handler = handler; config.setURLSchemeHandler(artwork, forURLScheme: "metalmaxart")
         webView = WKWebView(frame: .zero, configuration: config); webView.navigationDelegate = self
-        webView.setValue(false, forKey: "drawsBackground"); handler.webView = webView
+        webView.setValue(true, forKey: "drawsBackground"); handler.webView = webView
         let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: min(1380, visible.width - 60), height: min(900, visible.height - 60)), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = Bundle.main.bundleIdentifier?.hasSuffix(".preview") == true ? "MetalMax Preview" : "Playmelt"
         // Barre intégrée : le contenu occupe toute la fenêtre, plus de bande transparente sur le bureau.
         window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true; window.titlebarSeparatorStyle = .none
-        window.minSize = NSSize(width: 820, height: 600); window.backgroundColor = .clear; window.isOpaque = false
+        window.minSize = NSSize(width: 820, height: 600)
+        window.backgroundColor = NSColor(red: 0.953, green: 0.961, blue: 0.969, alpha: 1.0)
+        window.isOpaque = true
         window.appearance = NSAppearance(named: .aqua)
-        let backdrop = NSVisualEffectView(); backdrop.material = .underWindowBackground; backdrop.blendingMode = .behindWindow; backdrop.state = .followsWindowActiveState
-        backdrop.addSubview(webView); webView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([webView.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor), webView.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor), webView.topAnchor.constraint(equalTo: backdrop.topAnchor), webView.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor)])
-        let dragStrip = WindowDragStrip(); dragStrip.translatesAutoresizingMaskIntoConstraints = false; backdrop.addSubview(dragStrip)
-        NSLayoutConstraint.activate([dragStrip.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor), dragStrip.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor), dragStrip.topAnchor.constraint(equalTo: backdrop.topAnchor), dragStrip.heightAnchor.constraint(equalToConstant: WindowDragStrip.height)])
-        window.contentView = backdrop; window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor(red: 0.953, green: 0.961, blue: 0.969, alpha: 1.0).cgColor
+        container.addSubview(webView); webView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([webView.leadingAnchor.constraint(equalTo: container.leadingAnchor), webView.trailingAnchor.constraint(equalTo: container.trailingAnchor), webView.topAnchor.constraint(equalTo: container.topAnchor), webView.bottomAnchor.constraint(equalTo: container.bottomAnchor)])
+        let dragStrip = WindowDragStrip(); dragStrip.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(dragStrip)
+        NSLayoutConstraint.activate([dragStrip.leadingAnchor.constraint(equalTo: container.leadingAnchor), dragStrip.trailingAnchor.constraint(equalTo: container.trailingAnchor), dragStrip.topAnchor.constraint(equalTo: container.topAnchor), dragStrip.heightAnchor.constraint(equalToConstant: WindowDragStrip.height)])
+        window.contentView = container; window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        UnifiedBrowserSessionManager.synchronizeAllSessions()
         webView.loadFileURL(resource, allowingReadAccessTo: resource.deletingLastPathComponent())
         handler.autoRestoreEpic()
         handler.refresh()

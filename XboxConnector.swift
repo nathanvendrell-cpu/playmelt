@@ -13,6 +13,54 @@ import GameController
 ///
 /// Account: the Microsoft sign-in happens inside Playmelt's Xbox Cloud window (WKWebView, persistent
 /// default data store). "Connected" is reported only when a Microsoft account session cookie exists.
+/// Suivi de consommation mensuelle du quota Xbox Cloud Gaming (15 heures incluses par mois).
+struct XboxCloudUsage: Codable {
+    struct Session: Codable {
+        let timestamp: Double
+        let durationSeconds: Int64
+        let gameId: String?
+    }
+    var sessions: [Session] = []
+
+    static let monthlyQuotaSeconds: Int64 = 15 * 3600
+
+    static func fileURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        home.appendingPathComponent("Library/Application Support/Playmelt/xbox-cloud-usage.json")
+    }
+
+    static func load(from url: URL) -> XboxCloudUsage {
+        guard let data = try? Data(contentsOf: url),
+              let usage = try? JSONDecoder().decode(XboxCloudUsage.self, from: data) else {
+            return XboxCloudUsage()
+        }
+        return usage
+    }
+
+    func save(to url: URL) {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    func usedSecondsThisMonth(now: Date = Date()) -> Int64 {
+        let calendar = Calendar.current
+        let currentMonth = calendar.component(.month, from: now)
+        let currentYear = calendar.component(.year, from: now)
+        return sessions.filter { session in
+            let date = Date(timeIntervalSince1970: session.timestamp)
+            return calendar.component(.month, from: date) == currentMonth &&
+                   calendar.component(.year, from: date) == currentYear
+        }.reduce(0) { $0 + $1.durationSeconds }
+    }
+
+    func remainingHoursThisMonth(now: Date = Date()) -> Int {
+        let used = usedSecondsThisMonth(now: now)
+        let remaining = max(0, Self.monthlyQuotaSeconds - used)
+        return max(0, Int(ceil(Double(remaining) / 3600.0)))
+    }
+}
+
 final class XboxConnector {
     struct Title: Codable {
         let id: String          // Microsoft Store product ID (BigId), e.g. 9NKX70BBCDRN
@@ -77,8 +125,8 @@ final class XboxConnector {
     static let pcSiglID = "fdd9e2a7-0fee-49f6-ad69-4354098401ff"
     // Official Xbox web client's CloudPlayWithMouseAndKeyboard gallery (observed 12 Nov 2026).
     static let mouseKeyboardSiglID = "3aa7a358-f15b-476b-af7e-134a250c08a0"
-    // Listes officielles « Ajouts récents » du catalogue Game Pass (observées le 13 nov. 2026).
-    static let recentSiglIDs = ["163cdff5-442e-4957-97f5-1050a3546511", "f13cf6b4-57e6-4459-89df-6aec18cf0538"]
+    // Listes officielles « Ajouts récents » du catalogue Game Pass : Cloud en priorité (ordre officiel observé), puis PC/Console.
+    static let recentSiglIDs = ["f13cf6b4-57e6-4459-89df-6aec18cf0538", "163cdff5-442e-4957-97f5-1050a3546511"]
     static let market = "FR", language = "fr-fr"
     private static let cacheLifetime: TimeInterval = 6 * 60 * 60
     private static let failureRetryLifetime: TimeInterval = 15 * 60
@@ -94,6 +142,8 @@ final class XboxConnector {
     private let catalogHTTP: XboxCatalogHTTPClient
     private let now: () -> Date
     private var cookieObserver:XboxCookieObserver?
+    private let usageURL: URL
+    private var cloudUsage: XboxCloudUsage
     let recentGames:XboxRecentGames
 
     /// Called on the main queue when the catalogue or the sign-in state changed.
@@ -105,6 +155,8 @@ final class XboxConnector {
          observeSession:Bool=true) {
         let support = home.appendingPathComponent("Library/Application Support/Playmelt", isDirectory: true)
         cacheURL = support.appendingPathComponent(".xbox_cloud_catalog.json")
+        usageURL = XboxCloudUsage.fileURL(home: home)
+        cloudUsage = XboxCloudUsage.load(from: usageURL)
         self.now=now
         recentGames=XboxRecentGames(url:support.appendingPathComponent("xbox-recent.json"))
         catalogHTTP=XboxCatalogHTTPClient(configuration:catalogConfiguration ?? .ephemeral)
@@ -134,21 +186,32 @@ final class XboxConnector {
 
     // MARK: State
 
+    func recordCloudStream(seconds: Int64, gameId: String? = nil) {
+        guard seconds > 5 else { return }
+        lock.lock(); defer { lock.unlock() }
+        cloudUsage.sessions.append(XboxCloudUsage.Session(timestamp: now().timeIntervalSince1970, durationSeconds: seconds, gameId: gameId))
+        cloudUsage.save(to: usageURL)
+        DispatchQueue.main.async { self.onUpdate?() }
+    }
+
     func availability() -> [String: Any] {
         lock.lock()
         let count = titles.count
         let cloudCount = titles.filter(\.hasCloud).count
         let pcCount = titles.filter(\.hasPC).count
         let busy = fetching, error = lastError, connected = signedIn, date = fetchedAt, attempt = lastAttempt
+        let usedCloud = cloudUsage.usedSecondsThisMonth(now: now())
+        let remainingCloud = max(0, XboxCloudUsage.monthlyQuotaSeconds - usedCloud)
+        let remainingHours = cloudUsage.remainingHoursThisMonth(now: now())
         lock.unlock()
         var message: String
         let stale=count>0 && (!error.isEmpty || date.map{now().timeIntervalSince($0)>Self.cacheLifetime} ?? true)
         if count == 0 {
             message = busy ? "Chargement du catalogue Xbox Game Pass…" : (error.isEmpty ? "Catalogue Xbox non chargé." : error)
         } else if connected {
-            message = "Session Microsoft détectée · \(cloudCount) jeux Cloud & \(pcCount) jeux PC Windows. Abonnement à vérifier dans Xbox."
+            message = "Session Microsoft détectée · \(cloudCount) jeux Cloud & \(pcCount) jeux PC Windows · Quota Cloud : \(remainingHours) h restantes ce mois."
         } else {
-            message = "\(count) jeux Game Pass disponibles (\(cloudCount) Cloud, \(pcCount) PC). Connectez votre compte Microsoft pour jouer."
+            message = "\(count) jeux Game Pass disponibles (\(cloudCount) Cloud, \(pcCount) PC) · Quota Cloud : \(remainingHours) h restantes ce mois. Connectez votre compte Microsoft pour jouer."
         }
         if count>0 && (!error.isEmpty || stale) {
             let lastGood=date.map{ISO8601DateFormatter().string(from:$0)} ?? "date inconnue"
@@ -167,6 +230,10 @@ final class XboxConnector {
             "cloudCount": cloudCount,
             "pcCount": pcCount,
             "catalogCount": count,
+            "monthlyCloudQuotaHours": 15,
+            "usedCloudSeconds": usedCloud,
+            "remainingCloudSeconds": remainingCloud,
+            "remainingCloudHours": remainingHours,
             "busy": busy,
             "updatedAt": date.map { ISO8601DateFormatter().string(from: $0) } ?? "",
             "cloudProvider": "Xbox Cloud Gaming",
@@ -243,8 +310,8 @@ final class XboxConnector {
             let combined=(cloudIds+pcIds).filter{seen.insert($0).inserted}
             var recent:[String:Int]=[:]
             let lists=recentLists.keys.sorted().compactMap{recentLists[$0]}
-            for position in 0..<(lists.map(\.count).max() ?? 0) {
-                for list in lists where position<list.count && recent[list[position]]==nil {recent[list[position]]=recent.count}
+            for list in lists {
+                for id in list where recent[id]==nil {recent[id]=recent.count}
             }
             self.resolve(combined,cloudSet:Set(cloudIds),pcSet:Set(pcIds),mouseKeyboard:mouseKeyboard,recent:recent)
         }

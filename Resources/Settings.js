@@ -5,7 +5,7 @@ const platforms=[
  {id:'epic',name:'Epic Games',action:'connectEpic',detail:'Bibliothèque, jeux offerts et installations'},
  {id:'xbox',name:'Xbox Game Pass',action:'openXbox',detail:'Cloud intégré · catalogue PC Windows'},
  {id:'gog',name:'GOG',action:'openGOG',detail:'Bibliothèque synchronisée avec GOG Galaxy'},
- {id:'amazon',name:'Amazon Games / Luna',url:'https://luna.amazon.fr/',detail:'Compte et cloud'},
+ {id:'amazon',name:'Amazon Games & Luna',url:'https://luna.amazon.fr/',detail:'Application Windows Amazon Games & Cloud Luna'},
  {id:'ea',name:'EA',url:'https://www.ea.com/',detail:'Compte et boutique'},
  {id:'ubisoft',name:'Ubisoft Connect',url:'https://www.ubisoft.com/fr-fr/ubisoft-connect',detail:'Compte et boutique'},
  {id:'battle',name:'Battle.net',url:'https://eu.shop.battle.net/fr-fr',detail:'Compte et boutique'},
@@ -39,7 +39,7 @@ if(selected==='accounts'){
  const heading=el('div','settings-heading');heading.append(el('h2','','Connexions'),button('Assistant de configuration',()=>api.onboard(),'settings-inline-action'));content.append(heading);const search=el('input','settings-search');search.type='search';search.placeholder='Rechercher une plateforme';search.setAttribute('aria-label','Rechercher une plateforme');search.value=query;
  const list=el('div','settings-platforms');content.append(search,list);send('checkServices');
  function draw(){list.replaceChildren();const state=getState(),S=root.PlaymeltServices,active=S.active(state);
- const isOn=p=>p.url?active.includes(p.id):p.id==='steam'?state.libraryStatus?.status==='synced':p.id==='gog'?state.gog?.available===true:state[p.id]?.authenticated===true;
+ const isOn=p=>p.id==='amazon'?(state.amazon?.installed===true||state.services?.amazon===true):p.url?active.includes(p.id):p.id==='steam'?state.libraryStatus?.status==='synced':p.id==='gog'?state.gog?.available===true:state[p.id]?.authenticated===true;
  const shown=platforms.filter(p=>p.name.toLocaleLowerCase('fr').includes(query.toLocaleLowerCase('fr')));
  for(const [title,on] of [['Services détectés',true],['Services à vérifier',false]]){
   const rows=shown.filter(p=>isOn(p)===on);if(!rows.length)continue;
@@ -47,13 +47,20 @@ if(selected==='accounts'){
   for(const p of rows){
    const svc=S.list[p.id],row=el('div','settings-platform'+(on?' is-on':'')),icon=el('div','settings-platform-icon platform-icon-'+p.id);
    icon.innerHTML='<svg aria-hidden="true"><use href="#pf-'+(p.id==='geforce'?'geforce':p.id)+'"/></svg>';if(svc){icon.style.setProperty('--lg-a',svc.a);icon.style.setProperty('--lg-b',svc.b);}
-   const diagnostic=p.id==='epic'?(state.epic?.storageError||state.epic?.message):p.id==='gog'?state.gog?.message:'';
+   const diagnostic=p.id==='epic'?(state.epic?.storageError||state.epic?.message):p.id==='gog'?state.gog?.message:p.id==='amazon'?(state.amazon?.message):'';
    const copy=el('div','settings-platform-copy');copy.append(el('strong','',p.name),el('small','',(svc&&!on?svc.tagline:p.detail)+(diagnostic?' · '+diagnostic:'')));
    const auto=getState().services?.[p.id]===true;
-   const label=on?(p.url?(auto?'Session détectée':'Ajouté'):p.id==='xbox'?'Session détectée':p.id==='gog'?'Cache local':p.id==='epic'?(state.epic?.credentialStorage==='keychain'?'Connecté · Trousseau':'Session temporaire'):'Connecté'):p.url?'Non connecté':p.id==='steam'?'À vérifier':'À connecter';
+   const isAmz=p.id==='amazon';
+   const gfTier=localStorage.getItem('playmelt_geforce_tier')||'performance';
+   const gfLabel=gfTier==='ultimate'?'Ultimate · 100 h':gfTier==='founders'?'Fondateur · Illimité':gfTier==='free'?'Gratuit · 1 h/sess.':'Performance · 100 h';
+   const label=isAmz?(state.amazon?.installed?'Installé (Windows)':state.amazon?.installerAvailable?'Installateur prêt':auto?'Session Luna détectée':'Non installé'):on?(p.id==='geforce'?gfLabel:p.url?(auto?'Session détectée':'Ajouté'):p.id==='xbox'?'Session détectée':p.id==='gog'?'Cache local':p.id==='epic'?(state.epic?.credentialStorage==='keychain'?'Connecté · Trousseau':'Session temporaire'):'Connecté'):p.url?'Non connecté':p.id==='steam'?'À vérifier':'À connecter';
    const status=el('span',on?'session-state connected':'session-state',label);
    const actions=el('div','settings-platform-actions');
-   if(p.url){
+   if(isAmz){
+    if(state.amazon?.installed){actions.append(button('Ouvrir',()=>send('launchAmazonGames'),'settings-row-action'),button('Luna',()=>openLink(svc.url),'settings-inline-action'));}
+    else if(state.amazon?.installerAvailable){actions.append(button('Installer',()=>send('installAmazonGames'),'settings-row-action'),button('Luna',()=>openLink(svc.url),'settings-inline-action'));}
+    else{actions.append(button('Ouvrir Luna',()=>openLink(svc.url),'settings-row-action'));}
+   }else if(p.url){
     if(on){actions.append(button('Ouvrir',()=>openLink(p.url),'settings-row-action'),button('Retirer',()=>{S.remove(p.id);api.onServicesChanged?.();draw();},'settings-inline-action'));}
     else{actions.append(button('Se connecter',()=>{S.read().removed.includes(p.id)&&(S.write({...S.read(),removed:S.read().removed.filter(x=>x!==p.id)}));openLink(p.url);},'settings-row-action'));
      if(svc?.detect==='manual'||S.read().removed.includes(p.id))actions.append(button('Ajouter',()=>{S.add(p.id);api.onServicesChanged?.();draw();},'settings-inline-action'));}

@@ -8,7 +8,7 @@
   }
   function create(api){
     const {el,getState,getFeed,openLink,openGame,artFor,rank}=api;
-    let offerStore='all',offerKind='all',profileLimit=24,profileQuery='',libraryStore='all',libraryQuery='',libraryLimit=48,newsLimit=18;
+    let offerStore='all',offerKind='all',offerQuery='',catalogLimit=48,profileLimit=24,profileQuery='',libraryStore='all',libraryQuery='',libraryLimit=48,newsLimit=18;
     const btn=(text,action,cls='')=>{const b=el('button',cls,text);b.type='button';b.addEventListener('click',action);return b;};
     const glyph=store=>{const g=el('span','pf-glyph-wrap');g.innerHTML='<svg class="pf-glyph" aria-hidden="true"><use href="#pf-'+store+'"/></svg>';return g;};
     const brandChip=(store,cls)=>{const c=el('span',cls+' store-'+store);c.append(glyph(store),el('span','',stores[store]||store));return c;};
@@ -29,23 +29,157 @@
       card.append(copy);return depth(card);
     }
     function renderOffers(pane){
-      pane.replaceChildren();pane.classList.add('discover');const feed=getFeed(),all=offers(feed);
+      pane.replaceChildren();pane.classList.add('discover');
+      const feed=getFeed(),all=offers(feed),state=getState(),games=state.games||[];
+      const headBar=el('div','discover-shop-head');
+      const searchBox=el('div','discover-search-wrap');
+      const searchInput=el('input','discover-search-input');
+      searchInput.type='search';searchInput.placeholder='Rechercher dans la boutique, offres ou jeux…';
+      searchInput.value=offerQuery;
+      let debounceTimer=null;
+      searchInput.addEventListener('input',()=>{
+        clearTimeout(debounceTimer);
+        debounceTimer=setTimeout(()=>{
+          offerQuery=searchInput.value.trim().toLocaleLowerCase('fr');
+          drawOffersContent();
+        },120);
+      });
+      searchBox.append(searchInput);
+      if(offerQuery){const clearBtn=btn('✕',()=>{offerQuery='';searchInput.value='';drawOffersContent();},'discover-search-clear');searchBox.append(clearBtn);}
+      headBar.append(searchBox);pane.append(headBar);
+
       const toolbar=el('div','discover-filters');
-      for(const [key,label]of Object.entries({all:'Toutes les plateformes',...stores}))toolbar.append(btn(label,()=>{offerStore=key;renderOffers(pane);},offerStore===key?'active':''));
+      for(const [key,label]of Object.entries({all:'Toutes les boutiques',...stores,amazon:'Amazon'}))toolbar.append(btn(label,()=>{offerStore=key;renderOffers(pane);},offerStore===key?'active':''));
       pane.append(toolbar);
-      const types=el('div','discover-types');for(const [key,label]of [['all','Tout'],['giveaway','Jeux offerts'],['sale','Promotions']])types.append(btn(label,()=>{offerKind=key;renderOffers(pane);},offerKind===key?'active':''));pane.append(types);
-      const items=all.filter(x=>(offerStore==='all'||x.store===offerStore)&&(offerKind==='all'||x.kind===offerKind));
-      const featured=items.filter(x=>x.kind==='giveaway').slice(0,2);if(featured.length<2&&offerKind!=='giveaway')featured.push(...items.filter(x=>x.kind==='sale').slice(0,2-featured.length));
-      if(featured.length){const hero=el('div','offers-spotlight');featured.forEach(x=>hero.append(offerCard(x,true)));pane.append(hero);}
-      const remaining=items.filter(x=>!featured.includes(x));
-      if(remaining.length){pane.append(el('h2','discover-heading',offerKind==='giveaway'?'À ajouter à ta collection':'Les promotions du moment'));const grid=el('div','offers-grid');remaining.forEach(x=>grid.append(offerCard(x)));pane.append(grid);}
-      if(!items.length)pane.append(el('p','discover-empty',feed?'Aucune offre disponible dans ce filtre pour le moment.':'Chargement des offres…'));
-      const links=el('div','store-links');
-      const urls={steam:'https://store.steampowered.com/specials/',epic:'https://store.epicgames.com/fr/sales-and-specials',gog:'https://www.gog.com/fr/games/discounted',xbox:'https://www.xbox.com/fr-FR/games/browse/game-deals'};
-      for(const [key,label]of Object.entries(stores))if(offerStore==='all'||offerStore===key){const b=btn('',()=>openLink(urls[key]),'store-link store-'+key);b.append(el('b','',label),el('span','',key==='epic'?'Toutes les promotions Epic →':'Toute la sélection →'));links.append(b);}pane.append(links);
-      const unavailable=Object.entries(feed?.offerSources||{}).filter(([,status])=>status==='unavailable').map(([key])=>stores[key]);
-      if(unavailable.length)pane.append(el('p','discover-note',`Flux momentanément indisponible : ${unavailable.join(', ')}. Les boutiques restent consultables ci-dessus.`));
-      if(feed?.fetchedAt)pane.append(el('p','discover-note',`Prix publics en euros · relevés le ${date(feed.fetchedAt)} à ${new Date(feed.fetchedAt*1000).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})} · prix confirmé par la boutique avant achat.`));
+
+      const types=el('div','discover-types');
+      for(const [key,label]of [['all','Toutes les offres'],['giveaway','Jeux offerts'],['sale','Promotions'],['catalog','Tous les jeux des plateformes']]){
+        types.append(btn(label,()=>{offerKind=key;renderOffers(pane);},offerKind===key?'active':''));
+      }
+      pane.append(types);
+
+      const bannersContainer=el('div','banners-container');
+      pane.append(bannersContainer);
+
+      const contentBox=el('div','discover-offers-content');
+      pane.append(contentBox);
+
+      function drawBanners(){
+        bannersContainer.replaceChildren();
+        if(!offerQuery && offerKind!=='catalog'){
+          const storeBanners=el('div','store-banners-row');
+          const storeMeta={
+            steam:{title:'Boutique Steam',desc:'Promotions, meilleures ventes & nouveautés',url:'https://store.steampowered.com/specials/'},
+            epic:{title:'Epic Games Store',desc:'Jeux offerts chaque jeudi & méga promos',url:'https://store.epicgames.com/fr/sales-and-specials'},
+            gog:{title:'Boutique GOG',desc:'Catalogue 100% sans DRM & classiques',url:'https://www.gog.com/fr/games/discounted'},
+            xbox:{title:'Xbox Store & Deals',desc:'Offres Game Pass, PC & Cloud Gaming',url:'https://www.xbox.com/fr-FR/games/browse/game-deals'},
+            amazon:{title:'Amazon Games & Luna',desc:'Jeux Prime Gaming & Cloud Gaming',url:'https://luna.amazon.fr/'}
+          };
+          for(const [key,meta] of Object.entries(storeMeta)){
+            if(offerStore==='all'||offerStore===key){
+              const banner=btn('',()=>openLink(meta.url),'store-hub-banner store-'+key);
+              banner.append(glyph(key));
+              const bCopy=el('div','store-hub-copy');
+              bCopy.append(el('b','',meta.title),el('span','',meta.desc));
+              banner.append(bCopy,el('span','store-hub-arrow','↗'));
+              storeBanners.append(banner);
+            }
+          }
+          bannersContainer.append(storeBanners);
+        }
+      }
+
+      function drawOffersContent(){
+        drawBanners();
+        contentBox.replaceChildren();
+        let items=all.filter(x=>(offerStore==='all'||x.store===offerStore)&&(offerKind==='all'||offerKind==='sale'||offerKind==='giveaway'?(offerKind==='all'||x.kind===offerKind):false));
+        if(offerQuery){items=items.filter(x=>(x.title||'').toLocaleLowerCase('fr').includes(offerQuery));}
+
+        const showCatalog = offerKind === 'catalog' || (offerKind === 'all' && items.length < 8);
+        let platformGames = [];
+        if(showCatalog || offerKind==='catalog'){
+          platformGames = games.filter(g=>(offerStore==='all'||g.store===offerStore));
+          if(offerQuery){platformGames = platformGames.filter(g=>(g.title||'').toLocaleLowerCase('fr').includes(offerQuery));}
+        }
+
+        if(!offerQuery && offerKind!=='catalog'){
+          const featured=items.filter(x=>x.kind==='giveaway').slice(0,2);
+          if(featured.length<2&&offerKind!=='giveaway')featured.push(...items.filter(x=>x.kind==='sale').slice(0,2-featured.length));
+          if(featured.length){const hero=el('div','offers-spotlight');featured.forEach(x=>hero.append(offerCard(x,true)));contentBox.append(hero);}
+          items=items.filter(x=>!featured.includes(x));
+        }
+
+        if(offerKind!=='catalog' && items.length){
+          const giveaways=items.filter(x=>x.kind==='giveaway');
+          if(giveaways.length && offerKind==='all'){
+            contentBox.append(el('h2','discover-heading','Jeux offerts à récupérer'));
+            const gGrid=el('div','offers-grid platform-giveaways');
+            giveaways.forEach(x=>gGrid.append(offerCard(x)));
+            contentBox.append(gGrid);
+            items=items.filter(x=>x.kind!=='giveaway');
+          }
+          if(items.length){
+            contentBox.append(el('h2','discover-heading',offerKind==='giveaway'?'Jeux offerts':'Promotions du moment'));
+            const grid=el('div','offers-grid');
+            items.forEach(x=>grid.append(offerCard(x)));
+            contentBox.append(grid);
+          }
+        }
+
+        if(platformGames.length && (offerKind==='catalog' || showCatalog)){
+          const catHead=el('div','discover-heading-row');
+          catHead.append(
+            el('h2','discover-heading',offerStore==='all'?'Catalogue des jeux de vos plateformes':`Jeux ${stores[offerStore]||offerStore}`),
+            el('span','',`${platformGames.length} titres`)
+          );
+          contentBox.append(catHead);
+
+          const catGrid=el('div','offers-grid catalog-games-grid');
+          platformGames.slice(0,catalogLimit).forEach(g=>{
+            const card=btn('',()=>openGame(g),'offer-card catalog-card');
+            card.append(image([g.portraitImageURL,g.imageURL],'offer-art',g.title));
+            if(g.installed){card.append(el('span','offer-badge is-installed','Installé'));}
+            const copy=el('div','offer-copy');
+            copy.append(brandChip(g.store||'steam','offer-platform-brand'),el('h3','',g.title));
+            const bot=el('div','offer-bottom');
+            bot.append(
+              el('span','catalog-action-text',g.installed?'Jouer':'Voir la fiche'),
+              el('span','offer-arrow',g.installed?'▶':'↗')
+            );
+            copy.append(bot);
+            card.append(copy);
+            catGrid.append(depth(card));
+          });
+          contentBox.append(catGrid);
+
+          if(platformGames.length>catalogLimit){
+            const more=btn('Afficher plus de jeux du catalogue',()=>{
+              catalogLimit+=48;
+              drawOffersContent();
+            },'discover-more');
+            contentBox.append(more);
+          }
+        }
+
+        if(!items.length && !platformGames.length){
+          contentBox.append(el('p','discover-empty',feed?'Aucune offre ou jeu correspondant dans ce filtre.':'Chargement des offres de la boutique…'));
+        }
+
+        const links=el('div','store-links');
+        const urls={steam:'https://store.steampowered.com/specials/',epic:'https://store.epicgames.com/fr/sales-and-specials',gog:'https://www.gog.com/fr/games/discounted',xbox:'https://www.xbox.com/fr-FR/games/browse/game-deals',amazon:'https://luna.amazon.fr/'};
+        for(const [key,label]of Object.entries({...stores,amazon:'Amazon Games'}))if(offerStore==='all'||offerStore===key){
+          const b=btn('',()=>openLink(urls[key]),'store-link store-'+key);
+          b.append(el('b','',label),el('span','',key==='epic'?'Toutes les promotions Epic →':'Toute la sélection →'));
+          links.append(b);
+        }
+        contentBox.append(links);
+
+        const unavailable=Object.entries(feed?.offerSources||{}).filter(([,status])=>status==='unavailable').map(([key])=>stores[key]);
+        if(unavailable.length)contentBox.append(el('p','discover-note',`Flux momentanément indisponible : ${unavailable.join(', ')}. Les boutiques restent consultables ci-dessus.`));
+        if(feed?.fetchedAt)contentBox.append(el('p','discover-note',`Prix publics en euros · relevés le ${date(feed.fetchedAt)} à ${new Date(feed.fetchedAt*1000).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})} · prix confirmé par la boutique avant achat.`));
+      }
+
+      drawOffersContent();
     }
     function newsCard(item,hero=false,options={}){
       const game=(getState().games||[]).find(g=>g.id===item.gameId),a=(options.art&&(options.art.hero||options.art.header)?options.art:null)||getFeed()?.art?.[item.gameId]||(game?art(game):{})||{};
@@ -146,7 +280,10 @@
         hero.classList.add('is-clickable');hero.addEventListener('click',e=>{if(!e.target.closest('button'))openGame(pick);});
       }else copy.append(el('h2','pf-hero-title',stores[store]));
       hero.append(copy);
-      if(store==='xbox')hero.append(el('p','pf-hero-note','Cloud : jouable ici · PC : catalogue Windows, installation locale non prise en charge pour le moment.'));
+      if(store==='xbox'){
+        const quotaH=getState()?.xbox?.remainingCloudHours??15;
+        hero.append(el('p','pf-hero-note',`Cloud : jouable ici (${quotaH} h restantes sur ton quota de 15 h/mois Game Pass Ultimate) · PC : catalogue Windows, installation locale non prise en charge pour le moment.`));
+      }
       return hero;
     }
     const nf=n=>new Intl.NumberFormat('fr-FR').format(n);
@@ -163,7 +300,9 @@
       head.append(brandChip(store,'pf-summary-brand'),el('span','pf-summary-label',store==='xbox'?'Ton Game Pass en chiffres':label+' en chiffres'));
       const stats=el('div','pf-summary-stats'),stat=(value,name,accent)=>{const d=el('div','pf-stat'+(accent?' is-accent':''));d.append(el('b','',value),el('span','',name));stats.append(d);};
       if(store==='xbox'){
+        const quotaH=getState()?.xbox?.remainingCloudHours??15;
         stat(nf(games.length),'jeux au catalogue');stat(nf(games.filter(g=>on(g,'cloud')).length),'jouables en cloud',true);stat(nf(games.filter(g=>on(g,'windows')).length),'sur PC');
+        stat(`${quotaH} h`,'restantes en Cloud (quota mensuel)',true);
         stat(nf(games.filter(g=>Number(g.gamePassRecent)>=0).length),'ajouts récents');stat(nf(played.length),'déjà lancés');
       }else{
         stat(nf(games.length),'jeux possédés');stat(h>0?nf(h)+' h':total>0?Math.max(1,Math.round(total/60))+' min':'0 h',h>0||total>0?'de jeu au compteur':'au compteur, pour l’instant',true);

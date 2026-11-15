@@ -343,7 +343,7 @@ final class NvidiaBridgeStore {
     private static func attachDMG(_ dmg: URL) throws -> (libCandidate: URL, mount: URL) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        process.arguments = ["attach", dmg.path, "-readonly", "-nobrowse", "-verify", "no"]
+        process.arguments = ["attach", dmg.path, "-readonly", "-nobrowse", "-noverify"]
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err

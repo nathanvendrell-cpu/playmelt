@@ -540,9 +540,9 @@ struct Game {
                 "requiredRenderer": store == "steam" ? SteamGameLaunchProfile.requiredRenderer(appID: appId) : "auto",
                 "requiredGraphicsAPI": store == "steam" ? SteamGameLaunchProfile.requiredGraphicsAPI(appID: appId) : "unknown",
                 "imageURL": !customImageURL.isEmpty ? customImageURL : store == "steam" ? "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appId)/header.jpg" : "",
-                "localImageURL": store == "steam" ? "metalmaxart://steam/\(appId)" : "",
+                "localImageURL": store == "steam" ? "metalmaxart://steam/\(appId)" : store == "gog" ? "metalmaxart://gog/\(appId)" : "",
                 "portraitImageURL": !customPortraitURL.isEmpty ? customPortraitURL : store == "steam" ? "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/\(appId)/library_600x900.jpg" : "",
-                "localPortraitURL": store == "steam" ? "metalmaxart://steam/\(appId)/portrait" : "",
+                "localPortraitURL": store == "steam" ? "metalmaxart://steam/\(appId)/portrait" : store == "gog" ? "metalmaxart://gog/\(appId)/portrait" : "",
                 "canLaunch": canLaunch,
                 "launchIsTest":steamDepot != nil,
                 "requiresOfficialSteam":steamDepot?.requiresOfficialSteam ?? false,
@@ -835,13 +835,14 @@ func localGameEnvironmentExports(appID: String) -> String {
     if appID == "2651280" || lower.contains("spiderman") {
         exports.append("export ROSETTA_ADVERTISE_AVX=\"1\"")
     }
-    if lower.contains("rebirth") || appID == "33e6ac38b5a14098b079fd62d71aabc6" {
-        // FF7 Rebirth : esync/msync laissent les clients Wine tourner en boucle
-        // d'attente (~100 % CPU par processus) et le jeu reste sur un écran noir.
-        // Attente serveur classique = première image rendue (vérifié en jeu le 14/11/2026).
-        exports.append("export WINEMSYNC=\"0\"")
-        exports.append("export WINEESYNC=\"0\"")
-    }
+    let rebirth = lower.contains("rebirth") || appID == "33e6ac38b5a14098b079fd62d71aabc6"
+    // FF7 Rebirth : esync/msync laissent les clients Wine tourner en boucle
+    // d'attente (~100 % CPU par processus) et le jeu reste sur un écran noir.
+    // Attente serveur classique = première image rendue (vérifié en jeu le 14/11/2026).
+    // Les valeurs par défaut sont émises ici, une seule fois : le lanceur ne doit
+    // jamais contenir deux exports contradictoires dont le dernier écrase le correctif.
+    exports.append("export WINEMSYNC=\"\(rebirth ? 0 : 1)\"")
+    exports.append("export WINEESYNC=\"0\"")
     return exports.joined(separator: "\n")
 }
 
@@ -1092,7 +1093,9 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto", iconD
            (effectiveRenderer != "dxmt" && content.contains("# Lanceur direct Playmelt (Wine / DXMT)")) ||
            (content.contains("# Lanceur direct Playmelt (Wine / D3DMetal DX12)") && !content.contains("# Playmelt high DPI v1")) ||
            (game.appId.lowercased().contains("rebirth") && content.contains("WINEMSYNC=\"1\"")) ||
+           ((game.appId.lowercased().contains("rebirth") || game.appId == "33e6ac38b5a14098b079fd62d71aabc6") && (!content.contains("'End'") || content.contains("'Prereq'"))) ||
            ((game.store == "epic" || game.appId == "33e6ac38b5a14098b079fd62d71aabc6") && !content.contains("EPIC_PARAMS")) ||
+           content.contains(".app.disabled") || content.contains("Playmelt-backup") ||
            (content.contains("# Lanceur direct Playmelt") && !content.contains("# Playmelt launcher v3")) {
             // Needs regeneration below
         } else if requestedBackend == "auto",
@@ -1126,11 +1129,26 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto", iconD
     }
 
     var projName: String? = nil
-    if steamLaunch == nil,chosen.lowercased().contains("-shipping.exe") {
-        projName = (try? fm.contentsOfDirectory(atPath: targetDir.path))?.first(where: { item in
+    if steamLaunch == nil, (chosen.lowercased().contains("-shipping.exe") || chosen.lowercased().hasSuffix("_.exe")) {
+        let parts = chosen.components(separatedBy: "/")
+        if let binIndex = parts.firstIndex(where: { $0.caseInsensitiveCompare("Binaries") == .orderedSame }), binIndex > 0 {
+            let candidate = String(parts[binIndex - 1])
             var isDir: ObjCBool = false
-            return fm.fileExists(atPath: targetDir.appendingPathComponent(item).path, isDirectory: &isDir) && isDir.boolValue && !["engine", "communityresources", "binaries", "redist"].contains(item.lowercased())
-        })
+            if fm.fileExists(atPath: targetDir.appendingPathComponent(candidate).path, isDirectory: &isDir), isDir.boolValue {
+                projName = candidate
+            }
+        }
+        if projName == nil {
+            let ignored: Set<String> = ["engine", "communityresources", "binaries", "redist", "prereq", "prerequisites", "directx", "dotnet", "commonredist", "support"]
+            projName = (try? fm.contentsOfDirectory(atPath: targetDir.path))?.first(where: { item in
+                var isDir: ObjCBool = false
+                let itemURL = targetDir.appendingPathComponent(item)
+                guard fm.fileExists(atPath: itemURL.path, isDirectory: &isDir), isDir.boolValue, !ignored.contains(item.lowercased()) else { return false }
+                return fm.fileExists(atPath: itemURL.appendingPathComponent("Content").path) ||
+                       fm.fileExists(atPath: itemURL.appendingPathComponent("Binaries").path) ||
+                       ((try? fm.contentsOfDirectory(atPath: itemURL.path))?.contains(where: { $0.hasSuffix(".uproject") }) ?? false)
+            })
+        }
     }
 
     let extraArgs: String
@@ -1181,8 +1199,6 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto", iconD
         export ROSETTA_ADVERTISE_AVX="1"
         export WINEPREFIX="$RUNTIME_DIR/D3DMetal/prefix"
         export WINEDEBUG="-all"
-        export WINEMSYNC="1"
-        export WINEESYNC="0"
         \(localGameEnvironmentExports(appID: game.appId))
         export D3DM_MTL4="1"
         export WINEDLLOVERRIDES="d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d"
@@ -1220,8 +1236,6 @@ func ensureLaunchScript(for game: Game, requestedBackend: String = "auto", iconD
         export ROSETTA_ADVERTISE_AVX="1"
         export WINEPREFIX="$RUNTIME_DIR/prefix"
         export WINEDEBUG="-all"
-        export WINEMSYNC="1"
-        export WINEESYNC="0"
         \(localGameEnvironmentExports(appID: game.appId))
         export WINEDLLOVERRIDES="d3d11,dxgi,nvapi64=n,b;winemenubuilder.exe=d"
         export WINEDLLPATH_PREPEND="$RUNTIME_DIR/playmelt-wine10-dxmt-20261017/renderers/dxmt/wine"
@@ -1623,6 +1637,7 @@ final class LibraryModel {
         return ["version": Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "dev", "accounts": accounts.map { ["id": $0.id, "name": $0.name, "source": $0.source, "selected": $0.id == selectedAccountID] as [String: Any] },
                 "selectedAccountId": selectedAccountID, "libraryStatus": ["status": libraryStatus, "message": libraryMessage, "updatedAt": lastSync],
                 "games": games.map { $0.json(runtimes: runtimes, availability: availability, completedRuntimeIDs: completedRoutes[$0.appId] ?? [], launchPreflight:launchPreflights[$0.id] ?? .unchecked($0), steamAccountID: selectedAccountID) }, "runtimes": runtimes.map(\.json), "hardware": hardware,
+                "disk": ["freeGB": hardware["diskFreeGB"] ?? 0, "totalGB": hardware["diskTotalGB"] ?? 0],
                 "warnings": warnings, "epic": epic, "xbox": xboxConnector.availability(), "gog": gogConnector.availability(), "executionPolicy": WindowsExecutionPolicy.json,
                 "graphicsFeatures": GraphicsFeatureContract.diagnosticsSnapshot(),
                 "graphicsFrameAdapters": GraphicsFrameAdapter.diagnosticsSnapshot()]
@@ -1649,9 +1664,14 @@ func hardwareState(renderProtectionEnabled: Bool = true) -> [String: Any] {
         observedOwnAllocatedBytes: device.map { UInt64($0.currentAllocatedSize) },
         hasUnifiedMemory: device?.hasUnifiedMemory ?? false,
         renderProtectionEnabled: renderProtectionEnabled, pressure: .unknown))
+    let homeURL = URL(fileURLWithPath: NSHomeDirectory())
+    let diskValues = try? homeURL.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey])
+    let diskFreeGB = max(0, Int((diskValues?.volumeAvailableCapacityForImportantUsage ?? 0) / 1_000_000_000))
+    let diskTotalGB = max(0, Int(Int64(diskValues?.volumeTotalCapacity ?? 0) / 1_000_000_000))
     var result: [String: Any] = ["chip": sysString("machdep.cpu.brand_string"), "memoryGB": ProcessInfo.processInfo.physicalMemory / 1_073_741_824,
                                "cpuCores": ProcessInfo.processInfo.processorCount, "gpuName": device?.name ?? "Indisponible",
                                "lowPowerMode": ProcessInfo.processInfo.isLowPowerModeEnabled, "thermalState": thermal,
+                               "diskFreeGB": diskFreeGB, "diskTotalGB": diskTotalGB,
                                "gpuMemoryBudget": memory.json, "gpuAllocatorConnected": false,
                                "metalFXBackend": MetalFXFrameAdapter.diagnosticsSnapshot(device: device),
                                "performanceStatus": "Configuration observée du Mac. Aucun test de charge automatique."]

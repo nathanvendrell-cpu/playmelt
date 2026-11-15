@@ -565,12 +565,10 @@
 
 /* ── Fond d'ambiance des vues claires : couleur du dernier jeu, très floutée, en haut de page ── */
 .main{position:relative;isolation:isolate}
-.main-ambient{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden;opacity:0;transition:opacity .9s ease}
+.main-ambient{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden;opacity:0;transition:opacity .25s ease;transform:translateZ(0)}
 .main-ambient.on{opacity:1}
-.main-ambient::before{content:"";position:absolute;left:-10%;right:-10%;top:-120px;height:640px;background:var(--ambient) center 30%/cover no-repeat;filter:blur(90px) saturate(1.6);opacity:.3;
-  -webkit-mask-image:linear-gradient(#000 25%,transparent 95%);mask-image:linear-gradient(#000 25%,transparent 95%)}
-.main-ambient::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 1px 1px,#0000000a 1px,transparent 1.5px) 0 0/22px 22px;-webkit-mask-image:linear-gradient(#000,transparent 70%);mask-image:linear-gradient(#000,transparent 70%)}
+.main-ambient::before{content:"";position:absolute;left:-5%;right:-5%;top:-60px;height:400px;background:var(--ambient) center 30%/cover no-repeat;filter:blur(16px);opacity:.2;transform:translateZ(0);
+  -webkit-mask-image:linear-gradient(#000 20%,transparent 85%);mask-image:linear-gradient(#000 20%,transparent 85%)}
 .app:is([data-view=steam],[data-view=epic],[data-view=xbox],[data-view=gog],[data-view^="svc:"]) .main-ambient{display:none}
 /* Barre de titre translucide sur les vues claires : l'ambiance passe derrière, sans couture */
 .app:not(:is([data-view=steam],[data-view=epic],[data-view=xbox],[data-view=gog],[data-view^="svc:"])) .toolbar{background:linear-gradient(color-mix(in srgb,var(--win) 35%,transparent),color-mix(in srgb,var(--win) 10%,transparent))!important;border-bottom-color:color-mix(in srgb,var(--line) 60%,transparent)!important}
-.main-ambient::before{top:-60px;height:700px;opacity:.34}

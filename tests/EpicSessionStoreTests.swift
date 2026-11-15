@@ -122,19 +122,44 @@ private final class SessionRunner: OwnedProcessRunning {
         api.updateStatuses = [errSecItemNotFound, errSecSuccess]; api.addStatus = errSecDuplicateItem
         try keychain.save(session)
         check(api.updated == 2 && api.added == 1 && api.deleted == 0, "upsert retries duplicate without deleting old credential")
-        api.updateStatuses = [errSecMissingEntitlement]
-        rejects("ad-hoc entitlement failure is not persistence success") { try keychain.save(session) }
-        check(api.added == 1, "failed update does not fall back to another storage")
+        // Signature ad hoc : le Trousseau de protection des données refuse
+        // l’écriture sans droit d’équipe. Le repli chiffré du Trousseau de
+        // session doit prendre le relais, sans secret en clair sur disque.
+        let adhoc = MockKeychain()
+        adhoc.updateStatuses = [errSecMissingEntitlement, errSecItemNotFound]
+        let adhocStore = EpicKeychainSessionStore(access: adhoc, accessBuilder: { nil })
+        try adhocStore.save(session)
+        check(adhocStore.persistenceKind == "keychain" && adhocStore.persistenceBackend == "shared-login",
+              "ad-hoc entitlement failure falls back to the encrypted login keychain")
+        check(adhoc.added == 1 && adhoc.deleted == 0, "fallback stores the bounded envelope without deleting the DP item")
+        check(adhoc.queries.contains {
+            $0[kSecAttrService as String] as? String == EpicKeychainBackend.sharedLogin.service &&
+            $0[kSecUseDataProtectionKeychain as String] as? Bool == false &&
+            $0[kSecUseAuthenticationUI as String] as? String == kSecUseAuthenticationUIFail as String },
+              "fallback uses its own local login-keychain namespace without prompts")
+        adhoc.copyStatus = errSecSuccess; adhoc.copyData = encoded
+        check(try adhocStore.load()?["account_id"] as? String == "fixture-account", "fallback credential loads back after a new session")
         api.deleteStatus = errSecItemNotFound; try keychain.clear()
         api.deleteStatus = errSecAuthFailed
         rejects("failed deletion exposed") { try keychain.clear() }
         for query in api.queries {
-            check(query[kSecAttrService as String] as? String == EpicKeychainSessionStore.service &&
+            let service = query[kSecAttrService as String] as? String
+            check((service == EpicKeychainSessionStore.service || service == EpicKeychainBackend.sharedLogin.service) &&
                   query[kSecAttrAccount as String] as? String == EpicKeychainSessionStore.account, "exact Playmelt service/account on every operation")
-            check(query[kSecUseDataProtectionKeychain as String] as? Bool == true && query[kSecAttrSynchronizable as String] as? Bool == false, "device-local DP keychain only")
-            check((query[kSecUseAuthenticationContext as String] as? LAContext)?.interactionNotAllowed == true, "authentication UI disabled without biometric evaluation")
+            if service == EpicKeychainSessionStore.service {
+                check(query[kSecUseDataProtectionKeychain as String] as? Bool == true && query[kSecAttrSynchronizable as String] as? Bool == false, "device-local DP keychain for the primary namespace")
+                check((query[kSecUseAuthenticationContext as String] as? LAContext)?.interactionNotAllowed == true, "authentication UI disabled without biometric evaluation")
+            } else {
+                check(query[kSecUseDataProtectionKeychain as String] as? Bool == false && query[kSecAttrSynchronizable as String] as? Bool == false, "fallback is an explicit local login-keychain item")
+                check(query[kSecUseAuthenticationUI as String] as? String == kSecUseAuthenticationUIFail as String, "fallback never opens an unexpected system prompt")
+            }
             check(query[kSecAttrAccessGroup as String] == nil, "no shared or foreign access group requested")
+            check(query[kSecAttrAccessControl as String] == nil, "no broader access control requested")
         }
+        for attributes in adhoc.values {
+            check((attributes[kSecValueData as String] as? Data)?.count == encoded.count, "fallback receives only the bounded envelope")
+        }
+        check(adhoc.values.last?[kSecAttrAccessible as String] == nil, "login keychain never claims a DP protection class")
         for attributes in api.values {
             check(attributes[kSecAttrAccessible as String] as? String == kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String, "ThisDeviceOnly protection written")
             check((attributes[kSecValueData as String] as? Data)?.count == encoded.count, "only bounded envelope persisted")
@@ -225,6 +250,28 @@ private final class SessionRunner: OwnedProcessRunning {
         rejects("client access failure stays explicit") { try deniedClient.save(session) }
         check(deniedClient.persistenceBackend == "client-login" && deniedClient.persistenceKind == "memory" && deniedClientAPI.added == 0, "client failure never changes backend or creates another storage")
         check(deniedClientAPI.queries.allSatisfy { $0[kSecAttrService as String] as? String == EpicKeychainBackend.clientLogin.service }, "client failure never queries production or internal namespaces")
+
+        let migrationRoot = FileManager.default.temporaryDirectory.appendingPathComponent("playmelt-legendary-fixture-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: migrationRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: migrationRoot) }
+        let legacyFile = migrationRoot.appendingPathComponent(".epic_session.dat")
+        let userFile = migrationRoot.appendingPathComponent("user.json")
+        try Data(try EpicSessionEnvelope.encode(session)).write(to: legacyFile)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: legacyFile.path)
+        var legendarySession = session; legendarySession["refresh_token"] = "legendary-refresh"
+        try JSONSerialization.data(withJSONObject: legendarySession).write(to: userFile)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: userFile.path)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000)], ofItemAtPath: legacyFile.path)
+        let migrationStore = EpicKeychainSessionStore(access: MockKeychain(), legacyFileURL: legacyFile,
+                                                     accessBuilder: { nil }, legendaryFileURL: userFile)
+        check(try migrationStore.load()?["refresh_token"] as? String == "legendary-refresh", "newer Legendary session migrates without a new login")
+        let untouched = (try? JSONSerialization.jsonObject(with: Data(contentsOf: userFile))) as? [String: Any]
+        check(untouched?["refresh_token"] as? String == "legendary-refresh", "Legendary credential file is never rewritten")
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: 3_600)], ofItemAtPath: legacyFile.path)
+        let localStore = EpicKeychainSessionStore(access: MockKeychain(), legacyFileURL: legacyFile,
+                                                  accessBuilder: { nil }, legendaryFileURL: userFile)
+        let localToken = try localStore.load()?["refresh_token"] as? String
+        check(localToken == "fixture-refresh", "a newer local session wins over an older CLI file")
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("playmelt-keychain-fixture-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

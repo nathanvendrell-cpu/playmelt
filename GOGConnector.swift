@@ -11,6 +11,7 @@ final class GOGConnector {
         var catalogStale = false
         var catalogCount = 0, phase = "loading", error = ""
         var catalogUpdatedAt = "", catalogSource = ""
+        var username = "", userId = "", authenticated = false
     }
     private struct Load {
         let id = UUID(), generation: Int, token = OwnedOperationToken(), finished = DispatchGroup()
@@ -110,16 +111,19 @@ final class GOGConnector {
     func availability() -> [String: Any] {
         lock.lock(); let snapshot = cached, busy = pending != nil; lock.unlock()
         let available = snapshot.galaxyInstalled || snapshot.databasePresent || !snapshot.games.isEmpty
+        let authenticated = snapshot.authenticated && !snapshot.username.isEmpty
         let message: String
         if snapshot.phase == "error" || snapshot.phase == "unavailable" {
             message = snapshot.error + (snapshot.catalogStale ? " Dernier cache local conservé : \(snapshot.catalogCount) jeux (périmé, \(snapshot.catalogUpdatedAt))." : "")
         }
-        else if snapshot.phase == "cancelled" { message = "Lecture locale GOG annulée. Aucune session GOG vérifiée." }
-        else if snapshot.phase == "loading" { message = "Lecture du cache local GOG Galaxy… Aucune session GOG vérifiée." }
-        else if snapshot.catalogLoaded { message = "Cache local GOG Galaxy : \(snapshot.catalogCount) jeux. Aucune session GOG vérifiée." }
-        else { message = snapshot.galaxyInstalled ? "GOG Galaxy détecté sur ce Mac. Aucune session GOG vérifiée." : "GOG Galaxy non détecté. Aucune session GOG vérifiée." }
+        else if snapshot.phase == "cancelled" { message = "Lecture locale GOG annulée." }
+        else if snapshot.phase == "loading" { message = "Lecture du cache local GOG Galaxy…" }
+        else if snapshot.catalogLoaded {
+            message = authenticated ? "Compte GOG connecté (\(snapshot.username)) · \(snapshot.catalogCount) jeux." : "Cache local GOG Galaxy : \(snapshot.catalogCount) jeux."
+        }
+        else { message = snapshot.galaxyInstalled ? "GOG Galaxy détecté sur ce Mac." : "GOG Galaxy non détecté." }
         return ["status": ["error", "unavailable"].contains(snapshot.phase) ? snapshot.phase : available ? "ready" : "not-installed",
-                "available": available, "authenticated": false, "sessionVerified": false, "username": "",
+                "available": available, "authenticated": authenticated, "sessionVerified": authenticated, "username": snapshot.username,
                 "galaxyInstalled": snapshot.galaxyInstalled, "catalogCount": snapshot.catalogCount,
                 "catalogStatus": snapshot.phase, "catalogLoaded": snapshot.catalogLoaded,
                 "catalogAvailable": snapshot.catalogLoaded, "catalogStale": snapshot.catalogStale,
@@ -153,6 +157,11 @@ final class GOGConnector {
                         next.catalogCount = self.cached.catalogCount
                         next.catalogUpdatedAt = self.cached.catalogUpdatedAt; next.catalogSource = self.cached.catalogSource
                     }
+                    if next.username.isEmpty && !self.cached.username.isEmpty {
+                        next.username = self.cached.username
+                        next.userId = self.cached.userId
+                        next.authenticated = self.cached.authenticated
+                    }
                     next.games = next.catalog.values.sorted { $0.id < $1.id }
                     self.cached = next; self.loaded = true
                 }
@@ -184,7 +193,7 @@ final class GOGConnector {
         group.notify(queue: .main, execute: completion)
     }
 
-    private static func validID(_ id: String) -> Bool {
+    static func validID(_ id: String) -> Bool {
         !id.isEmpty && id.utf8.count <= 32 && id.utf8.allSatisfy { $0 >= 48 && $0 <= 57 }
     }
     private func readSnapshot(cancelled: () -> Bool) -> Snapshot {
@@ -192,6 +201,15 @@ final class GOGConnector {
         var snapshot = Snapshot()
         snapshot.galaxyInstalled = fm.fileExists(atPath: galaxyApp.path)
         snapshot.databasePresent = fm.fileExists(atPath: databaseURL.path)
+        let configURL = databaseURL.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("config.json")
+        if let configData = try? Data(contentsOf: configURL),
+           let config = try? JSONSerialization.jsonObject(with: configData) as? [String: Any] {
+            let user = (config["username"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let uid = (config["userId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            snapshot.username = user
+            snapshot.userId = uid
+            snapshot.authenticated = !user.isEmpty && !uid.isEmpty
+        }
         do {
             if cancelled() { throw OwnedProcessError.cancelled }
             if snapshot.databasePresent {
@@ -236,7 +254,8 @@ final class GOGConnector {
                     if landscape.isEmpty { landscape = portrait }; if portrait.isEmpty { portrait = landscape }
                     var game = Self.game(id: id, installed: false)
                     game.title = title; game.ownership = "gog-local-cache"
-                    game.customImageURL = landscape; game.customPortraitURL = portrait
+                    game.customImageURL = landscape.isEmpty ? "metalmaxart://gog/\(id)" : landscape
+                    game.customPortraitURL = portrait.isEmpty ? "metalmaxart://gog/\(id)/portrait" : portrait
                     snapshot.catalog[id] = game
                 }
                 snapshot.catalogLoaded = true; snapshot.catalogCount = snapshot.catalog.count

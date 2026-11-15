@@ -110,13 +110,21 @@ final class EpicLaunchAuthorization: CustomStringConvertible, CustomDebugStringC
             func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
             var script = template.replacingOccurrences(of: legacyAuthBlock, with: "EPIC_PARAMS=(" + value.arguments.map(quote).joined(separator: " ") + ")")
             var rewritten = 0
+            let chosenExecutable: String = {
+                if scriptExecutable != value.executable.path,
+                   URL(fileURLWithPath: scriptExecutable).resolvingSymlinksInPath().path.hasPrefix(directory.resolvingSymlinksInPath().path + "/"),
+                   (scriptExecutable.lowercased().hasSuffix("_.exe") || scriptExecutable.lowercased().contains("-shipping.exe")) {
+                    return scriptExecutable
+                }
+                return value.executable.path
+            }()
             script = try script.components(separatedBy: "\n").map { line in
                 guard line.hasPrefix("exec "), let engine = line.range(of: "/engine/bin/wine\" ") ?? line.range(of: "/PlaymeltGame.app/Contents/MacOS/wine\" "), line.contains("\"${EPIC_PARAMS[@]}\" \"$@\"") else { return line }
                 let suffix = String(line[engine.upperBound...]), old = quote(scriptExecutable)
                 guard suffix.hasPrefix(old + " "), let logging = line.range(of: " 2>&1 | /usr/bin/tail -c 1048576 >") else { throw EpicConnectorError.invalidResponse }
                 rewritten += 1
                 let endArguments = String(line[line.index(engine.upperBound, offsetBy: old.count)..<logging.lowerBound])
-                return String(line[..<engine.upperBound]) + quote(value.executable.path) + endArguments + " >/dev/null 2>&1"
+                return String(line[..<engine.upperBound]) + quote(chosenExecutable) + endArguments + " >/dev/null 2>&1"
             }.joined(separator: "\n")
             guard rewritten == 1, !script.contains("LEGENDARY_BIN"), !script.contains("AUTH_ARGS="),
                   !script.contains("user.json"), !script.contains(".config/legendary"),
@@ -336,10 +344,18 @@ final class EpicConnector {
         return EpicInstallation(accountID: account, appName: app, platform: platform, title: title,
                                 executable: executable, directory: URL(fileURLWithPath: path), prerequisitesRequired: value["prerequisitesRequired"] as? Bool ?? false)
     }
+    private var cachedManagedInstallations: (Date, [EpicInstallation])?
     /// Non-credential receipts only. Ownership is rechecked online before operations.
     func managedInstallations() -> [EpicInstallation] {
+        lock.lock()
+        if let cached = cachedManagedInstallations, Date().timeIntervalSince(cached.0) < 5.0 {
+            let res = cached.1
+            lock.unlock()
+            return res
+        }
+        lock.unlock()
         let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/Games")
-        return ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []).compactMap { directory in
+        let list: [EpicInstallation] = ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []).compactMap { directory in
             let file = directory.appendingPathComponent(".playmelt-epic-install.json")
             guard let info = try? file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey]), info.isRegularFile == true, info.isSymbolicLink != true, (info.fileSize ?? 65537) <= 65536,
                   let data = try? Data(contentsOf: file), let record = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -347,6 +363,10 @@ final class EpicConnector {
                   value["install_path"] as? String == directory.path else { return nil }
             return Self.installation(["accountId": account, "appName": value["app_name"] ?? "", "platform": value["platform"] ?? "", "title": value["title"] ?? "", "executable": value["executable"] ?? "", "installPath": directory.path, "prerequisitesRequired": value["prereq_info"] is [String: Any]])
         }
+        lock.lock()
+        cachedManagedInstallations = (Date(), list)
+        lock.unlock()
+        return list
     }
 
     /// Explicit user action only. true means credentials are available, not that

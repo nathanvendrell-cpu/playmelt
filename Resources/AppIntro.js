@@ -13,18 +13,16 @@ function create({el,document:doc=root.document,matchMedia=query=>root.matchMedia
   if(started)return;started=true;if(motion?.matches){finish();return;}
   dialog=el('dialog','playmelt-intro');dialog.setAttribute('aria-label','Ouverture de Playmelt');
   const stage=el('div','intro-stage'),lockup=el('div','intro-lockup'),emblem=el('div','intro-emblem'),letter=el('div','intro-p');
-  const image=(src,cls)=>{const node=el('img',cls);node.src=src;node.alt='';node.draggable=false;return node;};
-  const ghost=delay=>{const wrap=el('span','intro-ghost intro-ghost-'+delay);wrap.append(image('PlaymeltMarkOrange.png','intro-orange'));return wrap;};
-  /* Le P se construit seul au centre (étincelle, ruban orange qui se déplie avec sa traîne, ruban sombre qui glisse dessous,
-     impact), puis se décale pour laisser apparaître le nom. */
-  letter.append(el('span','intro-ring'),ghost(2),ghost(1),image('PlaymeltMarkInk.png','intro-ink'),image('PlaymeltMarkOrange.png','intro-orange intro-orange-main'),el('span','intro-sheen'),el('span','intro-spark'));
+  const image=(src,cls)=>{const node=el('img',cls);node.src=src;node.alt='';node.draggable=false;node.decoding='sync';return node;};
+  letter.append(el('span','intro-ring'),image('PlaymeltMarkInk.png','intro-ink'),image('PlaymeltMarkOrange.png','intro-orange intro-orange-main'),el('span','intro-sheen'),el('span','intro-spark'));
   emblem.append(letter);
   const word=el('div','intro-word');word.append(image('PlaymeltWordmark.png','intro-wordmark'));
   lockup.append(emblem,word);stage.append(el('div','intro-glow'),lockup);dialog.append(stage);doc.body.append(dialog);
   dialog.addEventListener('cancel',event=>{event.preventDefault();finish();});
+  dialog.addEventListener('click',finish);
   dialog.addEventListener('animationend',event=>{if(event.target===dialog&&event.animationName==='playmeltIntroExit')finish();});
   motion?.addEventListener?.('change',motionChanged);root.addEventListener?.('pagehide',shutdown,{once:true});
-  timer=setTimer(finish,3800);dialog.showModal();
+  timer=setTimer(finish,1250);dialog.showModal();
  }
  return {start,finish,after(callback){if(finished)callback();else waiting.add(callback);},get finished(){return finished;}};
 }

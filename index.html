@@ -449,6 +449,8 @@
         color: #fff;
         isolation: isolate;
         cursor: pointer;
+        will-change: transform;
+        transform: translateZ(0);
         transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
       }
       .game-art {
@@ -1522,6 +1524,68 @@
       .subnav-pill.active .subnav-count {
         background: rgba(255, 255, 255, 0.22);
       }
+      .xbox-quota-pill {
+        cursor: default !important;
+        background: rgba(16, 124, 65, 0.12) !important;
+        color: #15803d !important;
+        font-weight: 600 !important;
+        border: 1px solid rgba(16, 124, 65, 0.22) !important;
+      }
+      .geforce-quota-pill {
+        cursor: default !important;
+        background: rgba(118, 185, 0, 0.12) !important;
+        color: #76b900 !important;
+        font-weight: 600 !important;
+        border: 1px solid rgba(118, 185, 0, 0.28) !important;
+      }
+      .svc-tier-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 14px 0 8px;
+      }
+      .svc-tier-btn {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 8px 14px;
+        background: var(--surface, rgba(255, 255, 255, 0.04));
+        border: 1px solid var(--line, rgba(255, 255, 255, 0.1));
+        border-radius: 8px;
+        color: var(--fg, #eee);
+        cursor: pointer;
+        transition: all 0.15s ease;
+        text-align: left;
+      }
+      .svc-tier-btn:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.2);
+      }
+      .svc-tier-btn strong {
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .svc-tier-btn span {
+        font-size: 11px;
+        opacity: 0.75;
+        margin-top: 2px;
+      }
+      .svc-tier-btn.is-active {
+        background: rgba(118, 185, 0, 0.16);
+        border-color: #76b900;
+        color: #b6f04a;
+        box-shadow: 0 0 12px rgba(118, 185, 0, 0.2);
+      }
+      .svc-quota-warning {
+        padding: 10px 14px;
+        margin: 12px 0;
+        background: rgba(245, 158, 11, 0.14);
+        border: 1px solid rgba(245, 158, 11, 0.35);
+        border-radius: 8px;
+        color: #fbbf24;
+        font-size: 13px;
+        font-weight: 600;
+      }
 
       /* Xbox capability pills on card */
       .render-protection {
@@ -1945,8 +2009,7 @@
         display: flex;
         gap: 4px;
         align-items: center;
-        background: #ffffff60;
-        backdrop-filter: blur(8px);
+        background: rgba(255, 255, 255, 0.9);
         padding: 3px 6px;
         border-radius: 8px;
         border: 1px solid var(--line);
@@ -1986,9 +2049,7 @@
         width: 28px;
         height: 28px;
         border-radius: 50%;
-        background: rgba(23, 27, 31, 0.65);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
+        background: rgba(23, 27, 31, 0.85);
         border: 1px solid rgba(255, 255, 255, 0.2);
         color: #94a3b8;
         font-size: 13px;
@@ -1997,16 +2058,16 @@
         justify-content: center;
         z-index: 5;
         cursor: pointer;
-        transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: transform 0.15s ease;
       }
       .fav-btn:hover {
         transform: scale(1.15);
         color: #facc15;
-        background: rgba(23, 27, 31, 0.85);
+        background: rgba(23, 27, 31, 0.92);
       }
       .fav-btn.is-fav {
         color: #facc15;
-        background: rgba(23, 27, 31, 0.85);
+        background: rgba(23, 27, 31, 0.92);
         border-color: rgba(250, 204, 21, 0.4);
         text-shadow: 0 0 8px rgba(250, 204, 21, 0.5);
       }
@@ -2017,9 +2078,7 @@
         bottom: 24px;
         right: 24px;
         width: min(360px, calc(100vw - 32px));
-        background: #f7f9fb;
-        backdrop-filter: blur(24px) saturate(180%);
-        -webkit-backdrop-filter: blur(24px) saturate(180%);
+        background: rgba(247, 249, 251, 0.96);
         border: 1px solid rgba(255, 255, 255, 0.8);
         box-shadow: 0 16px 40px -6px rgba(35, 78, 112, 0.2), 0 4px 12px rgba(0, 0, 0, 0.04);
         border-radius: 16px;
@@ -2281,9 +2340,7 @@
         color: var(--ink);
       }
       .mgr-specs-card {
-        background: rgba(255, 255, 255, 0.88);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
+        background: #ffffff;
         border-radius: 14px;
         padding: 18px 22px;
         border: 1px solid var(--line);
@@ -2450,9 +2507,9 @@
         position: relative; z-index: 5; min-height: 0 !important; margin: 0 !important;
         padding: calc(var(--chrome-top) - 2px) 32px 16px !important;
         display: flex !important; align-items: flex-end !important; gap: 20px !important;
-        background: linear-gradient(var(--win), rgba(243, 245, 247, 0.86)) !important;
+        background: var(--win) !important;
         border: 0 !important; border-bottom: 1px solid var(--line) !important; border-radius: 0 !important;
-        box-shadow: none !important; backdrop-filter: blur(20px);
+        box-shadow: none !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
       }
       .toolbar::before, .toolbar::after { display: none !important; }
       .toolbar-title-line { gap: 0 !important; }
@@ -2576,8 +2633,8 @@
       }
       .installed-card-badge, .card-mode-badge {
         left: 8px !important; top: 8px !important; height: 20px; padding: 0 7px !important; border-radius: 6px !important; border: 0 !important;
-        background: rgba(14, 18, 22, 0.62) !important; color: #fff !important; font-size: 10.5px !important; font-weight: 650 !important;
-        letter-spacing: 0 !important; box-shadow: none !important; backdrop-filter: blur(10px); display: flex !important; align-items: center; gap: 5px;
+        background: rgba(14, 18, 22, 0.88) !important; color: #fff !important; font-size: 10.5px !important; font-weight: 650 !important;
+        letter-spacing: 0 !important; box-shadow: none !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; display: flex !important; align-items: center; gap: 5px;
       }
       .installed-card-badge::before { background: #3ddc84 !important; width: 6px !important; height: 6px !important; box-shadow: none !important; }
       .install-jobs-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 22px; }
@@ -2597,7 +2654,7 @@
       .installed-card-badge.incomplete::before { background: #edc58b !important; }
       .fav-btn {
         top: 8px !important; right: 8px !important; width: 26px !important; height: 26px !important; border-radius: 8px !important; border: 0 !important;
-        background: rgba(14, 18, 22, 0.5) !important; color: #fff !important; backdrop-filter: blur(10px); font-size: 13px !important; z-index: 5;
+        background: rgba(14, 18, 22, 0.82) !important; color: #fff !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; font-size: 13px !important; z-index: 5;
       }
       .fav-btn.is-fav { color: #ffcf5a !important; }
       .card-open { border-radius: 12px !important; }
@@ -2700,7 +2757,7 @@
       .tag { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 6px; font: 650 10px/1 -apple-system, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
       .tag.upd { background: rgba(220, 90, 46, 0.12); color: var(--brand-lo); }
       .tag.news { background: rgba(35, 78, 112, 0.1); color: var(--blue); }
-      .tag.onimg { background: rgba(12, 16, 20, 0.66); color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); backdrop-filter: blur(12px); }
+      .tag.onimg { background: rgba(12, 16, 20, 0.88); color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); -webkit-backdrop-filter: none; backdrop-filter: none; }
       .pf { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: var(--muted); }
       .pf i { width: 6px; height: 6px; border-radius: 50%; }
       .ver { font: 600 11px var(--mono); color: var(--ink-2); background: var(--win); padding: 3px 7px; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line); }
@@ -2864,8 +2921,10 @@
           <img
             src="PlaymeltLogo.png"
             alt="Playmelt"
-            width="2172"
-            height="724"
+            width="140"
+            height="46"
+            loading="eager"
+            decoding="sync"
           />
         </div>
         <nav class="nav" id="sidebarNav">
@@ -2877,7 +2936,7 @@
               <button class="nav-button" data-view="favorites"><svg class="nav-ico"><use href="#i-star"/></svg><span>Favoris</span><span class="nav-count" id="countFavorites">—</span></button>
               <button class="nav-button" data-view="recent"><svg class="nav-ico"><use href="#i-clock"/></svg><span>Récents</span><span class="nav-count" id="countRecent">—</span></button>
               <button class="nav-button" data-view="news"><svg class="nav-ico"><use href="#i-news"/></svg><span>Actus</span><span class="nav-count" id="countNews">—</span></button>
-              <button class="nav-button" data-view="offers"><svg class="nav-ico"><use href="#i-offer"/></svg><span>Bons plans</span></button>
+              <button class="nav-button" data-view="offers"><svg class="nav-ico"><use href="#i-offer"/></svg><span>Boutique</span></button>
             </div>
           </div>
           <div class="nav-section" data-section-id="platforms">
@@ -2914,7 +2973,7 @@
           </div>
         </div>
         <div class="side-account">
-          <button class="nav-button side-profile" data-view="profile" title="Mon profil"><i class="side-avatar" id="sideAvatar" aria-hidden="true"></i><span class="side-id"><b id="sideName">Mon profil</b><small id="sideLevel">Profil et progression</small></span></button>
+          <button class="nav-button side-profile" data-view="profile" title="Mon profil"><i class="side-avatar" id="sideAvatar" aria-hidden="true"></i><span class="side-id"><b id="sideName">Mon profil</b><small id="sideLevel">Profil et progression</small><small id="sideDisk" class="side-disk"></small></span></button>
           <button class="nav-button side-gear" data-view="diagnostics" title="Paramètres" aria-label="Paramètres"><svg class="nav-ico"><use href="#i-settings"/></svg></button>
         </div>
       </aside>
@@ -2949,6 +3008,8 @@
               <button class="subnav-pill active" data-xbox-filter="all" id="xboxFilterAll" hidden>Tous <span class="subnav-count" id="xboxCountAll">—</span></button>
               <button class="subnav-pill" data-xbox-filter="cloud" id="xboxFilterCloud" hidden>Cloud <span class="subnav-count" id="xboxCountCloud">—</span></button>
               <button class="subnav-pill" data-xbox-filter="pc" id="xboxFilterPC" hidden>PC Windows <span class="subnav-count" id="xboxCountPC">—</span></button>
+              <span class="subnav-pill xbox-quota-pill" id="xboxQuotaPill" title="Limite mensuelle Xbox Cloud Gaming : 15 h incluses par mois (Game Pass Ultimate)" hidden><svg class="pf-glyph" aria-hidden="true" style="width:13px;height:13px;margin-right:4px;vertical-align:-2px"><use href="#i-cloud"/></svg><span id="xboxQuotaText">15 h restantes</span></span>
+              <span class="subnav-pill geforce-quota-pill" id="geforceQuotaPill" title="Limite mensuelle GeForce NOW" hidden><svg class="pf-glyph" aria-hidden="true" style="width:13px;height:13px;margin-right:4px;vertical-align:-2px"><use href="#pf-geforce"/></svg><span id="geforceQuotaText">100 h restantes</span></span>
               <button class="subnav-pill active" data-steam-filter="all" id="steamFilterAll" hidden>Tous <span class="subnav-count" id="steamCountAll">—</span></button>
               <button class="subnav-pill" data-steam-filter="mac" id="steamFilterMac" hidden>Mac natif <span class="subnav-count" id="steamCountMac">—</span></button>
               <button class="subnav-pill" data-steam-filter="installed" id="steamFilterInstalled" hidden>Installés <span class="subnav-count" id="steamCountInstalled">—</span></button>
@@ -3216,7 +3277,7 @@
           "refreshHub",
           "openHubLink",
           "getGameMedia", "playGameVideo",
-          "checkServices",
+          "checkServices", "launchAmazonGames", "installAmazonGames",
           "setBigPicture",
           "submitGameIssue", "retryGameIssue", "refreshGameIssues",
           "connectPlaymelt", "signInPlaymelt", "signInPlaymeltGoogle", "cancelPlaymeltGoogle", "refreshPlaymelt", "disconnectPlaymelt", "openPlaymeltAccount",
@@ -3304,7 +3365,7 @@
         function imageSources(game) {
           const sources = [];
           const appId = String(game.appId ?? "");
-          if (game.store === "steam" && /^[1-9][0-9]{0,9}$/.test(appId)) {
+          if ((game.store === "steam" || game.store === "gog") && /^[1-9][0-9]{0,19}$/.test(appId)) {
             for (const [candidate, expectedPath] of [
               [game.localPortraitURL, "/" + appId + "/portrait"],
               [game.localImageURL, "/" + appId],
@@ -3314,7 +3375,7 @@
                 const url = new URL(candidate);
                 if (
                   url.protocol === "metalmaxart:" &&
-                  url.hostname === "steam" &&
+                  (url.hostname === "steam" || url.hostname === "gog") &&
                   url.pathname === expectedPath &&
                   !url.username &&
                   !url.password &&
@@ -3580,6 +3641,18 @@
           const account = window.PlaymeltAccount.presentation(state.account || {});
           if (account.verified) level.textContent += account.lifetime ? " · À vie" : state.account.phase === "trialing" ? " · Essai" : " · Actif";
           level.title = account.label;
+          const disk = $("sideDisk");
+          if (disk) {
+            const hw = state.hardware || {};
+            const free = state.disk?.freeGB ?? hw.diskFreeGB;
+            const total = state.disk?.totalGB ?? hw.diskTotalGB;
+            if (typeof free === "number" && free > 0) {
+              disk.textContent = `${free} Go libres` + (total ? ` sur ${total} Go` : "");
+              disk.title = `Espace disque disponible : ${free} Go libres sur ${total} Go`;
+            } else {
+              disk.textContent = "";
+            }
+          }
           const photo = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(player.photo || "") ? player.photo : "";
           let best = null;
           if (!photo)
@@ -3629,7 +3702,7 @@
           const titles = {
             home: (new Date().getHours() >= 18 ? "Bonsoir" : "Bonjour") + (state.player?.name ? ", " + state.player.name : ""),
             news: "Actus",
-            offers: "Bons plans",
+            offers: "Boutique",
             profile: "Profil",
             library: "Bibliothèque",
             installed: "Installés",
@@ -3650,7 +3723,7 @@
             installed: `${locale.format(state.games.filter((g) => g.installed).length)} jeux installés`,
             favorites: `${locale.format(getFavorites().size)} jeux`,
             recent: "Tes dernières sessions",
-            offers: "Jeux offerts et promotions · Steam, Epic Games, GOG et Xbox",
+            offers: "Offres, jeux offerts et catalogues · Steam, Epic Games, GOG et Xbox",
             profile: "Tes jeux, tes rangs, ta progression",
             steam: `${locale.format(state.games.filter((g) => g.store === "steam").length)} jeux`,
             epic: `${locale.format(state.games.filter((g) => g.store === "epic").length)} jeux`,
@@ -3719,7 +3792,7 @@
           }
 
           $("recentFrequencyFilters").hidden = ui.view !== "recent";
-          const platformView = ["steam", "epic", "xbox", "gog", "local"].includes(ui.view);
+          const platformView = ["steam", "epic", "xbox", "gog", "local"].includes(ui.view) || ui.view === "svc:geforce";
           const toolbarHidden = ui.view === "diagnostics" || ui.view === "installManager";
           $("filters").hidden = toolbarHidden;
           $("installFilter").hidden = platformView;
@@ -3770,12 +3843,50 @@
               plugBtn.title = auth ? (state.xbox?.message || "Compte Microsoft connecté") : "Connecter ton compte Microsoft";
             }
             if ($("xboxDisconnectBtn")) $("xboxDisconnectBtn").hidden = !auth;
+
+            const quotaPill = $("xboxQuotaPill"), quotaText = $("xboxQuotaText");
+            if (quotaPill && quotaText) {
+              const remHours = state.xbox?.remainingCloudHours ?? 15;
+              const usedSec = state.xbox?.usedCloudSeconds ?? 0;
+              const usedMin = Math.round(usedSec / 60);
+              let label = `${remHours} h restantes`;
+              if (usedSec > 0 && remHours < 15) {
+                const remMin = Math.max(0, 15 * 60 - usedMin);
+                const h = Math.floor(remMin / 60), m = remMin % 60;
+                label = h > 0 ? `${h} h ${m > 0 ? m + " min " : ""}restantes` : `${m} min restantes`;
+              }
+              quotaText.textContent = label;
+              quotaPill.title = `Limite Xbox Cloud Gaming : ${label} sur ton quota mensuel de 15 h (Game Pass Ultimate). Réinitialisation le 1er du mois.`;
+            }
           }
           show("xboxPlugPlayBtn", ui.view === "xbox");
           show("xboxOpenCloudBtn", ui.view === "xbox");
           show("xboxSyncBtn", ui.view === "xbox");
           show("xboxDisconnectBtn", ui.view === "xbox" && state.xbox?.authenticated === true);
-          ["xboxFilterAll", "xboxFilterCloud", "xboxFilterPC"].forEach((id) => show(id, ui.view === "xbox"));
+          ["xboxFilterAll", "xboxFilterCloud", "xboxFilterPC", "xboxQuotaPill"].forEach((id) => show(id, ui.view === "xbox"));
+
+          // --- GeForce NOW ---
+          if (ui.view === "svc:geforce") {
+            const pill = $("geforceQuotaPill"), text = $("geforceQuotaText");
+            if (pill && text) {
+              const u = hub.geforceUsage || {};
+              const tId = u.tier || localStorage.getItem("playmelt_geforce_tier") || "performance";
+              let label = "100 h restantes";
+              if (tId === "founders") {
+                label = "Illimité";
+                pill.title = "Abonnement GeForce NOW Fondateur : temps de jeu mensuel illimité sans quota (sessions de 6 h max).";
+              } else if (tId === "free") {
+                label = "1 h / session";
+                pill.title = "Abonnement GeForce NOW Gratuit : sessions limitées à 1 h continue (accès standard avec attente).";
+              } else {
+                const rem = typeof u.remainingHours === "number" ? u.remainingHours : 100;
+                label = `${rem} h restantes`;
+                pill.title = `Abonnement GeForce NOW ${tId === "ultimate" ? "Ultimate" : "Performance"} : ${rem} h restantes sur ton quota de 100 h ce mois-ci (report max 15 h). Réinitialisation le 1er du mois.`;
+              }
+              text.textContent = label;
+            }
+          }
+          show("geforceQuotaPill", ui.view === "svc:geforce");
 
           // --- Steam ---
           if (ui.view === "steam") {
@@ -3900,9 +4011,17 @@
               "continue", "");
           }
           if (ui.view === "xbox") {
-            // Le haut du flux officiel Game Pass = derniers titres ajoutés au catalogue.
             push("Reprendre une partie", all.filter(g=>g.lastPlayed>0).sort((a,b)=>b.lastPlayed-a.lastPlayed).slice(0,12), "continue", "Xbox Cloud Gaming");
-            push("Nouveautés Game Pass", filteredGames(false).slice(0, 14), "poster", "");
+            const seen = new Set();
+            const recentAdditions = all
+              .filter((g) => Number(g.gamePassRecent) >= 0)
+              .sort((a, b) => a.gamePassRecent - b.gamePassRecent)
+              .filter((g) => {
+                const norm = g.title.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 18);
+                return !seen.has(norm) && seen.add(norm);
+              });
+            const quotaHours = state.xbox?.remainingCloudHours ?? 15;
+            push("Ajouts récents", recentAdditions.length ? recentAdditions.slice(0, 24) : filteredGames(false).slice(0, 14), "poster", `${quotaHours} h restantes ce mois`);
           }
           if (ui.view === "steam" || ui.view === "epic" || ui.view === "gog") {
             push("Installés sur ce Mac", all.filter((g) => g.installed).slice(0, 24), "poster", "", true);
@@ -3914,7 +4033,7 @@
           const box = $("gameRows");
           if (!box) return;
           const sections = rowSections();
-          const signature = JSON.stringify([ui.view, ui.artworkGeneration, sections, state.renderProtectionEnabled]);
+          const signature = ui.view + ":" + (ui.artworkGeneration || 0) + ":" + (state.renderProtectionEnabled ? "1" : "0") + ":" + sections.map((s) => s.title + "#" + (s.games || []).map((g) => g.id).join(",")).join(";");
           if (box.dataset.signature === signature) return;
           box.dataset.signature = signature;
           for (const node of box.querySelectorAll(".game-card")) node.disposeArtwork?.();
@@ -6147,7 +6266,6 @@
           if (pane.dataset.signature === signature) return;
           pane.dataset.signature = signature;
           discover.renderStore(pane, ui.view);
-          requestHub();
         }
         function renderLibrary() {
           renderPlatformShowcase();
@@ -6166,26 +6284,7 @@
           const visible = games.slice(0, ui.limit),
             visibleIds = new Set(visible.map((g) => g.id));
           visible.forEach((game, index) => {
-            const signature = JSON.stringify([
-              ui.artworkGeneration,
-              ui.view,
-              game.title,
-              game.store,
-              game.installed,
-              game.installSource,
-              game.lastPlayed,
-              game.playtime,
-              platforms(game),
-              game.canLaunch,
-              game.canInstall,
-              game.canInstallAndPlay,
-              game.requiredRenderer,
-              game.requiredGraphicsAPI,
-              game.localPortraitURL,
-              game.localImageURL,
-              game.portraitImageURL,
-              game.imageURL,
-            ]);
+            const signature = (ui.artworkGeneration || 0) + "|" + ui.view + "|" + (game.installed ? 1 : 0) + "|" + (game.canLaunch ? 1 : 0) + "|" + (game.canInstall ? 1 : 0) + "|" + (game.lastPlayed || 0) + "|" + (game.playtime || 0) + "|" + game.title + "|" + game.store + "|" + (game.imageURL || "") + "|" + (game.portraitImageURL || "") + "|" + (game.localImageURL || "") + "|" + (game.localPortraitURL || "") + "|" + (game.canInstallAndPlay ? 1 : 0) + "|" + (game.requiredRenderer || "") + "|" + (game.requiredGraphicsAPI || "") + "|" + platforms(game).join(",");
             let cached = gameCardCache.get(game.id);
             if (!cached || cached.signature !== signature) {
               cached?.node.disposeArtwork?.();
@@ -6726,21 +6825,72 @@
           const stats = el("div", "pf-summary-stats"), stat = (v, n, accent) => { const d = el("div", "pf-stat" + (accent ? " is-accent" : "")); d.append(el("b", "", v), el("span", "", n)); stats.append(d); };
           const auto = state.services?.[id] === true;
           stat(auto ? "Connecté" : "Ajouté", auto ? "session détectée dans Playmelt" : "ajouté par toi", true);
+
+          const GEFORCE_TIERS = {
+            performance: { id: "performance", name: "Performance", quota: 100, sessionLimit: "6 h max / session", spec: "Jusqu’à 1440p · RTX ON", desc: "100 h/mois · 6 h max par session (report 15 h max)" },
+            ultimate: { id: "ultimate", name: "Ultimate", quota: 100, sessionLimit: "8 h max / session", spec: "Jusqu’à 4K 120/240 FPS · RTX 4080/5080", desc: "100 h/mois · 8 h max par session (report 15 h max)" },
+            founders: { id: "founders", name: "Fondateur", quota: -1, sessionLimit: "6 h max / session", spec: "Avantage pionnier à vie", desc: "Temps mensuel illimité · 6 h max par session" },
+            free: { id: "free", name: "Gratuit", quota: 0, sessionLimit: "1 h max / session", spec: "Accès standard · File d’attente", desc: "Sessions limitées à 1 h · File d’attente standard" }
+          };
+          const u = hub.geforceUsage || {};
+          const activeTierKey = u.tier || localStorage.getItem("playmelt_geforce_tier") || "performance";
+          const currentTier = GEFORCE_TIERS[activeTierKey] || GEFORCE_TIERS.performance;
+
           let playable = [];
           if (id === "geforce") {
             playable = geforcePlayable();
-            stat(hub.geforce ? locale.format(hub.geforce.length) : "…", "jeux sur le service");
+            if (currentTier.quota > 0) {
+              const rem = typeof u.remainingHours === "number" ? u.remainingHours : 100;
+              const usedSec = u.usedSeconds || 0;
+              const usedH = Math.round((usedSec / 3600) * 10) / 10;
+              stat(`${rem} h restantes`, `sur 100 h ce mois${usedH > 0 ? " (" + usedH + " h jouées)" : ""}`, true);
+            } else if (currentTier.quota < 0) {
+              stat("Illimité", "temps mensuel (Avantage Fondateur)", true);
+            } else {
+              stat("1 h max", "par session (accès gratuit)");
+            }
+            stat(currentTier.sessionLimit, currentTier.spec);
             stat(hub.geforce ? locale.format(playable.length) : "…", "de tes jeux jouables en cloud", true);
-            stat(locale.format(playable.filter((g) => g.store === "steam").length), "via Steam");
-            stat(locale.format(playable.filter((g) => g.store === "epic").length), "via Epic Games");
+            stat(locale.format(playable.filter((g) => g.store === "steam").length) + " Steam · " + locale.format(playable.filter((g) => g.store === "epic").length) + " Epic", "catalogue compatible");
           } else {
             stat(s.kind === "cloud" ? "0 Go" : "Boutique", s.kind === "cloud" ? "à installer sur ton Mac" : "et compte ouverts dans Playmelt");
           }
-          const quip = id === "geforce" && playable.length ? `${locale.format(playable.length)} de tes jeux tournent sur des PC NVIDIA, même ceux qui ne sont pas faits pour Mac.`
+          const quip = id === "geforce"
+            ? (currentTier.id === "founders"
+                ? `Formule Fondateur : tu bénéficies du temps de jeu mensuel illimité sans quota de 100 h, avec des sessions jusqu'à 6 h. ${locale.format(playable.length)} de tes jeux sont compatibles.`
+                : currentTier.id === "free"
+                ? `Formule Gratuite : sessions limitées à 1 h continue avec file d'attente standard. ${locale.format(playable.length)} de tes jeux sont compatibles en cloud.`
+                : `Formule ${currentTier.name} : quota de 100 h de jeu par mois (jusqu'à 15 h non consommées reportées), sessions de ${currentTier.sessionLimit}. ${locale.format(playable.length)} de tes jeux tournent sur les serveurs NVIDIA.`)
             : id === "amazon" ? "Luna se joue dans le cloud : pas d’installation, pas de mise à jour à attendre."
             : s.tagline;
           band.append(head, stats, el("p", "pf-summary-quip", quip));
+
+          if (id === "geforce") {
+            const tierBar = el("div", "svc-tier-bar");
+            tierBar.setAttribute("role", "radiogroup");
+            tierBar.setAttribute("aria-label", "Formule d'abonnement GeForce NOW");
+            for (const [tKey, tMeta] of Object.entries(GEFORCE_TIERS)) {
+              const btn = el("button", "svc-tier-btn" + (tKey === currentTier.id ? " is-active" : ""));
+              btn.type = "button";
+              btn.append(el("strong", "", tMeta.name), el("span", "", tMeta.quota > 0 ? tMeta.quota + " h/mois" : tMeta.quota < 0 ? "Illimité" : "1 h/session"));
+              btn.addEventListener("click", () => {
+                localStorage.setItem("playmelt_geforce_tier", tKey);
+                if (hub.geforceUsage) hub.geforceUsage.tier = tKey;
+                send("setGeForceTier", { tier: tKey });
+                updateToolbar();
+                renderServicePage(pane, id);
+              });
+              tierBar.append(btn);
+            }
+            band.append(tierBar);
+          }
+
           pane.append(band);
+
+          if (id === "geforce" && ["performance", "ultimate"].includes(currentTier.id) && typeof u.remainingHours === "number" && u.remainingHours <= 15) {
+            pane.append(el("div", "svc-quota-warning", `Attention : il ne te reste que ${u.remainingHours} h de jeu ce mois-ci sur ton quota GeForce NOW de 100 heures.`));
+          }
+
           const actions = el("div", "svc-actions");
           const open = el("button", "pf-action svc-open"); open.type = "button"; open.style.setProperty("--brand-a", s.a); open.style.setProperty("--brand-b", s.b);
           open.append(discover.glyph(id), el("span", "", id === "amazon" ? "Ouvrir Luna" : id === "geforce" ? "Jouer sur GeForce NOW" : "Ouvrir " + s.short));
@@ -6751,7 +6901,7 @@
           pane.append(actions);
           if (id === "geforce") {
             if (!hub.geforce) { pane.append(el("p", "discover-note", "Chargement du catalogue GeForce NOW…")); return; }
-            pane.append(rowHead("Jouables en cloud", "tes jeux disponibles sur GeForce NOW"));
+            pane.append(rowHead(`Jouables en cloud · Formule ${currentTier.name}`, `${locale.format(playable.length)} jeux compatibles · ${currentTier.desc}`));
             const grid = el("div", "svc-games");
             playable.sort((a, b) => b.playtime - a.playtime || b.lastPlayed - a.lastPlayed).slice(0, 60).forEach((g) => {
               const art = pageArtFor(g) || {}, t = el("button", "resume-tile store-" + g.store); t.type = "button";
@@ -6774,6 +6924,13 @@
           if (!Array.isArray(payload?.games)) return;
           hub.geforce = payload.games;
           renderServiceNav();
+          if (ui.view === "svc:geforce") renderHub();
+        };
+        window.onGeForceUsage = (payload) => {
+          if (!payload || typeof payload !== "object") return;
+          hub.geforceUsage = payload;
+          if (payload.tier) localStorage.setItem("playmelt_geforce_tier", payload.tier);
+          updateToolbar();
           if (ui.view === "svc:geforce") renderHub();
         };
         setInterval(() => { if (received && !document.hidden) send("checkServices"); }, 30000);
@@ -6923,7 +7080,18 @@
           if (ui.view === "profile") return discover.renderProfile(pane);
           if (isServiceView()) return renderServicePage(pane, ui.view.slice(4));
           if (!hub.feed) {
-            pane.append(el("div", "hub-skeleton"));
+            const feedStatus = el("div", "hub-feed-status");
+            feedStatus.style.cssText = "display: flex; align-items: center; gap: 10px; padding: 12px 18px; margin: 16px 0 20px; border-radius: 10px; background: rgba(220, 90, 46, 0.08); border: 1px solid rgba(220, 90, 46, 0.2); color: var(--brand, #dc5a2e); font-size: 12.5px; font-weight: 600;";
+            const spinner = el("span", "hub-status-spinner");
+            spinner.style.cssText = "width: 14px; height: 14px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; display: inline-block; animation: install-job-scan 0.8s linear infinite;";
+            const statusTxt = el("span", "", "Actualisation des jeux et nouveautés en direct…");
+            feedStatus.append(spinner, statusTxt);
+            pane.append(feedStatus);
+            if (state.games && state.games.length) {
+              renderHomeBoards(pane);
+            } else {
+              pane.append(el("div", "hub-skeleton"));
+            }
             return;
           }
           const slides = heroSlides();
@@ -7010,7 +7178,13 @@
           );
           pane.append(bar);
           if (!hub.feed) {
-            pane.append(el("div", "hub-skeleton"));
+            const feedStatus = el("div", "hub-feed-status");
+            feedStatus.style.cssText = "display: flex; align-items: center; gap: 10px; padding: 12px 18px; margin: 16px 0 20px; border-radius: 10px; background: rgba(220, 90, 46, 0.08); border: 1px solid rgba(220, 90, 46, 0.2); color: var(--brand, #dc5a2e); font-size: 12.5px; font-weight: 600;";
+            const spinner = el("span", "hub-status-spinner");
+            spinner.style.cssText = "width: 14px; height: 14px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; display: inline-block; animation: install-job-scan 0.8s linear infinite;";
+            const statusTxt = el("span", "", "Actualisation des actus et correctifs en direct…");
+            feedStatus.append(spinner, statusTxt);
+            pane.append(feedStatus, el("div", "hub-skeleton"));
             return;
           }
           const scope = (x) => (!platform || storeOf(x) === platform) && (hub.newsScope !== "mine" || isMyNews(x));
@@ -7279,7 +7453,11 @@
           const nextGames = Array.isArray(incoming.games)
             ? incoming.games.map(normalizedGame).filter((g) => g.id)
             : state.games;
-          const signature = JSON.stringify(nextGames);
+          // Every displayed field of every game, by cheap concatenation: a game in the
+          // middle of the list that finishes installing must still refresh its card,
+          // while progress-only or protection-only states never rebuild the grid.
+          const gameKey = (g) => [g.id, g.installed ? 1 : 0, g.canLaunch ? 1 : 0, g.canInstall ? 1 : 0, g.canInstallAndPlay ? 1 : 0, g.lastPlayed || 0, g.playtime || 0, g.title, g.store, g.requiredRenderer || "", g.requiredGraphicsAPI || "", g.launchBlockReason || "", g.imageURL || "", g.portraitImageURL || "", g.localImageURL || "", g.localPortraitURL || "", Array.isArray(g.platforms) ? g.platforms.join(",") : g.platform || ""].join("|");
+          const signature = nextGames.map(gameKey).join("\n");
           const libraryChanged = !received || signature !== lastGamesSignature;
           lastGamesSignature = signature;
           state = {
@@ -7394,8 +7572,6 @@
         };
         window.onNativeResult = (result) => {
           if (result?.ok === false && typeof releaseFreshInstallActions === "function") releaseFreshInstallActions();
-          // Le suivi de lancement remplace ce message par une attente explicite avec minuteur.
-          if (result?.ok !== false && typeof result?.message === "string" && result.message.startsWith("Ouverture de ")) return;
           if (
             result?.ok === false &&
             typeof ui.pendingRenderProtection === "boolean"
@@ -7420,13 +7596,18 @@
           const clock =
             Math.floor(elapsed / 60) + ":" + String(elapsed % 60).padStart(2, "0");
           if (payload.state === "running") {
-            notify("« " + payload.title + " » est lancé.");
+            ui.toastNotification = null;
+            notify("« " + payload.title + " » est lancé et actif !");
             return;
           }
-          if (payload.state === "ended") {
+          if (payload.state === "ended" || payload.state === "failed") {
+            const hasError = payload.state === "failed" || (typeof payload.code === "number" && payload.code !== 0);
+            ui.toastNotification = null;
             notify(
-              "« " + payload.title + " » s’est arrêté avant d’afficher sa fenêtre.",
-              true,
+              hasError
+                ? "« " + payload.title + " » s’est arrêté de manière inattendue (code " + (payload.code ?? 1) + ")."
+                : "« " + payload.title + " » est fermé.",
+              hasError,
             );
             return;
           }
@@ -7436,8 +7617,8 @@
             message: stalled
               ? "« " + payload.title + " » ne s’affiche toujours pas après " +
                 clock + ". Si la fenêtre reste noire, fermez-la et relancez le jeu."
-              : "Lancement de « " + payload.title + " » — préparation en cours (" +
-                clock + ").",
+              : "Lancement de « " + payload.title + " » — chargement en cours (" +
+                clock + ")…",
             error: stalled,
             mode: "expanded",
             sticky: true,
@@ -7456,10 +7637,14 @@
             if ($("gameDialog").open) $("gameDialog").close();
             updateToolbar();
             // Chaque ouverture de la vue Xbox garantit un catalogue à jour (silencieux si frais).
-            if (ui.view === "xbox") send("checkXbox");
+            if (ui.view === "xbox" && Date.now() - (ui.lastXboxCheck || 0) > 120000) { ui.lastXboxCheck = Date.now(); send("checkXbox"); }
+            if (["home", "news", "offers", "steam", "epic", "gog"].includes(ui.view)) {
+              const feedAge = Date.now() / 1000 - (hub.feed?.fetchedAt || 0);
+              if (!hub.feed || feedAge > 900) requestHub(feedAge > 3600);
+            }
             if (ui.view === "diagnostics") renderDiagnostics();
             else if (ui.view === "installManager") renderInstallManager();
-            else if (["home", "news", "offers", "profile"].includes(ui.view) || isServiceView()) { renderHub(); requestHub(); if (isServiceView()) send("checkServices"); }
+            else if (["home", "news", "offers", "profile"].includes(ui.view) || isServiceView()) { renderHub(); if (isServiceView()) send("checkServices"); }
             else renderLibrary();
           }
         }

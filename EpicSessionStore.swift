@@ -26,6 +26,12 @@ enum EpicKeychainBackend: String {
     case dataProtection = "data-protection"
     case internalLogin = "internal-login"
     case clientLogin = "client-login"
+    /// Repli chiffré pour une signature ad hoc : le Trousseau de protection des
+    /// données refuse toute écriture sans droit d’équipe (errSecMissingEntitlement),
+    /// ce qui perdait la session à chaque redémarrage. Ce backend utilise le
+    /// Trousseau de session (fichier chiffré), jamais un secret en clair sur disque,
+    /// avec une ACL liée au chemin stable de l’exécutable Playmelt.
+    case sharedLogin = "shared-login"
     static func configured(info: [String: Any] = Bundle.main.infoDictionary ?? [:]) -> Self {
         func boolean(_ key: String) -> Bool? {
             guard let value = info[key] as? NSNumber,
@@ -44,6 +50,7 @@ enum EpicKeychainBackend: String {
         case .dataProtection: return EpicKeychainSessionStore.service
         case .internalLogin: return "fr.playmelt.epic.session.internal.v1"
         case .clientLogin: return "fr.playmelt.epic.session.client-login.v1"
+        case .sharedLogin: return "fr.playmelt.epic.session.shared.v1"
         }
     }
 }
@@ -128,17 +135,31 @@ final class EpicKeychainSessionStore: EpicSessionStoring {
     private(set) var restorationNotice = ""
     static let service = "fr.playmelt.epic.session.v1"
     static let account = "primary"
-    private let backend: EpicKeychainBackend
+    private(set) var backend: EpicKeychainBackend
     var persistenceBackend: String { backend.rawValue }
     private let access: EpicKeychainAccess
     private let legacyFileURL: URL?
-    init(access: EpicKeychainAccess? = nil, legacyFileURL: URL? = nil, backend: EpicKeychainBackend = .configured()) {
+    private let legendaryFileURL: URL?
+    private let accessBuilder: () -> SecAccess?
+    init(access: EpicKeychainAccess? = nil, legacyFileURL: URL? = nil, backend: EpicKeychainBackend = .configured(),
+         accessBuilder: (() -> SecAccess?)? = nil, legendaryFileURL: URL? = nil) {
         self.access = access ?? EpicSecurityAccess()
         self.backend = backend
+        self.accessBuilder = accessBuilder ?? { nil }
         // Mock transports never inspect a real user's legacy file by default.
         self.legacyFileURL = legacyFileURL ?? (access == nil ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt/.epic_session.dat") : nil)
+        // Session déjà rafraîchie par le client Legendary officiel utilisé pour
+        // les lanceurs directs. Migration en lecture seule, jamais réécrite.
+        self.legendaryFileURL = legendaryFileURL ?? (access == nil ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/legendary/user.json") : nil)
     }
-    private func query() -> [String: Any] {
+    private static func trustedAccess(path: String?) -> SecAccess? {
+        var trusted: SecTrustedApplication?
+        guard SecTrustedApplicationCreateFromPath(path, &trusted) == errSecSuccess, let trusted else { return nil }
+        var access: SecAccess?
+        guard SecAccessCreate("Session Epic Playmelt" as CFString, [trusted] as CFArray, &access) == errSecSuccess else { return nil }
+        return access
+    }
+    private func query(for backend: EpicKeychainBackend) -> [String: Any] {
         var request: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: backend.service, kSecAttrAccount as String: Self.account,
             kSecUseDataProtectionKeychain as String: backend == .dataProtection,
@@ -154,6 +175,7 @@ final class EpicKeychainSessionStore: EpicSessionStoring {
         request[kSecUseAuthenticationContext as String] = context
         return request
     }
+    private func query() -> [String: Any] { query(for: backend) }
     private func legacyData(_ file: URL) throws -> Data {
         let fd = open(file.path, O_RDONLY | O_NOFOLLOW)
         guard fd >= 0 else { throw EpicSessionStoreError.invalidData }
@@ -170,49 +192,147 @@ final class EpicKeychainSessionStore: EpicSessionStoring {
     private let ignoreBytes = Data("Playmelt legacy session explicitly disconnected.\n".utf8)
     func load() throws -> [String: Any]? {
         restorationNotice = ""
-        var request = query()
-        request[kSecReturnData as String] = true
-        request[kSecMatchLimit as String] = kSecMatchLimitOne
-        let (status, data) = access.copy(request)
+        var (status, data) = read(backend)
+        if status == errSecMissingEntitlement, backend == .dataProtection {
+            // Signature ad hoc : le Trousseau de protection des données ne peut
+            // pas écrire ni lire sans droit d’équipe. La session vit alors dans
+            // le Trousseau de session chiffré, lié au chemin de Playmelt.
+            backend = .sharedLogin
+            (status, data) = read(backend)
+        }
+        if backend == .dataProtection, status == errSecItemNotFound {
+            // Une exécution ad hoc précédente a pu persister dans le backend
+            // partagé. Il prime sur l’ancien fichier, sinon un jeton expiré
+            // écraserait la session valide à chaque démarrage.
+            let (sharedStatus, sharedData) = read(.sharedLogin)
+            if sharedStatus == errSecSuccess {
+                guard let sharedData else { throw EpicSessionStoreError.invalidData }
+                backend = .sharedLogin
+                persistenceKind = "keychain"
+                return try EpicSessionEnvelope.decode(sharedData)
+            }
+            if sharedStatus != errSecItemNotFound, sharedStatus != errSecMissingEntitlement {
+                throw EpicSessionStoreError.keychain(sharedStatus)
+            }
+        }
         if status == errSecSuccess {
             guard let data else { throw EpicSessionStoreError.invalidData }
             persistenceKind = "keychain"
             return try EpicSessionEnvelope.decode(data)
         }
-        if let ignored = legacyIgnoreURL, FileManager.default.fileExists(atPath: ignored.path) {
-            guard try legacyData(ignored) == ignoreBytes else { throw EpicSessionStoreError.invalidData }
-        } else if let file = legacyFileURL, FileManager.default.fileExists(atPath: file.path) {
-            let session = try EpicSessionEnvelope.decode(legacyData(file))
-            do { try save(session) }
-            catch {
-                persistenceKind = "memory"
-                restorationNotice = EpicSessionStoreError.publicMessage(error) + " L’ancienne session a été reprise en mémoire ; son fichier reste inchangé."
+        if status == errSecItemNotFound {
+            // La session Legendary officielle est souvent plus récente que
+            // l'ancien fichier Playmelt. Elle est lue sans être modifiée, puis
+            // migrée dans le Trousseau. Cela évite une reconnexion après un
+            // redéploiement.
+            if let legendary = newestExternalSession() {
+                do { try save(legendary) }
+                catch {
+                    persistenceKind = "memory"
+                    restorationNotice = EpicSessionStoreError.publicMessage(error) + " La session Legendary a été reprise en mémoire ; son fichier reste inchangé."
+                }
+                return legendary
             }
-            return session
+            if let ignored = legacyIgnoreURL, FileManager.default.fileExists(atPath: ignored.path) {
+                guard try legacyData(ignored) == ignoreBytes else { throw EpicSessionStoreError.invalidData }
+            } else if let file = legacyFileURL, FileManager.default.fileExists(atPath: file.path) {
+                let session = try EpicSessionEnvelope.decode(legacyData(file))
+                do { try save(session) }
+                catch {
+                    persistenceKind = "memory"
+                    restorationNotice = EpicSessionStoreError.publicMessage(error) + " L’ancienne session a été reprise en mémoire ; son fichier reste inchangé."
+                }
+                return session
+            }
+            return nil
         }
-        if status == errSecItemNotFound { return nil }
         throw EpicSessionStoreError.keychain(status)
+    }
+    /// Session écrite par le CLI Legendary du lanceur direct. Lecture seule,
+    /// fichiers réguliers appartenant à l'utilisateur, taille bornée.
+    private func newestExternalSession() -> [String: Any]? {
+        let fm = FileManager.default
+        guard let legendary = legendaryFileURL, fm.fileExists(atPath: legendary.path) else { return nil }
+        func modified(_ url: URL) -> TimeInterval {
+            ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        }
+        if let legacy = legacyFileURL, fm.fileExists(atPath: legacy.path), modified(legacy) > modified(legendary) { return nil }
+        guard let data = try? externalData(legendary),
+              let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              (try? EpicSessionEnvelope.validate(raw)) != nil else { return nil }
+        return raw
+    }
+    private func externalData(_ file: URL) throws -> Data {
+        let fd = open(file.path, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { throw EpicSessionStoreError.invalidData }
+        defer { close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+              info.st_uid == getuid(), info.st_nlink == 1,
+              (info.st_mode & 0o022) == 0,
+              info.st_size > 0, info.st_size <= EpicSessionEnvelope.maximumBytes else { throw EpicSessionStoreError.invalidData }
+        let data = try FileHandle(fileDescriptor: fd, closeOnDealloc: false).readToEnd() ?? Data()
+        guard data.count <= EpicSessionEnvelope.maximumBytes else { throw EpicSessionStoreError.invalidData }
+        return data
+    }
+    private func read(_ backend: EpicKeychainBackend) -> (OSStatus, Data?) {
+        var request = query(for: backend)
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
+        return access.copy(request)
     }
     func save(_ session: [String: Any]) throws {
         let data = try EpicSessionEnvelope.encode(session)
-        let request = query()
+        do { try write(data) }
+        catch EpicSessionStoreError.keychain(let status)
+            where status == errSecMissingEntitlement && backend == .dataProtection {
+            backend = .sharedLogin
+            try write(data)
+        }
+    }
+    private func write(_ data: Data) throws {
+        var request = query()
         var values: [String: Any] = [kSecValueData as String: data]
-        // kSecAttrAccessible is a data-protection keychain contract, not an
-        // equivalent protection class on macOS's file-based login keychain.
         if backend == .dataProtection {
             values[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        } else if backend == .sharedLogin, let acl = accessBuilder() {
+            values[kSecAttrAccess as String] = acl
         }
         var status = access.update(request, attributes: values)
         if status == errSecItemNotFound {
             status = access.add(request.merging(values) { _, new in new })
             if status == errSecDuplicateItem { status = access.update(request, attributes: values) }
         }
+        if backend == .sharedLogin,
+           [errSecAuthFailed, errSecInteractionNotAllowed].contains(status) {
+            let deleted = access.delete(query())
+            if deleted == errSecSuccess || deleted == errSecItemNotFound {
+                status = access.add(request.merging(values) { _, new in new })
+            }
+        }
         guard status == errSecSuccess else { persistenceKind = "memory"; throw EpicSessionStoreError.keychain(status) }
         persistenceKind = "keychain"
     }
     func clear() throws {
-        let status = access.delete(query())
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw EpicSessionStoreError.keychain(status) }
+        var targets: [EpicKeychainBackend] = [backend]
+        if backend == .dataProtection || backend == .sharedLogin { targets = [.dataProtection, .sharedLogin] }
+        var firstFailure: OSStatus?
+        for target in targets {
+            let status = access.delete(query(for: target))
+            if status != errSecSuccess, status != errSecItemNotFound, status != errSecMissingEntitlement,
+               firstFailure == nil {
+                firstFailure = status
+            }
+        }
+        if let firstFailure { throw EpicSessionStoreError.keychain(firstFailure) }
+        for target in targets {
+            let status = access.delete(query(for: target))
+            if status != errSecSuccess, status != errSecItemNotFound, status != errSecMissingEntitlement,
+               firstFailure == nil {
+                firstFailure = status
+            }
+        }
+        if let firstFailure { throw EpicSessionStoreError.keychain(firstFailure) }
         // Keep the old credential bytes untouched, but do not silently resurrect
         // a deliberately disconnected legacy session on the next app launch.
         if let file = legacyFileURL, FileManager.default.fileExists(atPath: file.path), let ignored = legacyIgnoreURL {

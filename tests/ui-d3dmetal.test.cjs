@@ -195,7 +195,7 @@ context.ui.view = "library";
 context.ui.pendingRenderProtection = false;
 context.state.renderProtectionEnabled = true;
 context.received = true;
-context.lastGamesSignature = JSON.stringify(context.state.games);
+context.lastGamesSignature = "";
 context.normalizedGame = (g) => g;
 let experienceSyncs = 0;
 context.appIntro = { after(callback) { callback(); } };
@@ -203,17 +203,34 @@ context.onboarding = { suggest() {} };
 context.accountLogin = { sync() {} };
 context.experience = { sync: () => { experienceSyncs++; } };
 context.updateSidebar = () => {};
-context.renderLibrary = () => {
-  throw Error("Protection changes must not rebuild covers");
-};
+let libraryRenders = 0;
+context.renderLibrary = () => { libraryRenders++; };
 vm.runInNewContext(
   section("window.onNativeState =", "window.onNativeRuntime ="),
   context,
 );
+// Prime the library signature with a first native state, as the app does at start.
+context.window.onNativeState({});
+assert.equal(libraryRenders, 1, "First native library state renders the covers once");
+context.renderLibrary = () => {
+  throw Error("Protection changes must not rebuild covers");
+};
 context.window.onNativeState({ renderProtectionEnabled: false });
 assert.equal(context.ui.pendingRenderProtection, null);
 assert.equal(api.renderProtectionEnabled(), false);
 assert.equal(api.createRenderProtectionControl().children[0].checked, false);
+{
+  // Same games, same order, same first/last ids: one install state change must still refresh covers.
+  const renderLibrary = context.renderLibrary;
+  let refreshed = 0;
+  context.renderLibrary = () => { refreshed++; };
+  const changed = context.state.games.map((g, i) => (i === 0 ? { ...g, installed: !g.installed } : g));
+  context.window.onNativeState({ games: changed });
+  assert.equal(refreshed, 1, "An install state change refreshes the covers");
+  context.window.onNativeState({ games: changed });
+  assert.equal(refreshed, 1, "An identical library state does not rebuild covers");
+  context.renderLibrary = renderLibrary;
+}
 context.state.renderProtectionEnabled = true;
 context.ui.pendingRenderProtection = false;
 vm.runInNewContext(

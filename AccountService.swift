@@ -134,10 +134,24 @@ enum LaunchTicket {
     }
 }
 private enum AccountKeychain {
-    static var query:[String:Any] {[kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:"com.playmelt.account.v1",kSecAttrAccount as String:"desktop",kSecAttrSynchronizable as String:false]}
-    static func read()->AccountRecord? {var q=query;q[kSecReturnData as String]=true;q[kSecMatchLimit as String]=kSecMatchLimitOne;var item:CFTypeRef?;guard SecItemCopyMatching(q as CFDictionary,&item)==errSecSuccess,let data=item as? Data else{return nil};return try? JSONDecoder().decode(AccountRecord.self,from:data)}
-    static func write(_ record:AccountRecord)throws {let data=try JSONEncoder().encode(record),attributes:[String:Any]=[kSecValueData as String:data,kSecAttrAccessible as String:kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly];var status=SecItemUpdate(query as CFDictionary,attributes as CFDictionary);if status==errSecItemNotFound {status=SecItemAdd(query.merging(attributes){_,new in new} as CFDictionary,nil)};guard status==errSecSuccess else {throw NSError(domain:NSOSStatusErrorDomain,code:Int(status))}}
-    static func clear(){SecItemDelete(query as CFDictionary)}
+    static var fileURL: URL {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Playmelt")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent(".account_session.dat")
+    }
+    static func read() -> AccountRecord? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        return try? JSONDecoder().decode(AccountRecord.self, from: data)
+    }
+    static func write(_ record: AccountRecord) throws {
+        let data = try JSONEncoder().encode(record)
+        let url = fileURL
+        try data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+    static func clear() {
+        try? FileManager.default.removeItem(at: fileURL)
+    }
 }
 private final class AccountRedirectGuard:NSObject,URLSessionTaskDelegate {
     func urlSession(_ session:URLSession,task:URLSessionTask,willPerformHTTPRedirection response:HTTPURLResponse,newRequest request:URLRequest,completionHandler:@escaping(URLRequest?)->Void){completionHandler(nil)}

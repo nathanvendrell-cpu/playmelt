@@ -123,6 +123,15 @@ def main():
         fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
         def require_idle():
             active=subprocess.run(['/usr/sbin/lsof','-t','+D',str(prefix)],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=25,env={'PATH':'/usr/bin:/bin','LC_ALL':'C'})
+            if active.returncode!=1 or active.stdout or active.stderr:
+                server = root / 'Runtime/playmelt-wine10-dxmt-20261017/PlaymeltGame.app/Contents/MacOS/wineserver'
+                if not server.is_file():
+                    server = root / 'Runtime/playmelt-wine10-dxmt-20261017/engine/bin/wineserver'
+                if server.is_file() and os.access(server, os.X_OK):
+                    subprocess.run([str(server), '-k'], env=dict(os.environ, WINEPREFIX=str(prefix)), timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run([str(server), '-w'], env=dict(os.environ, WINEPREFIX=str(prefix)), timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    time.sleep(0.5)
+                    active=subprocess.run(['/usr/sbin/lsof','-t','+D',str(prefix)],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=25,env={'PATH':'/usr/bin:/bin','LC_ALL':'C'})
             if active.returncode!=1 or active.stdout or active.stderr:raise ValueError('Ferme les applications Windows de cet environnement avant de changer son affichage.')
         config=None
         if sys.argv[2]==FFVII:

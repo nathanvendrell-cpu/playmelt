@@ -25,6 +25,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import stat
 import sys
@@ -391,9 +392,14 @@ def install_owned(core, request, game, account, root=None):
     dlm = None
     try:
         dlm, analysis, install = core.prepare_download(game, base_path=str(base), game_folder=destination.name,
-            platform=platform, max_workers=workers, max_shm=memory, dl_timeout=20,
+            platform=platform, max_workers=workers, max_shm=memory, dl_timeout=45,
             preferred_cdn="egdownload.fastly-edge.com", disable_https=False)
         if Path(install.install_path).resolve() != destination: raise OperationError("invalidInstallation")
+        # Ensure disk space check with safe margin
+        usage = shutil.disk_usage(str(base))
+        needed = getattr(analysis, 'disk_size', 0) or getattr(analysis, 'dl_size', 0) or 0
+        if needed > 0 and usage.free < (needed + 1024 * 1024 * 1024):
+            raise OperationError("insufficientDiskSpace")
         conditions = core.check_installation_conditions(analysis, install, game, updating=False, ignore_space_req=False)
         if conditions.failures: raise OperationError("installationFailed")
         if analysis.dl_size:

@@ -4,8 +4,13 @@ import WebKit
 /// Remote content stays in the existing app window and never receives the
 /// local library's script bridge or file access.
 final class HubBrowserPanel: NSObject, WKNavigationDelegate, WKUIDelegate {
+    static let sharedProcessPool = WKProcessPool()
+    static let browserStoreID = UUID(uuidString: "8BCDA5D0-5533-4672-A758-B265EF735D87")!
+    static let sharedStore = WKWebsiteDataStore(forIdentifier: browserStoreID)
     var onXboxCloud:((URL)->Void)?
     var authorizeCloud:((@escaping(Bool,String)->Void)->Void)?
+    var onGeForceSessionCompleted: ((Int64) -> Void)?
+    private var geforceStartTime: Date?
     private var panel: NSView?
     private var browser: WKWebView?
     private let status = NSTextField(labelWithString: "")
@@ -18,6 +23,9 @@ final class HubBrowserPanel: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func open(_ url: URL, article: [String: Any]? = nil, over localView: WKWebView) {
         closePanel()
+        if url.host?.contains("geforcenow.com") == true {
+            geforceStartTime = Date()
+        }
         guard let parent = localView.superview else { return }
         let panel = NSVisualEffectView()
         panel.material = .windowBackground; panel.state = .active
@@ -31,7 +39,8 @@ final class HubBrowserPanel: NSObject, WKNavigationDelegate, WKUIDelegate {
             panel.bottomAnchor.constraint(equalTo: parent.bottomAnchor)
         ])
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = XboxCloudRoute.isCloudPage(url) ? XboxWebSession.store : article == nil ? WKWebsiteDataStore(forIdentifier: UUID(uuidString: "8BCDA5D0-5533-4672-A758-B265EF735D87")!) : .nonPersistent()
+        config.processPool = Self.sharedProcessPool
+        config.websiteDataStore = Self.sharedStore
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         let browser = WKWebView(frame: .zero, configuration: config)
         browser.navigationDelegate = self; browser.uiDelegate = self
@@ -61,6 +70,13 @@ final class HubBrowserPanel: NSObject, WKNavigationDelegate, WKUIDelegate {
         } else { browser.load(URLRequest(url: url)) }
     }
     @objc func closePanel() {
+        if let start = geforceStartTime {
+            geforceStartTime = nil
+            let elapsed = Int64(Date().timeIntervalSince(start))
+            if elapsed > 5 {
+                onGeForceSessionCompleted?(elapsed)
+            }
+        }
         generation = UUID(); articleTask?.cancel(); articleTask = nil; themeTask?.cancel(); themeTask = nil; article = nil
         browser?.stopLoading(); browser?.navigationDelegate = nil; browser?.uiDelegate = nil
         browser?.removeFromSuperview(); panel?.removeFromSuperview()
@@ -100,10 +116,25 @@ final class HubBrowserPanel: NSObject, WKNavigationDelegate, WKUIDelegate {
         articleTask?.resume()
     }
     static func permits(_ url: URL?) -> Bool {
-        guard let url, url.scheme == "https", url.host != nil, url.user == nil, url.password == nil, url.port == nil else { return false }
+        guard let url else { return false }
+        if url.absoluteString == "about:blank" { return true }
+        guard let scheme = url.scheme?.lowercased(), ["https", "http"].contains(scheme),
+              url.host != nil, url.user == nil, url.password == nil, url.port == nil else { return false }
         return true
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if let currentHost = webView.url?.host, currentHost.contains("geforcenow.com"),
+           let targetHost = action.request.url?.host, !targetHost.contains("geforcenow.com") {
+            if let start = geforceStartTime {
+                geforceStartTime = nil
+                let elapsed = Int64(Date().timeIntervalSince(start))
+                if elapsed > 5 {
+                    onGeForceSessionCompleted?(elapsed)
+                }
+            }
+        } else if let targetHost = action.request.url?.host, targetHost.contains("geforcenow.com"), geforceStartTime == nil {
+            geforceStartTime = Date()
+        }
         if let url=action.request.url,XboxCloudRoute.isCloudPage(url),action.targetFrame?.isMainFrame != false,let onXboxCloud {
             decisionHandler(.cancel);DispatchQueue.main.async{onXboxCloud(url)};return
         }
@@ -121,7 +152,7 @@ final class HubBrowserPanel: NSObject, WKNavigationDelegate, WKUIDelegate {
         if let url=action.request.url,Self.permits(url),["checkout.stripe.com","billing.stripe.com"].contains(url.host ?? ""),action.targetFrame?.isMainFrame != false {
             decisionHandler(.cancel);NSWorkspace.shared.open(url);return
         }
-        if article != nil, action.navigationType == .other, action.request.url?.absoluteString == "about:blank" {
+        if action.request.url?.absoluteString == "about:blank" {
             decisionHandler(.allow); return
         }
         if action.navigationType == .linkActivated,
@@ -150,6 +181,7 @@ final class HubBrowserPanel: NSObject, WKNavigationDelegate, WKUIDelegate {
         status.stringValue = (webView.url?.scheme == "https" ? nil : article).map { "Steam · " + ($0["gameTitle"] as? String ?? "Actualité") }
             ?? [webView.url?.host, webView.title].compactMap { $0 }.joined(separator: " · ")
         previous?.isEnabled = webView.canGoBack; next?.isEnabled = webView.canGoForward
+        UnifiedBrowserSessionManager.synchronizeAllSessions()
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code != NSURLErrorCancelled { status.stringValue = "Page indisponible. Réessayez avec Actualiser." }
@@ -207,5 +239,145 @@ enum ConnectedServices {
                 completion(games)
             }
         }.resume()
+    }
+}
+
+/// Suivi de consommation et quotas d'heures GeForce NOW (Gratuit, Performance, Ultimate, Fondateur).
+struct GeForceUsage: Codable {
+    struct Session: Codable {
+        let timestamp: Double
+        let durationSeconds: Int64
+        let title: String?
+    }
+
+    var tier: String = "performance" // "free", "performance", "ultimate", "founders"
+    var sessions: [Session] = []
+    var rolloverSeconds: Int64 = 0 // heures reportées du mois précédent (max 15 h = 54 000 s)
+
+    static let performanceMonthlyQuotaSeconds: Int64 = 100 * 3600
+    static let ultimateMonthlyQuotaSeconds: Int64 = 100 * 3600
+    static let maxRolloverSeconds: Int64 = 15 * 3600
+
+    static func fileURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        home.appendingPathComponent("Library/Application Support/Playmelt/geforce-cloud-usage.json")
+    }
+
+    static func load(from url: URL) -> GeForceUsage {
+        guard let data = try? Data(contentsOf: url),
+              let usage = try? JSONDecoder().decode(GeForceUsage.self, from: data) else {
+            return GeForceUsage()
+        }
+        return usage
+    }
+
+    func save(to url: URL) {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    func usedSecondsThisMonth(now: Date = Date()) -> Int64 {
+        let calendar = Calendar.current
+        let currentMonth = calendar.component(.month, from: now)
+        let currentYear = calendar.component(.year, from: now)
+        return sessions.filter { session in
+            let date = Date(timeIntervalSince1970: session.timestamp)
+            return calendar.component(.month, from: date) == currentMonth &&
+                   calendar.component(.year, from: date) == currentYear
+        }.reduce(0) { $0 + $1.durationSeconds }
+    }
+
+    func sessionLimitHours() -> Int {
+        switch tier {
+        case "free": return 1
+        case "performance": return 6
+        case "ultimate": return 8
+        case "founders": return 6
+        default: return 6
+        }
+    }
+
+    func monthlyQuotaSeconds() -> Int64? {
+        switch tier {
+        case "free": return nil
+        case "performance": return Self.performanceMonthlyQuotaSeconds + min(max(0, rolloverSeconds), Self.maxRolloverSeconds)
+        case "ultimate": return Self.ultimateMonthlyQuotaSeconds + min(max(0, rolloverSeconds), Self.maxRolloverSeconds)
+        case "founders": return -1
+        default: return Self.performanceMonthlyQuotaSeconds
+        }
+    }
+
+    func remainingHoursThisMonth(now: Date = Date()) -> Int? {
+        guard let quota = monthlyQuotaSeconds() else { return nil }
+        if quota < 0 { return -1 }
+        let used = usedSecondsThisMonth(now: now)
+        let remaining = max(0, quota - used)
+        return max(0, Int(ceil(Double(remaining) / 3600.0)))
+    }
+
+    func payload(now: Date = Date()) -> [String: Any] {
+        let used = usedSecondsThisMonth(now: now)
+        let remHours = remainingHoursThisMonth(now: now)
+        let limitHours = sessionLimitHours()
+        let quota = monthlyQuotaSeconds()
+
+        var dict: [String: Any] = [
+            "tier": tier,
+            "sessionLimitHours": limitHours,
+            "usedSeconds": used,
+            "usedHours": Double(used) / 3600.0
+        ]
+        if let quota = quota {
+            if quota < 0 {
+                dict["isUnlimited"] = true
+                dict["monthlyQuotaHours"] = -1
+                dict["remainingHours"] = -1
+            } else {
+                dict["isUnlimited"] = false
+                dict["monthlyQuotaHours"] = Int(quota / 3600)
+                dict["remainingHours"] = remHours ?? 100
+                dict["remainingSeconds"] = max(0, quota - used)
+            }
+        } else {
+            dict["isPerSessionOnly"] = true
+            dict["monthlyQuotaHours"] = 0
+            dict["remainingHours"] = 0
+        }
+        return dict
+    }
+}
+
+final class GeForceUsageStore {
+    static let shared = GeForceUsageStore()
+    private let lock = NSLock()
+    private let url: URL
+    private var usage: GeForceUsage
+    private let now: () -> Date
+
+    init(home: URL = FileManager.default.homeDirectoryForCurrentUser, now: @escaping () -> Date = Date.init) {
+        let file = GeForceUsage.fileURL(home: home)
+        self.url = file
+        self.usage = GeForceUsage.load(from: file)
+        self.now = now
+    }
+
+    func recordSession(seconds: Int64, title: String? = nil) {
+        guard seconds > 5 else { return }
+        lock.lock(); defer { lock.unlock() }
+        usage.sessions.append(GeForceUsage.Session(timestamp: now().timeIntervalSince1970, durationSeconds: seconds, title: title))
+        usage.save(to: url)
+    }
+
+    func setTier(_ tier: String) {
+        guard ["free", "performance", "ultimate", "founders"].contains(tier) else { return }
+        lock.lock(); defer { lock.unlock() }
+        usage.tier = tier
+        usage.save(to: url)
+    }
+
+    func currentUsage() -> [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        return usage.payload(now: now())
     }
 }

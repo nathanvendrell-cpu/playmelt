@@ -9,7 +9,7 @@ function fixture(reduced=false){
  return {intro,nodes,timers,listeners};
 }
 test('intro is one bounded animation with the original local mark',()=>{
- const f=fixture();f.intro.start();f.intro.start();assert.equal(f.nodes.filter(n=>n.tag==='dialog').length,1);assert.equal(f.timers.size,1);assert.equal([...f.timers.values()][0].ms,3800);assert(f.nodes.filter(n=>n.tag==='img').every(n=>['PlaymeltMarkInk.png','PlaymeltMarkOrange.png','PlaymeltWordmark.png'].includes(n.src)));
+ const f=fixture();f.intro.start();f.intro.start();assert.equal(f.nodes.filter(n=>n.tag==='dialog').length,1);assert.equal(f.timers.size,1);assert.equal([...f.timers.values()][0].ms,1250);assert(f.nodes.filter(n=>n.tag==='img').every(n=>['PlaymeltMarkInk.png','PlaymeltMarkOrange.png','PlaymeltWordmark.png'].includes(n.src)));
  let finished=0;f.intro.after(()=>finished++);assert.equal(finished,0);[...f.timers.values()][0].fn();assert.equal(finished,1);assert.equal(f.timers.size,0);assert.equal(f.listeners.size,0);assert(f.nodes.find(n=>n.tag==='dialog').removed);f.intro.after(()=>finished++);assert.equal(finished,2);
 });
 test('Reduce Motion skips immediately without a timer or dialog',()=>{
