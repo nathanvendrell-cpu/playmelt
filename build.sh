@@ -6,7 +6,7 @@ BUNDLE_ID='com.robtech.metalmaxgaminghub'
 RELEASE_BUILD=0
 OWNER_BUILD=0
 PLAYMELT_VERSION="${PLAYMELT_VERSION:-2.2.1}"
-PLAYMELT_BUILD_NUMBER="${PLAYMELT_BUILD_NUMBER:-31}"
+PLAYMELT_BUILD_NUMBER="${PLAYMELT_BUILD_NUMBER:-35}"
 for argument in "$@"; do
   case "$argument" in
     --preview) APP_NAME='MetalMax Preview'; BUNDLE_ID='com.robtech.metalmaxgaminghub.preview' ;;
