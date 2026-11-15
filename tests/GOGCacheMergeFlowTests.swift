@@ -57,6 +57,8 @@ final class FixtureModel {
     var xboxConnector: FixtureXbox
     init(_ connector: GOGConnector, xbox: [Game]) { gogConnector = connector; xboxConnector = FixtureXbox(entries:xbox) }
     func makeScanRequest() -> UInt64 { scanGeneration += 1; return scanGeneration }
+    var persistedSnapshots = 0
+    func persistGamesSnapshot() { persistedSnapshots += 1 } // inert: no disk write
     func mergeVerified(_ list: [[String:Any]]) { fatalError("Unexpected authenticated fixture") }
     func mergeEpic(_ snapshot: Int) { fatalError("Unexpected authenticated fixture") }
     func updateLibraryStatus() {}
@@ -168,9 +170,10 @@ final class FixtureHandler {
 
         // The real selected-account/scan guards remain active.
         handler.refresh();let stale=LibraryScanSnapshot(generation:model.scanGeneration,requestedAccountID:model.selectedAccountID,selectedAccountID:model.selectedAccountID,steamGames:[steamMac],epicInstalledGames:[])
-        model.selectedAccountID="changed-fixture-account";let sent=handler.sentStates.count
+        model.selectedAccountID="changed-fixture-account";let sent=handler.sentStates.count,cached=model.games.map(properties)
         handler.libraryScanner.finish(stale)
-        try check(handler.sentStates.count==sent && handler.libraryScanner.requests.count==3,"actual applyScan rejects a stale account and actual refresh requests the current context")
+        // Since 429d7da the re-requested refresh repaints the cached library at once; the stale scan itself is never applied.
+        try check(handler.sentStates.count==sent+1 && handler.loading && model.games.map(properties)==cached && model.selectedAccountID=="changed-fixture-account" && handler.libraryScanner.requests.count==3,"actual applyScan rejects a stale account and actual refresh requests the current context")
         let current=LibraryScanSnapshot(generation:model.scanGeneration,requestedAccountID:model.selectedAccountID,selectedAccountID:model.selectedAccountID,steamGames:[steamMac,steamWindows,local],epicInstalledGames:[epic])
         handler.libraryScanner.finish(current)
         try check(model.selectedAccountID=="changed-fixture-account" && !handler.loading,"current selected account survives scan completion")

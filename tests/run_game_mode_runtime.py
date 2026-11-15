@@ -13,7 +13,9 @@ try:
     start = source.index("enum GameModeRuntime {")
     end = source.index("\nfunc localGameEnvironmentExports", start)
     extracted = scratch / "GameModeRuntime.swift"
-    extracted.write_text("import Foundation\n" + source[start:end])
+    # Inert Dock icon: the wrapper treats a missing icon as optional (if let).
+    stub = "\nenum GameDockRuntime { static func icnsData(from data: Data) -> Data? { nil } }\n"
+    extracted.write_text("import Foundation\n" + source[start:end] + stub)
     binary = scratch / "test"
     subprocess.run(["swiftc", str(extracted), str(root / "tests/GameModeRuntimeTests.swift"), "-o", str(binary)], check=True, timeout=60)
     subprocess.run([str(binary), str(scratch / "fixture")], check=True, timeout=20)
