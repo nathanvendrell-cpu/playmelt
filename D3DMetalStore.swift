@@ -108,6 +108,16 @@ final class D3DMetalStore {
         environment["WINEDLLOVERRIDES"] = "nvapi64,nvngx=b,n;" + (environment["WINEDLLOVERRIDES"] ?? "")
         return environment
     }
+    /// Client Steam DirectX 12 : les jeux héritent de l'environnement de steam.exe.
+    /// Pont présent → DLSS, DLSS Frame Generation, Ray Reconstruction et Reflex sont
+    /// traduits vers MetalFX par D3DMetal pour tout jeu Steam qui les propose.
+    /// Désactivable : `defaults write <bundle> PlaymeltSteamNvidiaBridgeDisabled -bool YES`.
+    static func steamClientEnvironment(_ preparationEnvironment: [String: String], bridgeWinePath: String?) -> [String: String] {
+        guard let bridgeWinePath, !bridgeWinePath.isEmpty, !bridgeWinePath.contains(":") else { return launchEnvironment(preparationEnvironment) }
+        var environment = nvidiaBridgeEnvironment(preparationEnvironment)
+        environment["WINEDLLPATH_PREPEND"] = [environment["WINEDLLPATH_PREPEND"] ?? "", bridgeWinePath].filter { !$0.isEmpty }.joined(separator: ":")
+        return environment
+    }
     func inspect(sourceURL: URL) throws -> [String: Any] { try inspectFiles(sourceURL).report }
 
     @discardableResult

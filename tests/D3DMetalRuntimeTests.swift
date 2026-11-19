@@ -102,7 +102,12 @@ private final class MockD3DRunner: D3DMetalCommandRunning {
         let descriptor=try runtime.descriptor(base:base)!
         expect(descriptor.prefixURL != base.prefixURL && descriptor.steamRoot != base.steamRoot,"prefix and Steam isolated")
         expect(descriptor.environment["DXMT_ENABLE_NVEXT"] == nil && !(descriptor.environment["WINEDLLPATH_PREPEND"] ?? "").contains("dxmt"),"no DXMT mixed into descriptor")
-        expect(descriptor.environment["WINEDLLOVERRIDES"] == "d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d","descriptor launch uses Apple native overrides")
+        // Le pont NVIDIA est un composant optionnel de la machine : présent, il préfixe
+        // l'override et active MetalFX ; absent, l'override Apple reste exact.
+        let bridge = D3DMetalRuntime.steamBridgeWinePath() != nil
+        let overrides = bridge ? "nvapi64,nvngx=b,n;d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d" : "d3d12,d3d12core,dxgi=n,b;winemenubuilder.exe=d"
+        expect(descriptor.environment["WINEDLLOVERRIDES"] == overrides,"descriptor launch uses Apple native overrides")
+        expect(!bridge || descriptor.environment["D3DM_ENABLE_METALFX"] == "1","installed bridge enables MetalFX in descriptor")
         expect(runtime.snapshot(base:base)["prepared"] as? Bool == true && runtime.snapshot(base:base)["canLaunch"] as? Bool == false,"prepared is never qualified")
         expect(runtime.snapshot(base:base)["loadTested"] as? Bool == false && runtime.snapshot(base:base)["gameTested"] as? Bool == false,"no runtime proof invented")
         let runtimeCommands=runner.list().filter { $0.executable == base.wineURL || $0.executable == base.wineserverURL }
@@ -128,6 +133,12 @@ private final class MockD3DRunner: D3DMetalCommandRunning {
         expect(try runtime.descriptor(base:base)?.steamInstalled == true,"separate Steam presence detected")
         expect(success(start(runtime,base)) && runner.list().count == before,"used prepared prefix is idempotent")
         expect(try Data(contentsOf:descriptor.prefixURL.appendingPathComponent("cache.keep")) == Data("cache preserved".utf8),"prefix/cache preserved")
+        // Étiquette posée par macOS sur un binaire inchangé : seule la ctime bouge, la préparation reste valide.
+        expect(setxattr(base.wineURL.path,"com.apple.lastuseddate#PS",[UInt8](repeating:1,count:16),16,0,XATTR_NOFOLLOW) == 0,"metadata tag written on wine")
+        expect(try runtime.descriptor(base:base) != nil,"macOS metadata tag on unchanged engine keeps DirectX 12 ready")
+        expect(D3DMetalRuntime.sameBindings(["/a":"1:2:3:1:5:6:7:8:9"],["/a":"1:2:3:1:5:6:7:80:90"]),"ctime-only difference accepted")
+        expect(D3DMetalRuntime.sameBindings(["/a":"1:2:3:1:5:6:7:8:9"],["/a":"16777229:2:3:1:5:6:7:8:9"]),"volume number difference accepted")
+        expect(!D3DMetalRuntime.sameBindings(["/a":"1:2:3:1:5:6:7:8:9"],["/a":"1:2:3:1:50:6:7:8:9"]) && !D3DMetalRuntime.sameBindings(["/a":"1:2:3:1:5:6:7:8:9"],["/b":"1:2:3:1:5:6:7:8:9"]) && !D3DMetalRuntime.sameBindings(["/a":"1:2:3:1:5:6:7:8:9"],["/a":"1:2:3:1:5:6:7:8:9","/b":"x"]),"size, path or file-set change still rejected")
         try put(pe()+Data([9]),store.root.appendingPathComponent("payload/wine/x86_64-windows/d3d12.dll"))
         rejects("changed imported file invalidates descriptor"){_=try runtime.descriptor(base:base)}
         expect(runtime.snapshot(base:base)["status"] as? String == "blocked" && runtime.snapshot(base:base)["canPrepare"] as? Bool == false,"changed used prefix is not reinitialized")

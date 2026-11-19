@@ -126,7 +126,7 @@ final class D3DMetalRuntime {
         guard base.readyEngine, receipt["rendererHash"] as? String == config.rendererHash,
               receipt["engineID"] as? String == base.engineID,
               receipt["environmentHash"] as? String == Self.environmentHash(config.environment),
-              let recorded = receipt["bindings"] as? [String:String], recorded == (try bindings(base: base)),
+              let recorded = receipt["bindings"] as? [String:String], Self.sameBindings(recorded, try bindings(base: base)),
               try ownsPrefix(config.prefix, rendererHash: config.rendererHash, engineID: base.engineID) else { throw D3DMetalPreparationError.blocked("La préparation DirectX 12 ne correspond plus aux fichiers présents. Les données sont conservées.") }
         try RuntimeSetup.validatePrefix(config.prefix)
         let steam = config.prefix.appendingPathComponent("drive_c/Program Files (x86)/Steam")
@@ -134,7 +134,14 @@ final class D3DMetalRuntime {
         let header = try? handle?.read(upToCount: 2); try? handle?.close()
         return .init(engineID: base.engineID + "/d3dmetal/" + config.rendererHash, wineURL: base.wineURL,
                      wineserverURL: base.wineserverURL, prefixURL: config.prefix, steamRoot: steam,
-                     environment: D3DMetalStore.launchEnvironment(config.environment), readyEngine: true, steamInstalled: header == Data([0x4d,0x5a]))
+                     environment: D3DMetalStore.steamClientEnvironment(config.environment, bridgeWinePath: Self.steamBridgeWinePath()),
+                     readyEngine: true, steamInstalled: header == Data([0x4d,0x5a]))
+    }
+
+    /// Répertoire wine du pont NVIDIA si le composant est intact et non désactivé.
+    static func steamBridgeWinePath() -> String? {
+        guard !UserDefaults.standard.bool(forKey: "PlaymeltSteamNvidiaBridgeDisabled"), NvidiaBridgeStore.shared.available() else { return nil }
+        return NvidiaBridgeStore.shared.winePath
     }
 
     func snapshot(base: PlaymeltRuntimeDescriptor) -> [String:Any] {
@@ -305,6 +312,22 @@ final class D3DMetalRuntime {
     private static func environmentHash(_ environment: [String:String]) -> String {
         let data = (try? JSONSerialization.data(withJSONObject:environment,options:.sortedKeys)) ?? Data()
         return SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined()
+    }
+    /// Même fichier : inode, type et droits, liens, taille et date de modification identiques.
+    /// La date de changement d'état (ctime) est écartée : macOS la modifie quand il pose ses propres
+    /// étiquettes (dernière utilisation, provenance, Spotlight) sur un fichier inchangé, ce qui
+    /// bloquait tous les jeux DirectX 12. Les reçus déjà écrits restent valides.
+    /// Le numéro d'appareil (st_dev) est écarté aussi : APFS le réattribue à chaque démarrage
+    /// quand des volumes apparaissent ou disparaissent, sans qu'aucun fichier ne change.
+    /// L'identité utile reste inode + droits + liens + taille + mtime, propre à chaque chemin.
+    static func sameBindings(_ recorded: [String:String], _ current: [String:String]) -> Bool {
+        guard recorded.count == current.count else { return false }
+        for (path, value) in recorded {
+            guard let now = current[path] else { return false }
+            let a = value.split(separator: ":", omittingEmptySubsequences: false), b = now.split(separator: ":", omittingEmptySubsequences: false)
+            guard a.count == 9, b.count == 9, a[1...6] == b[1...6] else { return false }
+        }
+        return true
     }
     private static func identity(_ url: URL) throws -> String {
         var info = stat()
